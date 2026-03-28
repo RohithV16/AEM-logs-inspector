@@ -8,95 +8,192 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="header-row">
-        <div>
-          <h1>AEM Log Analyzer</h1>
-          <p>Analyze errors and warnings from AEM log files</p>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="header-logo">A</div>
+      <div>
+        <h1 class="header-title">AEM Log Analyzer</h1>
+        <p class="header-subtitle">Intelligent error &amp; warning analysis for AEM logs</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <button id="darkModeBtn" class="icon-btn" title="Toggle dark mode">&#127763;</button>
+    </div>
+  </header>
+  <div class="keyboard-hint" style="text-align:center; font-size:12px; color:var(--color-text-tertiary); margin-bottom:1rem;">
+    Shortcuts: <kbd>/</kbd> Search &nbsp; <kbd>Esc</kbd> Clear &nbsp; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> Pages
+  </div>
+
+  <!-- Main Grid -->
+  <div class="main-grid">
+
+    <!-- Left Sidebar: Filters -->
+    <aside id="sidebar" class="sidebar">
+      <div class="filter-card">
+
+        <!-- Search -->
+        <div class="filter-input-group">
+          <input type="text" id="searchInput" class="filter-input" placeholder="Search messages...">
         </div>
-        <button id="darkModeBtn" class="icon-btn" title="Toggle dark mode">🌙</button>
-      </div>
-    </header>
 
-    <div class="file-input-section">
-      <input type="file" id="fileInput" accept=".log" />
-      <button id="analyzeBtn">Analyze</button>
-      <span id="progressText" class="hidden"></span>
-    </div>
-    <p style="text-align:center; color:#666; font-size:14px; margin-bottom:20px;">
-      Or enter path: <input type="text" id="filePath" placeholder="/path/to/aem-error.log" style="width:300px; padding:5px;"/>
-    </p>
+        <!-- Advanced Filters -->
+        <div class="filter-input-group">
+          <div class="searchable-dropdown" id="loggerDropdown">
+            <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
+            <select id="loggerSelect" class="dropdown-select" size="6">
+              <option value="">All Loggers</option>
+            </select>
+          </div>
+          <div class="searchable-dropdown" id="threadDropdown">
+            <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search thread...">
+            <select id="threadSelect" class="dropdown-select" size="6">
+              <option value="">All Threads</option>
+            </select>
+          </div>
+          <div class="searchable-dropdown" id="packageDropdown">
+            <input type="text" id="packageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
+            <select id="packageSelect" class="dropdown-select" size="6">
+              <option value="">All Packages</option>
+            </select>
+          </div>
+          <div class="searchable-dropdown" id="exceptionDropdown">
+            <input type="text" id="exceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
+            <select id="exceptionSelect" class="dropdown-select" size="6">
+              <option value="">All Exceptions</option>
+            </select>
+          </div>
+        </div>
 
-    <div id="summary" class="summary-section hidden">
-      <div class="summary-card error">
-        <span class="label">Total Errors</span>
-        <span class="value" id="totalErrors">0</span>
-      </div>
-      <div class="summary-card warning">
-        <span class="label">Total Warnings</span>
-        <span class="value" id="totalWarnings">0</span>
-      </div>
-      <div class="summary-card error">
-        <span class="label">Unique Errors</span>
-        <span class="value" id="uniqueErrors">0</span>
-      </div>
-      <div class="summary-card warning">
-        <span class="label">Unique Warnings</span>
-        <span class="value" id="uniqueWarnings">0</span>
-      </div>
-    </div>
+        <!-- Date Range -->
+        <p class="filter-section-label">Date range</p>
+        <div class="filter-input-group" style="margin-bottom:1.5rem;">
+          <input type="datetime-local" id="startDate" class="filter-input" placeholder="From">
+          <input type="datetime-local" id="endDate" class="filter-input" placeholder="To">
+        </div>
 
-    <div class="charts-section hidden" id="chartsSection">
-      <div class="chart-container">
-        <canvas id="timelineChart"></canvas>
-      </div>
-      <div class="chart-container">
-        <canvas id="loggerChart"></canvas>
-      </div>
-    </div>
+        <!-- Regex -->
+        <input type="text" id="regexFilter" class="filter-input" placeholder="Regex pattern..." title="Filter by regex pattern (case-insensitive)" style="margin-bottom:1.5rem;">
 
-    <div class="filters">
-      <div class="filter-row">
-        <label>
-          <input type="checkbox" id="showErrors" checked> Show Errors
-        </label>
-        <label>
-          <input type="checkbox" id="showWarnings" checked> Show Warnings
-        </label>
-        <select id="sortBy">
-          <option value="count">Sort by Count</option>
-          <option value="timestamp">Sort by First Occurrence</option>
-          <option value="message">Sort by Message</option>
+        <!-- Category -->
+        <select id="categoryFilter" class="filter-select" title="Filter by auto-detected error category" style="margin-bottom:1.5rem;">
+          <option value="">All Categories</option>
+        </select>
+
+        <!-- Action Buttons -->
+        <div class="filter-actions">
+          <button id="applyFiltersBtn" class="btn-apply">Apply filters</button>
+          <button id="clearFiltersBtn" class="btn-clear">Clear</button>
+        </div>
+        <button id="savePresetBtn" class="btn-preset">Save preset</button>
+        <select id="presetSelect" class="filter-select" style="margin-top:0.75rem;">
+          <option value="">Load Preset...</option>
         </select>
       </div>
-      <div class="filter-row">
-        <input type="text" id="searchInput" placeholder="Search messages..." />
-        <input type="text" id="loggerFilter" placeholder="Filter by logger..." />
-        <input type="text" id="threadFilter" placeholder="Filter by thread..." />
-      </div>
-      <div class="filter-row">
-        <label>From: <input type="datetime-local" id="startDate"></label>
-        <label>To: <input type="datetime-local" id="endDate"></label>
-        <input type="text" id="regexFilter" placeholder="Regex pattern..." />
-        <button id="applyFiltersBtn">Apply Filters</button>
-        <button id="clearFiltersBtn">Clear</button>
-      </div>
-      <div class="filter-row">
-        <button id="savePresetBtn">Save Filter Preset</button>
-        <select id="presetSelect"><option value="">Load Preset...</option></select>
-      </div>
-    </div>
+    </aside>
 
-    <div class="export-bar">
-      <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
-      <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
-      <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>
-    </div>
+    <!-- Right Content -->
+    <main class="main-content">
 
-    <div class="pagination-info" id="paginationInfo"></div>
-    <div id="results" class="results-section"></div>
-    <div class="pagination" id="pagination"></div>
+      <!-- File Upload Card -->
+      <div class="upload-card">
+        <div class="upload-row">
+          <div id="dropZone" class="drop-zone compact">
+            <input type="file" id="fileInput" accept=".log,.txt" style="display:none;">
+            <span class="drop-zone-icon">&#128193;</span>
+            <span class="drop-zone-text">Choose a file</span>
+          </div>
+          <span class="upload-or">or</span>
+          <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/aem-error.log">
+          <button id="analyzeBtn" class="upload-btn">Analyze</button>
+          <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
+          <span id="progressText" class="hidden"></span>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">&#128269;</div>
+        <h2>No log file loaded</h2>
+        <p>Select a <code>.log</code> file or enter a server path, then click <strong>Analyze</strong>.</p>
+        <p class="empty-hint">&#128161; Pro tip: You can also watch a log file in real-time for new entries</p>
+      </div>
+
+      <!-- Summary Cards -->
+      <div id="summary" class="summary-section hidden">
+        <div class="summary-card error">
+          <span class="label">Total Errors</span>
+          <span class="value" id="totalErrors">0</span>
+        </div>
+        <div class="summary-card warning">
+          <span class="label">Total Warnings</span>
+          <span class="value" id="totalWarnings">0</span>
+        </div>
+        <div class="summary-card error">
+          <span class="label">Unique Errors</span>
+          <span class="value" id="uniqueErrors">0</span>
+        </div>
+        <div class="summary-card warning">
+          <span class="label">Unique Warnings</span>
+          <span class="value" id="uniqueWarnings">0</span>
+        </div>
+      </div>
+
+      <!-- Charts Tab Content -->
+      <div id="chartsTab" class="charts-tab hidden">
+        <div id="chartsSection" class="charts-section">
+          <div class="chart-container">
+            <canvas id="timelineChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <canvas id="loggerChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <canvas id="threadChart"></canvas>
+          </div>
+          <div class="chart-container">
+            <canvas id="heatmapChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div id="errorMessage" class="error-message hidden"></div>
+
+      <!-- Export Buttons -->
+      <div class="export-row">
+        <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
+        <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
+        <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>
+        <button id="exportAllBtn" class="export-btn" disabled>Export All</button>
+      </div>
+
+      <!-- Pagination Info -->
+      <div class="pagination-info" id="paginationInfo"></div>
+
+      <!-- Level Filter Chips -->
+      <div id="levelFilters" class="level-filters">
+        <button class="level-chip active" data-level="ALL">All <span id="countALL"></span></button>
+        <button class="level-chip error" data-level="ERROR">ERROR <span id="countERROR"></span></button>
+        <button class="level-chip warn" data-level="WARN">WARN <span id="countWARN"></span></button>
+        <button class="level-chip info" data-level="INFO">INFO <span id="countINFO"></span></button>
+        <button class="level-chip debug" data-level="DEBUG">DEBUG <span id="countDEBUG"></span></button>
+        <button id="chartsToggleBtn" class="level-chip" style="margin-left:auto;">&#128200; Charts</button>
+      </div>
+
+      <!-- Raw Events Search -->
+      <div id="rawSearchRow" class="raw-search-row">
+        <input type="text" id="rawSearchInput" class="filter-input" placeholder="Search events (supports regex)..." style="flex:1;">
+        <button id="rawSearchBtn" class="btn-apply">Search</button>
+      </div>
+
+      <!-- Raw Events List -->
+      <div id="rawEvents" class="raw-events-section"></div>
+
+      <!-- Toast Container -->
+      <div id="toastContainer" class="toast-container"></div>
+
+    </main>
   </div>
 
   <script src="app.js"></script>
