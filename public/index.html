@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AEM Log Analyzer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-row">
+        <div>
+          <h1>AEM Log Analyzer</h1>
+          <p>Analyze errors and warnings from AEM log files</p>
+        </div>
+        <button id="darkModeBtn" class="icon-btn" title="Toggle dark mode">🌙</button>
+      </div>
+    </header>
+
+    <div class="file-input-section">
+      <input type="file" id="fileInput" accept=".log" />
+      <button id="analyzeBtn">Analyze</button>
+      <span id="progressText" class="hidden"></span>
+    </div>
+    <p style="text-align:center; color:#666; font-size:14px; margin-bottom:20px;">
+      Or enter path: <input type="text" id="filePath" placeholder="/path/to/aem-error.log" style="width:300px; padding:5px;"/>
+    </p>
+
+    <div id="summary" class="summary-section hidden">
+      <div class="summary-card error">
+        <span class="label">Total Errors</span>
+        <span class="value" id="totalErrors">0</span>
+      </div>
+      <div class="summary-card warning">
+        <span class="label">Total Warnings</span>
+        <span class="value" id="totalWarnings">0</span>
+      </div>
+      <div class="summary-card error">
+        <span class="label">Unique Errors</span>
+        <span class="value" id="uniqueErrors">0</span>
+      </div>
+      <div class="summary-card warning">
+        <span class="label">Unique Warnings</span>
+        <span class="value" id="uniqueWarnings">0</span>
+      </div>
+    </div>
+
+    <div class="charts-section hidden" id="chartsSection">
+      <div class="chart-container">
+        <canvas id="timelineChart"></canvas>
+      </div>
+      <div class="chart-container">
+        <canvas id="loggerChart"></canvas>
+      </div>
+    </div>
+
+    <div class="filters">
+      <div class="filter-row">
+        <label>
+          <input type="checkbox" id="showErrors" checked> Show Errors
+        </label>
+        <label>
+          <input type="checkbox" id="showWarnings" checked> Show Warnings
+        </label>
+        <select id="sortBy">
+          <option value="count">Sort by Count</option>
+          <option value="timestamp">Sort by First Occurrence</option>
+          <option value="message">Sort by Message</option>
+        </select>
+      </div>
+      <div class="filter-row">
+        <input type="text" id="searchInput" placeholder="Search messages..." />
+        <input type="text" id="loggerFilter" placeholder="Filter by logger..." />
+        <input type="text" id="threadFilter" placeholder="Filter by thread..." />
+      </div>
+      <div class="filter-row">
+        <label>From: <input type="datetime-local" id="startDate"></label>
+        <label>To: <input type="datetime-local" id="endDate"></label>
+        <input type="text" id="regexFilter" placeholder="Regex pattern..." />
+        <button id="applyFiltersBtn">Apply Filters</button>
+        <button id="clearFiltersBtn">Clear</button>
+      </div>
+      <div class="filter-row">
+        <button id="savePresetBtn">Save Filter Preset</button>
+        <select id="presetSelect"><option value="">Load Preset...</option></select>
+      </div>
+    </div>
+
+    <div class="export-bar">
+      <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
+      <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
+      <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>
+    </div>
+
+    <div class="pagination-info" id="paginationInfo"></div>
+    <div id="results" class="results-section"></div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
