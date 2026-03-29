@@ -68,8 +68,33 @@ function cleanupTempFile(tempFile) {
 const app = express();
 const PORT = 3000;
 
+// Serving logic moved to the top for precedence check
+const staticPath = path.resolve(__dirname, '..', 'frontend', 'dist');
+console.log(`[DEBUG] staticPath: ${staticPath}`);
+
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
+
+// Debug logging for all requests
+app.use((req, res, next) => {
+  console.log(`[DEBUG] ${req.method} ${req.path}`);
+  res.setHeader('X-AEM-Inspector-Server', 'v1'); // Identity check
+  next();
+});
+
+app.get('/api/health', (req, res) => res.json({ status: 'ok', staticPath }));
+
+// Serve static files
+app.use(express.static(staticPath));
+
+// Middleware for catching non-API GET requests early
+app.get('/', (req, res) => {
+  const indexPath = path.join(staticPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  res.status(404).send('Dashboard index.html not found. Path: ' + staticPath);
+});
 
 app.post('/api/raw-events', async (req, res) => {
   const { filePath, fileContent, page = 1, perPage = 50, level, search, from, to,
@@ -157,7 +182,7 @@ app.post('/api/raw-events', async (req, res) => {
   }
 });
 
-app.use(express.static('public'));
+
 
 function shouldUseStream(filePath) {
   try {
@@ -547,14 +572,24 @@ app.post('/api/export/pdf', (req, res) => {
     res.json({ success: false, error: 'Failed to generate PDF' });
   }
 });
+ 
+// Final catch-all middleware for any other GET requests (Vue Router support)
+// Using a generic middleware instead of a '*' route to avoid pathToRegexp compatibility issues.
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) return next();
+  
+  const indexPath = path.join(staticPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+  next();
+});
+
 
 const httpServer = app.listen(PORT, () => {
   console.log(`AEM Log Analyzer Dashboard`);
   console.log(`Open http://localhost:${PORT} in your browser`);
-  console.log(`\nUsage:`);
-  console.log(`1. Click "Select Log File"`);
-  console.log(`2. Navigate to your log file`);
-  console.log(`3. View analyzed errors and warnings\n`);
 });
 
 const wss = new WebSocketServer({ server: httpServer });
@@ -566,15 +601,15 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(msg);
 
       // Watch/tail mode
-      if (data.action === 'watch' && data.filePath) {
+      if ((data.action === 'watch' || data.type === 'startTail') && data.filePath) {
         watcher = watchLogFile(data.filePath, (entry) => {
-          ws.send(JSON.stringify(entry));
+          ws.send(JSON.stringify({ type: 'tail', event: entry }));
         });
         if (watcher.error) {
           ws.send(JSON.stringify({ error: watcher.error }));
         }
       }
-      if (data.action === 'stop' && watcher) {
+      if ((data.action === 'stop' || data.type === 'stopTail') && watcher) {
         watcher.close();
         watcher = null;
       }
@@ -639,6 +674,7 @@ wss.on('connection', (ws) => {
             type: 'progress',
             analysisId,
             percent,
+            percentage: percent, // Backward compatibility
             totalLines: progress.totalLines,
             bytesRead: estimatedBytes,
             fileSize
@@ -670,3 +706,5 @@ wss.on('connection', (ws) => {
   });
   ws.on('close', () => { if (watcher) watcher.close(); });
 });
+
+

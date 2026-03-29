@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dashboard": "node src/server.js"
+    "dashboard": "[ -d frontend/dist ] || (npm install --prefix frontend && npm run build --prefix frontend); node src/server.js",
+    "build:frontend": "npm install --prefix frontend && npm run build --prefix frontend"
   },
   "dependencies": {
     "chart.js": "^4.5.1",
