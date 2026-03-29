@@ -679,7 +679,7 @@ function buildRequestFilter(filters = {}) {
     if (searchRegex && !searchRegex.test(entry.url || '') && !searchRegex.test(entry.status || '')) return false;
 
     if (from || to) {
-      const ts = entry.timestamp ? new Date(entry.timestamp.replace(/:/, ' ')) : null;
+      const ts = entry.timestamp ? new Date(entry.timestamp.replace(/:/g, ' ')) : null;
       if (ts) {
         if (from && ts < new Date(from)) return false;
         if (to && ts > new Date(to)) return false;
@@ -718,6 +718,26 @@ async function extractRequestPage(filePath, filter, skip, take) {
   }
 
   return results;
+}
+
+async function countAndExtractRequestEntries(filePath, filter, skip, take) {
+  const stream = createRequestLogStream(filePath);
+  let count = 0;
+  const results = [];
+  let skipped = 0;
+
+  for await (const entry of stream) {
+    if (filter(entry)) {
+      count++;
+      if (skipped < skip) {
+        skipped++;
+      } else if (results.length < take) {
+        results.push(entry);
+      }
+    }
+  }
+
+  return { total: count, events: results };
 }
 
 /* ============================================================
@@ -781,6 +801,26 @@ async function extractCDNPage(filePath, filter, skip, take) {
   }
 
   return results;
+}
+
+async function countAndExtractCDNEntries(filePath, filter, skip, take) {
+  const stream = createCDNLogStream(filePath);
+  let count = 0;
+  const results = [];
+  let skipped = 0;
+
+  for await (const entry of stream) {
+    if (filter(entry)) {
+      count++;
+      if (skipped < skip) {
+        skipped++;
+      } else if (results.length < take) {
+        results.push(entry);
+      }
+    }
+  }
+
+  return { total: count, events: results };
 }
 
 /* ============================================================
@@ -1009,9 +1049,11 @@ module.exports = {
   buildRequestFilter,
   countMatchingRequestEntries,
   extractRequestPage,
+  countAndExtractRequestEntries,
   buildCDNFilter,
   countMatchingCDNEntries,
   extractCDNPage,
+  countAndExtractCDNEntries,
   analyzeRequestLog,
   analyzeCDNLog,
   detectLogType

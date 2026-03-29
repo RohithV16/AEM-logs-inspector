@@ -4,7 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const { WebSocketServer } = require('ws');
-const { analyzeLogFile, getSummary, filterByDateRange, filterByLogger, filterByThread, filterByRegex, exportToCSV, exportToJSON, generatePDFSummary, getTimelineData, getLoggerDistribution, normalizeMessage, analyzeEntries, getSummaryFromEntries, analyzeLogFileStream, getSummaryStream, getTimelineDataStream, getLoggerDistributionStream, filterAndAnalyzeStream, getHourlyHeatmap, getThreadDistribution, getTrendComparison, parseAllLevels, isSafeRegex, analyzeAllInOnePass, buildEntryFilter, countMatchingEntries, countMatchingEntriesWithLevels, extractPage, buildRequestFilter, countMatchingRequestEntries, extractRequestPage, buildCDNFilter, countMatchingCDNEntries, extractCDNPage, analyzeRequestLog, analyzeCDNLog, detectLogType } = require('./analyzer');
+const { analyzeLogFile, getSummary, filterByDateRange, filterByLogger, filterByThread, filterByRegex, exportToCSV, exportToJSON, generatePDFSummary, getTimelineData, getLoggerDistribution, normalizeMessage, analyzeEntries, getSummaryFromEntries, analyzeLogFileStream, getSummaryStream, getTimelineDataStream, getLoggerDistributionStream, filterAndAnalyzeStream, getHourlyHeatmap, getThreadDistribution, getTrendComparison, parseAllLevels, isSafeRegex, analyzeAllInOnePass, buildEntryFilter, countMatchingEntries, countMatchingEntriesWithLevels, extractPage, buildRequestFilter, countMatchingRequestEntries, extractRequestPage, countAndExtractRequestEntries, buildCDNFilter, countMatchingCDNEntries, extractCDNPage, countAndExtractCDNEntries, analyzeRequestLog, analyzeCDNLog, detectLogType } = require('./analyzer');
 const { parseLogFile, parseAllLevels: parseAllLevelsParser, createLogStream, getFileSize, createRequestLogStream, createCDNLogStream } = require('./parser');
 const { watchLogFile } = require('./tailer');
 const { checkAlerts } = require('./alerts');
@@ -75,7 +75,7 @@ app.post('/api/raw-events', async (req, res) => {
   const { filePath, fileContent, page = 1, perPage = 50, level, search, from, to,
           logger, thread, package: pkg, exception, category,
           method, httpStatus, minResponseTime, maxResponseTime, pod,
-          cache, country, pop, host, minTtfb, maxTtfb } = req.body;
+          cache, clientCountry, pop, host, minTtfb, maxTtfb } = req.body;
   let tempFile = null;
 
   try {
@@ -97,9 +97,8 @@ app.post('/api/raw-events', async (req, res) => {
 
     if (logType === 'request') {
       const filter = buildRequestFilter({ search, from, to, method, httpStatus, minResponseTime, maxResponseTime, pod });
-      const total = await countMatchingRequestEntries(targetPath, filter);
       const skip = (page - 1) * perPage;
-      const events = await extractRequestPage(targetPath, filter, skip, perPage);
+      const { total, events } = await countAndExtractRequestEntries(targetPath, filter, skip, perPage);
 
       return res.json({
         success: true,
@@ -113,10 +112,9 @@ app.post('/api/raw-events', async (req, res) => {
     }
 
     if (logType === 'cdn') {
-      const filter = buildCDNFilter({ search, from, to, method, httpStatus, cache, country, pop, host, minTtfb, maxTtfb });
-      const total = await countMatchingCDNEntries(targetPath, filter);
+      const filter = buildCDNFilter({ search, from, to, method, httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb });
       const skip = (page - 1) * perPage;
-      const events = await extractCDNPage(targetPath, filter, skip, perPage);
+      const { total, events } = await countAndExtractCDNEntries(targetPath, filter, skip, perPage);
 
       return res.json({
         success: true,
@@ -330,31 +328,95 @@ app.post('/api/filter', async (req, res) => {
     const logType = await detectLogType(targetPath);
     
     if (logType === 'request') {
-      const result = await analyzeRequestLog(targetPath);
+      const requestFilters = filters || {};
+      const filter = buildRequestFilter(requestFilters);
+      const stream = createRequestLogStream(targetPath);
+      
+      const methods = {};
+      const statuses = {};
+      const pods = {};
+      let totalRequests = 0;
+      let totalResponseTime = 0;
+      const responseTimes = [];
+      const timeline = {};
+      
+      for await (const entry of stream) {
+        if (!filter(entry)) continue;
+        
+        totalRequests++;
+        if (entry.method) methods[entry.method] = (methods[entry.method] || 0) + 1;
+        if (entry.status) {
+          statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+          responseTimes.push(entry.responseTime);
+          totalResponseTime += entry.responseTime;
+        }
+        if (entry.pod) pods[entry.pod] = (pods[entry.pod] || 0) + 1;
+        if (entry.timestamp) {
+          const hour = entry.timestamp.substring(0, 13);
+          if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0 };
+          timeline[hour].requests++;
+          if (entry.status >= 400) timeline[hour].errors++;
+        }
+      }
+      
+      responseTimes.sort((a, b) => a - b);
+      const avgResponseTime = totalRequests > 0 ? Math.round(totalResponseTime / responseTimes.length) : 0;
+      
       return res.json({
         success: true,
         logType: 'request',
-        summary: result.summary,
-        timeline: result.timeline,
-        methods: result.methods,
-        statuses: result.statuses,
-        pods: result.pods
+        summary: { totalRequests, avgResponseTime },
+        timeline,
+        methods,
+        statuses,
+        pods
       });
     }
     
     if (logType === 'cdn') {
-      const result = await analyzeCDNLog(targetPath);
+      const cdnFilters = filters || {};
+      const filter = buildCDNFilter(cdnFilters);
+      const stream = createCDNLogStream(targetPath);
+      
+      const methods = {};
+      const statuses = {};
+      const cacheStatuses = {};
+      const countries = {};
+      const pops = {};
+      const hosts = {};
+      let totalRequests = 0;
+      const timeline = {};
+      
+      for await (const entry of stream) {
+        if (!filter(entry)) continue;
+        
+        totalRequests++;
+        if (entry.method) methods[entry.method] = (methods[entry.method] || 0) + 1;
+        if (entry.status) statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+        if (entry.cache) cacheStatuses[entry.cache] = (cacheStatuses[entry.cache] || 0) + 1;
+        if (entry.clientCountry) countries[entry.clientCountry] = (countries[entry.clientCountry] || 0) + 1;
+        if (entry.pop) pops[entry.pop] = (pops[entry.pop] || 0) + 1;
+        if (entry.host) hosts[entry.host] = (hosts[entry.host] || 0) + 1;
+        if (entry.timestamp) {
+          const hour = entry.timestamp.substring(0, 13);
+          if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, cacheHits: 0 };
+          timeline[hour].requests++;
+          if (entry.status >= 400) timeline[hour].errors++;
+          if (entry.cache === 'HIT') timeline[hour].cacheHits++;
+        }
+      }
+      
       return res.json({
         success: true,
         logType: 'cdn',
-        summary: result.summary,
-        timeline: result.timeline,
-        methods: result.methods,
-        statuses: result.statuses,
-        cacheStatuses: result.cacheStatuses,
-        countries: result.countries,
-        pops: result.pops,
-        hosts: result.hosts
+        summary: { totalRequests },
+        timeline,
+        methods,
+        statuses,
+        cacheStatuses,
+        countries,
+        pops,
+        hosts
       });
     }
     
