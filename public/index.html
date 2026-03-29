@@ -50,24 +50,28 @@
 
         <!-- ERROR LOG FILTERS (default) -->
         <div id="errorFilters" class="log-filter-panel">
-          <div class="searchable-dropdown" id="loggerDropdown">
-            <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
-            <select id="loggerSelect" class="dropdown-select" size="6">
-              <option value="">All Loggers</option>
-            </select>
-          </div>
-          <div class="searchable-dropdown" id="threadDropdown">
-            <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search thread...">
-            <select id="threadSelect" class="dropdown-select" size="6">
-              <option value="">All Threads</option>
-            </select>
-          </div>
+          <p class="filter-section-label">Java Package</p>
           <div class="searchable-dropdown" id="packageDropdown">
             <input type="text" id="packageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
-            <select id="packageSelect" class="dropdown-select" size="6">
-              <option value="">All Packages</option>
+            <select id="packageSelect" class="dropdown-select" size="6" multiple>
             </select>
           </div>
+          <div id="packageTags" class="filter-tags"></div>
+          <p class="filter-section-label">Logger</p>
+          <div class="searchable-dropdown" id="loggerDropdown">
+            <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
+            <select id="loggerSelect" class="dropdown-select" size="6" multiple>
+            </select>
+          </div>
+          <div id="loggerTags" class="filter-tags"></div>
+          <p class="filter-section-label">AEMaaCs Pods</p>
+          <div class="searchable-dropdown" id="threadDropdown">
+            <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search pods...">
+            <select id="threadSelect" class="dropdown-select" size="6">
+              <option value="">All Pods</option>
+            </select>
+          </div>
+          <p class="filter-section-label">Exception</p>
           <div class="searchable-dropdown" id="exceptionDropdown">
             <input type="text" id="exceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
             <select id="exceptionSelect" class="dropdown-select" size="6">

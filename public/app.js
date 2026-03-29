@@ -33,7 +33,44 @@ let threadChart = null;
 let heatmapChart = null;
 let rawEventsData = [];
 let lastFileContent = null;
-let currentLogType = 'error'; // Store file content after upload for reuse
+let currentLogType = 'error';
+let selectedLoggers = [];
+let selectedPackages = [];
+let allLoggers = {};  // Store all loggers for cascading filter
+
+function setDateRangeBounds(timeline, logType) {
+  const keys = Object.keys(timeline);
+  if (!keys.length) return;
+
+  function parseKey(key) {
+    if (logType === 'error') {
+      const [datePart, hour] = key.split(' ');
+      const [dd, mm, yyyy] = datePart.split('.');
+      return { date: `${yyyy}-${mm}-${dd}`, hour };
+    } else if (logType === 'request') {
+      const [datePart, hour] = key.split(':');
+      const [dd, mon, yyyy] = datePart.split('/');
+      const months = { Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06", Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12" };
+      return { date: `${yyyy}-${months[mon]}-${dd}`, hour };
+    } else {
+      return { date: key.substring(0, 10), hour: key.substring(11, 13) };
+    }
+  }
+
+  const sorted = keys.sort((a, b) => parseKey(a).date.localeCompare(parseKey(b).date));
+  const first = parseKey(sorted[0]);
+  const last = parseKey(sorted[sorted.length - 1]);
+
+  const firstTime = `${first.date}T${first.hour}:00`;
+  const lastTime = `${last.date}T${last.hour}:59`;
+
+  startDate.min = firstTime;
+  startDate.max = lastTime;
+  startDate.value = firstTime;
+  endDate.min = firstTime;
+  endDate.max = lastTime;
+  endDate.value = lastTime;
+}
 
 /* ============================================================
    Toast
@@ -281,6 +318,9 @@ async function analyzeFilePath(filePath) {
 function handleAnalysisComplete(data) {
   // Store the log type
   currentLogType = data.logType || 'error';
+
+  // Constrain date range inputs to actual log file dates
+  if (data.timeline) setDateRangeBounds(data.timeline, currentLogType);
   
   // Show/hide filter panels based on log type
   const filterPanel = document.getElementById(currentLogType + 'Filters');
@@ -386,6 +426,7 @@ async function fetchChartsData() {
 }
 
 function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
+  setDateRangeBounds(timeline, currentLogType);
   const ctx1 = document.getElementById('timelineChart').getContext('2d');
   const dates = Object.keys(timeline).sort();
   const errors = dates.map(d => timeline[d].ERROR || 0);
@@ -506,22 +547,49 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
    ============================================================ */
 
 function populateFilterDropdowns(loggers, threads, packages, exceptions) {
-  const populate = (select, items, allLabel) => {
-    if (!items || !select) return;
-    const sorted = Object.entries(items).sort((a, b) => b[1] - a[1]);
-    select.innerHTML = `<option value="">${allLabel}</option>`;
+  // Store all loggers for cascading filter
+  allLoggers = loggers || {};
+
+  // Multi-select for packages
+  if (packages && packageSelect) {
+    const sorted = Object.entries(packages).sort((a, b) => b[1] - a[1]);
+    packageSelect.innerHTML = '';
     sorted.forEach(([name, count]) => {
       const opt = document.createElement('option');
       opt.value = name;
       opt.textContent = `${name} (${count})`;
-      select.appendChild(opt);
+      opt.selected = selectedPackages.includes(name);
+      packageSelect.appendChild(opt);
     });
-  };
+    renderPackageTags();
+  }
 
-  populate(loggerSelect, loggers, 'All Loggers');
-  populate(threadSelect, threads, 'All Threads');
-  populate(packageSelect, packages, 'All Packages');
-  populate(exceptionSelect, exceptions, 'All Exceptions');
+  // Multi-select for loggers (filtered by selected packages)
+  filterAndPopulateLoggers();
+
+  // Single-select for threads (AEMaaCs Pods)
+  if (threads && threadSelect) {
+    const sorted = Object.entries(threads).sort((a, b) => b[1] - a[1]);
+    threadSelect.innerHTML = '<option value="">All Pods</option>';
+    sorted.forEach(([name, count]) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = `${name} (${count})`;
+      threadSelect.appendChild(opt);
+    });
+  }
+
+  // Single-select for exceptions
+  if (exceptions && exceptionSelect) {
+    const sorted = Object.entries(exceptions).sort((a, b) => b[1] - a[1]);
+    exceptionSelect.innerHTML = '<option value="">All Exceptions</option>';
+    sorted.forEach(([name, count]) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = `${name} (${count})`;
+      exceptionSelect.appendChild(opt);
+    });
+  }
 }
 
 function escapeHtml(text) {
@@ -545,6 +613,89 @@ function highlightText(text, searchTerm) {
   }
 }
 
+function renderLoggerTags() {
+  const container = document.getElementById('loggerTags');
+  if (!container) return;
+  container.innerHTML = selectedLoggers.map(val =>
+    `<span class="filter-tag"><span title="${escapeHtml(val)}">${escapeHtml(val.split('.').pop())}</span> <button onclick="removeLogger('${escapeHtml(val)}')">&times;</button></span>`
+  ).join('');
+}
+
+function renderPackageTags() {
+  const container = document.getElementById('packageTags');
+  if (!container) return;
+  container.innerHTML = selectedPackages.map(val =>
+    `<span class="filter-tag"><span>${escapeHtml(val)}</span> <button onclick="removePackage('${escapeHtml(val)}')">&times;</button></span>`
+  ).join('');
+}
+
+window.removeLogger = (val) => {
+  selectedLoggers = selectedLoggers.filter(v => v !== val);
+  const opt = loggerSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
+  if (opt) opt.selected = false;
+  renderLoggerTags();
+};
+
+window.removePackage = (val) => {
+  selectedPackages = selectedPackages.filter(v => v !== val);
+  const opt = packageSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
+  if (opt) opt.selected = false;
+  renderPackageTags();
+  filterAndPopulateLoggers();
+};
+
+/* ============================================================
+   Smart Package Grouping & Cascading Filter
+   ============================================================ */
+
+function getLoggerPackageGroup(logger) {
+  const GENERIC_WORDS = new Set([
+    'impl', 'internal', 'core', 'service', 'util', 'common',
+    'scheduler', 'consumer', 'provider', 'factory', 'manager',
+    'handler', 'adapter', 'transformer', 'mapper', 'helper'
+  ]);
+  const KNOWN_VENDORS = new Set([
+    'com.adobe', 'com.day', 'com.mandg', 'com.google', 'com.sun',
+    'org.apache', 'org.eclipse', 'org.springframework', 'org.slf4j', 'org.junit',
+    'io.prometheus', 'io.netty',
+    'javax.servlet', 'javax.persistence',
+    'net.sf'
+  ]);
+  const parts = logger.split('.');
+  if (parts.length < 2) return logger;
+  if (parts[0] === 'Events' && parts[1] === 'Service') {
+    return parts.length >= 4 ? parts.slice(0, 4).join('.') : parts.join('.');
+  }
+  const vendorKey = parts.slice(0, 2).join('.');
+  if (KNOWN_VENDORS.has(vendorKey)) return vendorKey;
+  let depth = Math.min(2, parts.length);
+  for (let i = 2; i < parts.length && i < 6; i++) {
+    if (GENERIC_WORDS.has(parts[i].toLowerCase())) break;
+    depth = i + 1;
+  }
+  return parts.slice(0, depth).join('.');
+}
+
+function filterAndPopulateLoggers() {
+  if (!loggerSelect || !allLoggers) return;
+  const sorted = Object.entries(allLoggers).sort((a, b) => b[1] - a[1]);
+  loggerSelect.innerHTML = '';
+  sorted.forEach(([name, count]) => {
+    const pkg = getLoggerPackageGroup(name);
+    if (selectedPackages.length > 0 && !selectedPackages.includes(pkg)) {
+      return;
+    }
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = `${name} (${count})`;
+    opt.selected = selectedLoggers.includes(name);
+    loggerSelect.appendChild(opt);
+  });
+  const visibleValues = new Set(Array.from(loggerSelect.options).map(o => o.value));
+  selectedLoggers = selectedLoggers.filter(v => visibleValues.has(v));
+  renderLoggerTags();
+}
+
 /* ============================================================
    Filtering
    ============================================================ */
@@ -566,10 +717,21 @@ clearFiltersBtn.addEventListener('click', () => {
   regexFilter.value = '';
   startDate.value = '';
   endDate.value = '';
-  if (loggerSelect) Array.from(loggerSelect.options).forEach(o => o.style.display = '');
+  
+  // Clear multi-select loggers and packages
+  selectedLoggers = [];
+  selectedPackages = [];
+  if (packageSelect) {
+    Array.from(packageSelect.options).forEach(o => {
+      o.style.display = '';
+      o.selected = false;
+    });
+  }
   if (threadSelect) Array.from(threadSelect.options).forEach(o => o.style.display = '');
-  if (packageSelect) Array.from(packageSelect.options).forEach(o => o.style.display = '');
   if (exceptionSelect) Array.from(exceptionSelect.options).forEach(o => o.style.display = '');
+  renderLoggerTags();
+  renderPackageTags();
+  filterAndPopulateLoggers(); // Refresh logger list to show all
   applyRawEventFilters();
 });
 
@@ -751,9 +913,9 @@ async function fetchRawEvents(page = 1) {
   // Error log filters
   if (currentLogType === 'error') {
     body.level = rawEventsLevel;
-    if (loggerFilter.value) body.logger = loggerFilter.value;
+    if (selectedLoggers.length > 0) body.logger = selectedLoggers;
     if (threadFilter.value) body.thread = threadFilter.value;
-    if (packageFilter.value) body.package = packageFilter.value;
+    if (selectedPackages.length > 0) body.package = selectedPackages;
     if (exceptionFilter.value) body.exception = exceptionFilter.value;
     if (regexFilter.value) body.regex = regexFilter.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
@@ -1054,7 +1216,7 @@ rawSearchInput.addEventListener('keydown', (e) => {
 
 window.fetchRawEvents = fetchRawEvents;
 
-// Searchable dropdown behavior
+// Single-select searchable dropdown behavior
 function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId) {
   const dropdown = document.getElementById(dropdownId);
   const searchInput = document.getElementById(searchInputId);
@@ -1076,7 +1238,7 @@ function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInput
         opt.style.display = '';
         return;
       }
-      const text = opt.value.toLowerCase();
+      const text = (opt.value + ' ' + opt.textContent).toLowerCase();
       opt.style.display = text.includes(query) ? '' : 'none';
     });
   });
@@ -1095,10 +1257,60 @@ function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInput
   });
 }
 
+// Multi-select searchable dropdown behavior
+function initMultiSelectDropdown(dropdownId, searchInputId, selectId, selectedArray, renderTagsFn, onChangeCallback) {
+  const dropdown = document.getElementById(dropdownId);
+  const searchInput = document.getElementById(searchInputId);
+  const select = document.getElementById(selectId);
+
+  if (!dropdown || !searchInput || !select) return;
+
+  searchInput.addEventListener('focus', () => {
+    dropdown.classList.add('open');
+  });
+
+  searchInput.addEventListener('input', () => {
+    const query = searchInput.value.toLowerCase();
+    dropdown.classList.add('open');
+
+    Array.from(select.options).forEach(opt => {
+      const text = (opt.value + ' ' + opt.textContent).toLowerCase();
+      opt.style.display = text.includes(query) ? '' : 'none';
+    });
+  });
+
+  select.addEventListener('click', (e) => {
+    const opt = e.target.closest('option');
+    if (!opt || opt.value === '') return;
+
+    // Toggle selection
+    if (selectedArray.includes(opt.value)) {
+      opt.selected = false;
+      const idx = selectedArray.indexOf(opt.value);
+      if (idx !== -1) selectedArray.splice(idx, 1);
+    } else {
+      opt.selected = true;
+      selectedArray.push(opt.value);
+    }
+
+    // Update tags
+    renderTagsFn();
+
+    // Trigger onChange callback if provided
+    if (onChangeCallback) onChangeCallback();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target)) {
+      dropdown.classList.remove('open');
+    }
+  });
+}
+
 // Initialize dropdowns
-initSearchableDropdown('loggerDropdown', 'loggerFilter', 'loggerSelect');
+initMultiSelectDropdown('loggerDropdown', 'loggerFilter', 'loggerSelect', selectedLoggers, renderLoggerTags);
 initSearchableDropdown('threadDropdown', 'threadFilter', 'threadSelect');
-initSearchableDropdown('packageDropdown', 'packageFilter', 'packageSelect');
+initMultiSelectDropdown('packageDropdown', 'packageFilter', 'packageSelect', selectedPackages, renderPackageTags, filterAndPopulateLoggers);
 initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect');
 
 // Restore last used file path on page load

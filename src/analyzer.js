@@ -438,6 +438,54 @@ function getTrendComparison(entries, days = 7) {
 
 const fs = require('fs');
 
+/* ============================================================
+   Smart Package Grouping
+   ============================================================ */
+
+function derivePackageGroup(logger) {
+  const GENERIC_WORDS = new Set([
+    'impl', 'internal', 'core', 'service', 'util', 'common',
+    'scheduler', 'consumer', 'provider', 'factory', 'manager',
+    'handler', 'adapter', 'transformer', 'mapper', 'helper'
+  ]);
+  
+  const KNOWN_VENDORS = new Set([
+    'com.adobe', 'com.day', 'com.mandg', 'com.google', 'com.sun',
+    'org.apache', 'org.eclipse', 'org.springframework', 'org.slf4j', 'org.junit',
+    'io.prometheus', 'io.netty',
+    'javax.servlet', 'javax.persistence',
+    'net.sf'
+  ]);
+  
+  const parts = logger.split('.');
+  if (parts.length < 2) return null;
+
+  // Special case: Events.Service prefix
+  if (parts[0] === 'Events' && parts[1] === 'Service') {
+    if (parts.length >= 4) {
+      return parts.slice(0, 4).join('.');
+    }
+    return parts.join('.');
+  }
+
+  // Known vendors: use first 2 parts
+  const vendorKey = parts.slice(0, 2).join('.');
+  if (KNOWN_VENDORS.has(vendorKey)) {
+    return vendorKey;
+  }
+
+  // Unknown: find natural boundary using generic words
+  let depth = Math.min(2, parts.length);
+  for (let i = 2; i < parts.length && i < 6; i++) {
+    if (GENERIC_WORDS.has(parts[i].toLowerCase())) {
+      break;
+    }
+    depth = i + 1;
+  }
+
+  return parts.slice(0, depth).join('.');
+}
+
 async function analyzeAllInOnePass(filePath, onProgress) {
   const stream = createLogStream(filePath, { levels: 'all' });
   const fileSize = fs.statSync(filePath).size;
@@ -500,9 +548,8 @@ async function analyzeAllInOnePass(filePath, onProgress) {
     // Filter options
     if (entry.logger) {
       loggers[entry.logger] = (loggers[entry.logger] || 0) + 1;
-      const parts = entry.logger.split('.');
-      if (parts.length > 1) {
-        const pkg = parts.slice(0, -1).join('.');
+      const pkg = derivePackageGroup(entry.logger);
+      if (pkg) {
         packages[pkg] = (packages[pkg] || 0) + 1;
       }
     }
@@ -591,14 +638,26 @@ function buildEntryFilter(filters = {}) {
       if (to && ts > new Date(to)) return false;
     }
 
-    // Logger filter
-    if (logger && entry.logger !== logger) return false;
+    // Logger filter (supports single value or array)
+    if (logger) {
+      if (Array.isArray(logger)) {
+        if (!logger.includes(entry.logger)) return false;
+      } else {
+        if (entry.logger !== logger) return false;
+      }
+    }
 
     // Thread filter
     if (thread && entry.thread !== thread) return false;
 
-    // Package filter
-    if (pkg && (!entry.logger || !entry.logger.startsWith(pkg))) return false;
+    // Package filter (supports single value or array)
+    if (pkg) {
+      if (Array.isArray(pkg)) {
+        if (!pkg.some(p => entry.logger && entry.logger.startsWith(p))) return false;
+      } else {
+        if (!entry.logger || !entry.logger.startsWith(pkg)) return false;
+      }
+    }
 
     // Exception filter
     if (exception) {
