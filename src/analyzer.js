@@ -1,4 +1,4 @@
-const { parseLogFile, parseAllLevels, parseTimestamp, createLogStream } = require('./parser');
+const { parseLogFile, parseAllLevels, parseTimestamp, createLogStream, createRequestLogStream, createCDNLogStream, detectLogType } = require('./parser');
 const { categorizeError } = require('./categorizer');
 
 const MAX_REGEX_LENGTH = 100;
@@ -660,6 +660,321 @@ async function extractPage(filePath, filter, skip, take) {
   return results;
 }
 
+/* ============================================================
+   Request Log Filter Builders
+   ============================================================ */
+
+function buildRequestFilter(filters = {}) {
+  const { search, from, to, method, httpStatus, minResponseTime, maxResponseTime, pod } = filters;
+  let searchRegex = null;
+
+  if (search) {
+    const validation = isSafeRegex(search);
+    if (validation && !validation.error) {
+      searchRegex = validation.regex;
+    }
+  }
+
+  return (entry) => {
+    if (searchRegex && !searchRegex.test(entry.url || '') && !searchRegex.test(entry.status || '')) return false;
+
+    if (from || to) {
+      const ts = entry.timestamp ? new Date(entry.timestamp.replace(/:/, ' ')) : null;
+      if (ts) {
+        if (from && ts < new Date(from)) return false;
+        if (to && ts > new Date(to)) return false;
+      }
+    }
+
+    if (method && entry.method !== method) return false;
+    if (httpStatus && String(entry.status) !== String(httpStatus)) return false;
+    if (minResponseTime && (entry.responseTime || 0) < Number(minResponseTime)) return false;
+    if (maxResponseTime && (entry.responseTime || 0) > Number(maxResponseTime)) return false;
+    if (pod && entry.pod !== pod) return false;
+
+    return true;
+  };
+}
+
+async function countMatchingRequestEntries(filePath, filter) {
+  const stream = createRequestLogStream(filePath);
+  let count = 0;
+  for await (const entry of stream) {
+    if (filter(entry)) count++;
+  }
+  return count;
+}
+
+async function extractRequestPage(filePath, filter, skip, take) {
+  const stream = createRequestLogStream(filePath);
+  const results = [];
+  let skipped = 0;
+
+  for await (const entry of stream) {
+    if (!filter(entry)) continue;
+    if (skipped < skip) { skipped++; continue; }
+    results.push(entry);
+    if (results.length >= take) break;
+  }
+
+  return results;
+}
+
+/* ============================================================
+   CDN Log Filter Builders
+   ============================================================ */
+
+function buildCDNFilter(filters = {}) {
+  const { search, from, to, method, httpStatus, cache, country, pop, host, minTtfb, maxTtfb } = filters;
+  let searchRegex = null;
+
+  if (search) {
+    const validation = isSafeRegex(search);
+    if (validation && !validation.error) {
+      searchRegex = validation.regex;
+    }
+  }
+
+  return (entry) => {
+    if (searchRegex && !searchRegex.test(entry.url || '') && !searchRegex.test(entry.status || '')) return false;
+
+    if (from || to) {
+      const ts = entry.timestamp ? new Date(entry.timestamp) : null;
+      if (ts) {
+        if (from && ts < new Date(from)) return false;
+        if (to && ts > new Date(to)) return false;
+      }
+    }
+
+    if (method && entry.method !== method) return false;
+    if (httpStatus && String(entry.status) !== String(httpStatus)) return false;
+    if (cache && entry.cache !== cache) return false;
+    if (country && entry.clientCountry !== country) return false;
+    if (pop && entry.pop !== pop) return false;
+    if (host && entry.host !== host) return false;
+    if (minTtfb && (entry.ttfb || 0) < Number(minTtfb)) return false;
+    if (maxTtfb && (entry.ttfb || 0) > Number(maxTtfb)) return false;
+
+    return true;
+  };
+}
+
+async function countMatchingCDNEntries(filePath, filter) {
+  const stream = createCDNLogStream(filePath);
+  let count = 0;
+  for await (const entry of stream) {
+    if (filter(entry)) count++;
+  }
+  return count;
+}
+
+async function extractCDNPage(filePath, filter, skip, take) {
+  const stream = createCDNLogStream(filePath);
+  const results = [];
+  let skipped = 0;
+
+  for await (const entry of stream) {
+    if (!filter(entry)) continue;
+    if (skipped < skip) { skipped++; continue; }
+    results.push(entry);
+    if (results.length >= take) break;
+  }
+
+  return results;
+}
+
+/* ============================================================
+   Request Log Analysis
+   ============================================================ */
+
+async function analyzeRequestLog(filePath, onProgress) {
+  const stream = createRequestLogStream(filePath);
+  const fileSize = require('fs').statSync(filePath).size;
+
+  const methods = {};
+  const statuses = {};
+  const pods = {};
+  const urls = {};
+  const responseTimes = [];
+  let totalRequests = 0;
+  let totalResponseTime = 0;
+  let slowRequests = 0;
+  const timeline = {};
+
+  for await (const entry of stream) {
+    totalRequests++;
+
+    if (entry.method) {
+      methods[entry.method] = (methods[entry.method] || 0) + 1;
+    }
+
+    if (entry.status) {
+      statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+      responseTimes.push(entry.responseTime);
+      totalResponseTime += entry.responseTime;
+      if (entry.responseTime > 1000) slowRequests++;
+    }
+
+    if (entry.pod) {
+      pods[entry.pod] = (pods[entry.pod] || 0) + 1;
+    }
+
+    if (entry.url) {
+      const urlKey = entry.url.split('?')[0];
+      urls[urlKey] = (urls[urlKey] || 0) + 1;
+    }
+
+    if (entry.timestamp) {
+      const hour = entry.timestamp.substring(0, 13);
+      if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, slow: 0 };
+      timeline[hour].requests++;
+      if (entry.status >= 400) timeline[hour].errors++;
+      if (entry.responseTime > 1000) timeline[hour].slow++;
+    }
+
+    if (onProgress && totalRequests % 10000 === 0) {
+      onProgress({ fileSize, totalRequests, percent: 0 });
+    }
+  }
+
+  if (onProgress) onProgress({ fileSize, totalRequests, percent: 100 });
+
+  responseTimes.sort((a, b) => a - b);
+  const avgResponseTime = totalRequests > 0 ? Math.round(totalResponseTime / responseTimes.length) : 0;
+  const p50 = responseTimes.length > 0 ? responseTimes[Math.floor(responseTimes.length * 0.5)] : 0;
+  const p95 = responseTimes.length > 0 ? responseTimes[Math.floor(responseTimes.length * 0.95)] : 0;
+  const p99 = responseTimes.length > 0 ? responseTimes[Math.floor(responseTimes.length * 0.99)] : 0;
+
+  return {
+    summary: {
+      totalRequests,
+      avgResponseTime,
+      slowRequests,
+      p50ResponseTime: p50,
+      p95ResponseTime: p95,
+      p99ResponseTime: p99
+    },
+    filterOptions: {
+      methods: Object.keys(methods).sort(),
+      statuses: Object.keys(statuses).map(s => parseInt(s)).sort((a, b) => a - b),
+      pods: Object.keys(pods).sort()
+    },
+    results: Object.entries(urls).map(([url, count]) => ({ url, count })).sort((a, b) => b.count - a.count),
+    methods,
+    statuses,
+    pods,
+    timeline
+  };
+}
+
+/* ============================================================
+   CDN Log Analysis
+   ============================================================ */
+
+async function analyzeCDNLog(filePath, onProgress) {
+  const stream = createCDNLogStream(filePath);
+  const fileSize = require('fs').statSync(filePath).size;
+
+  const methods = {};
+  const statuses = {};
+  const cacheStatuses = {};
+  const countries = {};
+  const pops = {};
+  const hosts = {};
+  const ttfbTimes = [];
+  const ttlbTimes = [];
+  let totalRequests = 0;
+  let totalTtfb = 0;
+  let totalTtlb = 0;
+  const timeline = {};
+
+  for await (const entry of stream) {
+    totalRequests++;
+
+    if (entry.method) {
+      methods[entry.method] = (methods[entry.method] || 0) + 1;
+    }
+
+    if (entry.status) {
+      statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+    }
+
+    if (entry.cache) {
+      cacheStatuses[entry.cache] = (cacheStatuses[entry.cache] || 0) + 1;
+    }
+
+    if (entry.clientCountry) {
+      countries[entry.clientCountry] = (countries[entry.clientCountry] || 0) + 1;
+    }
+
+    if (entry.pop) {
+      pops[entry.pop] = (pops[entry.pop] || 0) + 1;
+    }
+
+    if (entry.host) {
+      hosts[entry.host] = (hosts[entry.host] || 0) + 1;
+    }
+
+    if (entry.ttfb) {
+      ttfbTimes.push(entry.ttfb);
+      totalTtfb += entry.ttfb;
+    }
+    if (entry.ttlb) {
+      ttlbTimes.push(entry.ttlb);
+      totalTtlb += entry.ttlb;
+    }
+
+    if (entry.timestamp) {
+      const hour = entry.timestamp.substring(0, 13);
+      if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, cacheHits: 0 };
+      timeline[hour].requests++;
+      if (entry.status >= 400) timeline[hour].errors++;
+      if (entry.cache === 'HIT') timeline[hour].cacheHits++;
+    }
+
+    if (onProgress && totalRequests % 10000 === 0) {
+      onProgress({ fileSize, totalRequests, percent: 0 });
+    }
+  }
+
+  if (onProgress) onProgress({ fileSize, totalRequests, percent: 100 });
+
+  ttfbTimes.sort((a, b) => a - b);
+  ttlbTimes.sort((a, b) => a - b);
+  const avgTtfb = totalRequests > 0 ? Math.round(totalTtfb / ttfbTimes.length) : 0;
+  const avgTtlb = totalRequests > 0 ? Math.round(totalTtlb / ttlbTimes.length) : 0;
+
+  const cacheHits = (cacheStatuses['HIT'] || 0) + (cacheStatuses['TCP_HIT'] || 0);
+  const cacheMisses = (cacheStatuses['MISS'] || 0) + (cacheStatuses['TCP_MISS'] || 0);
+  const cacheHitRatio = totalRequests > 0 ? ((cacheHits / totalRequests) * 100).toFixed(1) : 0;
+
+  return {
+    summary: {
+      totalRequests,
+      avgTtfb,
+      avgTtlb,
+      cacheHitRatio,
+      cacheHits,
+      cacheMisses
+    },
+    filterOptions: {
+      methods: Object.keys(methods).sort(),
+      statuses: Object.keys(statuses).map(s => parseInt(s)).sort((a, b) => a - b),
+      cacheStatuses: Object.keys(cacheStatuses).sort(),
+      countries: Object.keys(countries).sort(),
+      pops: Object.keys(pops).sort(),
+      hosts: Object.keys(hosts).sort()
+    },
+    methods,
+    statuses,
+    cacheStatuses,
+    countries,
+    pops,
+    hosts,
+    timeline
+  };
+}
+
 module.exports = {
   analyzeLogFile,
   getSummary,
@@ -690,5 +1005,14 @@ module.exports = {
   buildEntryFilter,
   countMatchingEntries,
   countMatchingEntriesWithLevels,
-  extractPage
+  extractPage,
+  buildRequestFilter,
+  countMatchingRequestEntries,
+  extractRequestPage,
+  buildCDNFilter,
+  countMatchingCDNEntries,
+  extractCDNPage,
+  analyzeRequestLog,
+  analyzeCDNLog,
+  detectLogType
 };

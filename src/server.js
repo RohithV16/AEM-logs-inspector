@@ -4,12 +4,12 @@ const fs = require('fs');
 const crypto = require('crypto');
 const os = require('os');
 const { WebSocketServer } = require('ws');
-const { analyzeLogFile, getSummary, filterByDateRange, filterByLogger, filterByThread, filterByRegex, exportToCSV, exportToJSON, generatePDFSummary, getTimelineData, getLoggerDistribution, normalizeMessage, analyzeEntries, getSummaryFromEntries, analyzeLogFileStream, getSummaryStream, getTimelineDataStream, getLoggerDistributionStream, filterAndAnalyzeStream, getHourlyHeatmap, getThreadDistribution, getTrendComparison, parseAllLevels, isSafeRegex, analyzeAllInOnePass, buildEntryFilter, countMatchingEntries, countMatchingEntriesWithLevels, extractPage } = require('./analyzer');
-const { parseLogFile, parseAllLevels: parseAllLevelsParser, createLogStream, getFileSize } = require('./parser');
+const { analyzeLogFile, getSummary, filterByDateRange, filterByLogger, filterByThread, filterByRegex, exportToCSV, exportToJSON, generatePDFSummary, getTimelineData, getLoggerDistribution, normalizeMessage, analyzeEntries, getSummaryFromEntries, analyzeLogFileStream, getSummaryStream, getTimelineDataStream, getLoggerDistributionStream, filterAndAnalyzeStream, getHourlyHeatmap, getThreadDistribution, getTrendComparison, parseAllLevels, isSafeRegex, analyzeAllInOnePass, buildEntryFilter, countMatchingEntries, countMatchingEntriesWithLevels, extractPage, buildRequestFilter, countMatchingRequestEntries, extractRequestPage, buildCDNFilter, countMatchingCDNEntries, extractCDNPage, analyzeRequestLog, analyzeCDNLog, detectLogType } = require('./analyzer');
+const { parseLogFile, parseAllLevels: parseAllLevelsParser, createLogStream, getFileSize, createRequestLogStream, createCDNLogStream } = require('./parser');
 const { watchLogFile } = require('./tailer');
 const { checkAlerts } = require('./alerts');
 
-const ALLOWED_LOG_EXTENSIONS = ['.log', '.txt'];
+const ALLOWED_LOG_EXTENSIONS = ['.log', '.txt', '.gz'];
 const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB for file path mode
 const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;    // 500MB for browser upload mode
 const STREAM_THRESHOLD = 50 * 1024 * 1024;    // 50MB - use streaming above this
@@ -73,27 +73,63 @@ app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
 app.post('/api/raw-events', async (req, res) => {
   const { filePath, fileContent, page = 1, perPage = 50, level, search, from, to,
-          logger, thread, package: pkg, exception, category } = req.body;
+          logger, thread, package: pkg, exception, category,
+          method, httpStatus, minResponseTime, maxResponseTime, pod,
+          cache, country, pop, host, minTtfb, maxTtfb } = req.body;
   let tempFile = null;
 
   try {
     let targetPath;
 
     if (fileContent) {
-      // File upload mode (for small files)
       if (fileContent.length > MAX_UPLOAD_SIZE) {
         throw new Error('File too large for upload. Use file path mode.');
       }
       tempFile = createTempFile(fileContent);
       targetPath = tempFile;
     } else if (filePath) {
-      // File path mode (server-side, up to 5GB)
       targetPath = validateFilePath(filePath);
     } else {
       throw new Error('File path or content required.');
     }
 
-    // Validate regex if search is provided
+    const logType = await detectLogType(targetPath);
+
+    if (logType === 'request') {
+      const filter = buildRequestFilter({ search, from, to, method, httpStatus, minResponseTime, maxResponseTime, pod });
+      const total = await countMatchingRequestEntries(targetPath, filter);
+      const skip = (page - 1) * perPage;
+      const events = await extractRequestPage(targetPath, filter, skip, perPage);
+
+      return res.json({
+        success: true,
+        total,
+        page: Number(page),
+        perPage: Number(perPage),
+        totalPages: Math.ceil(total / perPage),
+        events,
+        logType: 'request'
+      });
+    }
+
+    if (logType === 'cdn') {
+      const filter = buildCDNFilter({ search, from, to, method, httpStatus, cache, country, pop, host, minTtfb, maxTtfb });
+      const total = await countMatchingCDNEntries(targetPath, filter);
+      const skip = (page - 1) * perPage;
+      const events = await extractCDNPage(targetPath, filter, skip, perPage);
+
+      return res.json({
+        success: true,
+        total,
+        page: Number(page),
+        perPage: Number(perPage),
+        totalPages: Math.ceil(total / perPage),
+        events,
+        logType: 'cdn'
+      });
+    }
+
+    // Default: error log
     if (search) {
       const regexValidation = isSafeRegex(search);
       if (regexValidation && regexValidation.error) {
@@ -101,13 +137,8 @@ app.post('/api/raw-events', async (req, res) => {
       }
     }
 
-    // Build filter function (compiled once, used in both passes)
     const filter = buildEntryFilter({ level, search, from, to, logger, thread, package: pkg, exception, category });
-
-    // PASS 1: Count matching entries + level counts (single streaming pass)
     const { total, levelCounts } = await countMatchingEntriesWithLevels(targetPath, filter);
-
-    // PASS 2: Extract page (streaming, stops early after page is full)
     const skip = (page - 1) * perPage;
     const events = await extractPage(targetPath, filter, skip, perPage);
 
@@ -118,7 +149,8 @@ app.post('/api/raw-events', async (req, res) => {
       perPage: Number(perPage),
       totalPages: Math.ceil(total / perPage),
       events,
-      levelCounts
+      levelCounts,
+      logType: 'error'
     });
   } catch (error) {
     res.json({ success: false, error: sanitizeErrorMessage(error.message) });
@@ -221,19 +253,53 @@ app.post('/api/analyze', async (req, res) => {
       throw new Error('Please select a file or enter a file path.');
     }
 
-    // Single-pass analysis: summary + results + filter options in one streaming pass
-    const result = await analyzeAllInOnePass(targetPath);
+    // Detect log type
+    const logType = await detectLogType(targetPath);
 
-    res.json({
-      success: true,
-      summary: result.summary,
-      results: result.results,
-      loggers: result.loggers,
-      threads: result.threads,
-      packages: result.packages,
-      exceptions: result.exceptions,
-      timeline: result.timeline
-    });
+    let result;
+    if (logType === 'request') {
+      result = await analyzeRequestLog(targetPath);
+      res.json({
+        success: true,
+        logType: 'request',
+        summary: result.summary,
+        filterOptions: result.filterOptions,
+        results: result.results,
+        methods: result.methods,
+        statuses: result.statuses,
+        pods: result.pods,
+        timeline: result.timeline
+      });
+    } else if (logType === 'cdn') {
+      result = await analyzeCDNLog(targetPath);
+      res.json({
+        success: true,
+        logType: 'cdn',
+        summary: result.summary,
+        filterOptions: result.filterOptions,
+        methods: result.methods,
+        statuses: result.statuses,
+        cacheStatuses: result.cacheStatuses,
+        countries: result.countries,
+        pops: result.pops,
+        hosts: result.hosts,
+        timeline: result.timeline
+      });
+    } else {
+      // Default: error log
+      result = await analyzeAllInOnePass(targetPath);
+      res.json({
+        success: true,
+        logType: 'error',
+        summary: result.summary,
+        results: result.results,
+        loggers: result.loggers,
+        threads: result.threads,
+        packages: result.packages,
+        exceptions: result.exceptions,
+        timeline: result.timeline
+      });
+    }
   } catch (error) {
     res.json({ success: false, error: sanitizeErrorMessage(error.message) });
   } finally {
@@ -247,122 +313,108 @@ app.post('/api/filter', async (req, res) => {
   let tempFile = null;
   
   try {
-    let results, summary, timeline, loggerDist, filterError = null;
-    let hourlyHeatmap = {};
-    let threadDist = {};
+    let targetPath;
     
     if (fileContent) {
       if (fileContent.length > MAX_UPLOAD_SIZE) {
         throw new Error('File content too large. Maximum size is 500MB.');
       }
       tempFile = createTempFile(fileContent);
-      const useStream = shouldUseStream(tempFile);
-      
-      if (useStream) {
-        const stream = createLogStream(tempFile);
-        const filtered = await filterAndAnalyzeStream(stream, filters);
-        results = filtered.results;
-        summary = filtered.summary;
-        filterError = filtered.filterError;
-
-        const [tlResult, ldResult] = await Promise.all([
-          (async () => { const s = createLogStream(tempFile); return getTimelineDataStream(s); })(),
-          (async () => { const s = createLogStream(tempFile); return getLoggerDistributionStream(s); })()
-        ]);
-        timeline = tlResult;
-        loggerDist = ldResult;
-      } else {
-        let entries = parseLogFile(tempFile);
-
-        if (filters) {
-          if (filters.startDate || filters.endDate) {
-            const start = filters.startDate ? new Date(filters.startDate) : null;
-            const end = filters.endDate ? new Date(filters.endDate) : null;
-            if (start && isNaN(start.getTime())) throw new Error('Invalid start date');
-            if (end && isNaN(end.getTime())) throw new Error('Invalid end date');
-            entries = filterByDateRange(entries, start, end);
-          }
-          if (filters.logger) {
-            const result = filterByLogger(entries, filters.logger);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          if (filters.thread) {
-            const result = filterByThread(entries, filters.thread);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          if (filters.regex) {
-            const result = filterByRegex(entries, filters.regex);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-        }
-
-        results = analyzeEntries(entries);
-        summary = getSummaryFromEntries(entries);
-        timeline = getTimelineData(entries);
-        loggerDist = getLoggerDistribution(entries);
-        hourlyHeatmap = getHourlyHeatmap(entries);
-        threadDist = getThreadDistribution(entries);
-      }
+      targetPath = tempFile;
     } else if (filePath) {
-      const validatedPath = validateFilePath(filePath);
-      const useStream = shouldUseStream(validatedPath);
-
-      if (useStream) {
-        const stream = createLogStream(validatedPath);
-        const filtered = await filterAndAnalyzeStream(stream, filters);
-        results = filtered.results;
-        summary = filtered.summary;
-        filterError = filtered.filterError;
-
-        const [tlResult, ldResult] = await Promise.all([
-          (async () => { const s = createLogStream(validatedPath); return getTimelineDataStream(s); })(),
-          (async () => { const s = createLogStream(validatedPath); return getLoggerDistributionStream(s); })()
-        ]);
-        timeline = tlResult;
-        loggerDist = ldResult;
-      } else {
-        let entries = parseLogFile(validatedPath);
-        
-        if (filters) {
-          if (filters.startDate || filters.endDate) {
-            const start = filters.startDate ? new Date(filters.startDate) : null;
-            const end = filters.endDate ? new Date(filters.endDate) : null;
-            if (start && isNaN(start.getTime())) throw new Error('Invalid start date');
-            if (end && isNaN(end.getTime())) throw new Error('Invalid end date');
-            entries = filterByDateRange(entries, start, end);
-          }
-          if (filters.logger) {
-            const result = filterByLogger(entries, filters.logger);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          if (filters.thread) {
-            const result = filterByThread(entries, filters.thread);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          if (filters.regex) {
-            const result = filterByRegex(entries, filters.regex);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-        }
-        
-        results = analyzeEntries(entries);
-        summary = getSummaryFromEntries(entries);
-        timeline = getTimelineData(entries);
-        loggerDist = getLoggerDistribution(entries);
-        hourlyHeatmap = getHourlyHeatmap(entries);
-        threadDist = getThreadDistribution(entries);
-      }
+      targetPath = validateFilePath(filePath);
     } else {
       throw new Error('No file path or content provided');
     }
     
-    res.json({ success: true, summary, results, timeline, loggerDist, filterError, hourlyHeatmap, threadDist });
+    const logType = await detectLogType(targetPath);
+    
+    if (logType === 'request') {
+      const result = await analyzeRequestLog(targetPath);
+      return res.json({
+        success: true,
+        logType: 'request',
+        summary: result.summary,
+        timeline: result.timeline,
+        methods: result.methods,
+        statuses: result.statuses,
+        pods: result.pods
+      });
+    }
+    
+    if (logType === 'cdn') {
+      const result = await analyzeCDNLog(targetPath);
+      return res.json({
+        success: true,
+        logType: 'cdn',
+        summary: result.summary,
+        timeline: result.timeline,
+        methods: result.methods,
+        statuses: result.statuses,
+        cacheStatuses: result.cacheStatuses,
+        countries: result.countries,
+        pops: result.pops,
+        hosts: result.hosts
+      });
+    }
+    
+    // Default: error log - existing logic
+    let results, summary, timeline, loggerDist, filterError = null;
+    let hourlyHeatmap = {};
+    let threadDist = {};
+    
+    const useStream = shouldUseStream(targetPath);
+    
+    if (useStream) {
+      const stream = createLogStream(targetPath);
+      const filtered = await filterAndAnalyzeStream(stream, filters);
+      results = filtered.results;
+      summary = filtered.summary;
+      filterError = filtered.filterError;
+
+      const [tlResult, ldResult] = await Promise.all([
+        (async () => { const s = createLogStream(targetPath); return getTimelineDataStream(s); })(),
+        (async () => { const s = createLogStream(targetPath); return getLoggerDistributionStream(s); })()
+      ]);
+      timeline = tlResult;
+      loggerDist = ldResult;
+    } else {
+      let entries = parseLogFile(targetPath);
+
+      if (filters) {
+        if (filters.startDate || filters.endDate) {
+          const start = filters.startDate ? new Date(filters.startDate) : null;
+          const end = filters.endDate ? new Date(filters.endDate) : null;
+          if (start && isNaN(start.getTime())) throw new Error('Invalid start date');
+          if (end && isNaN(end.getTime())) throw new Error('Invalid end date');
+          entries = filterByDateRange(entries, start, end);
+        }
+        if (filters.logger) {
+          const result = filterByLogger(entries, filters.logger);
+          if (result.error) filterError = result.error;
+          entries = result.entries;
+        }
+        if (filters.thread) {
+          const result = filterByThread(entries, filters.thread);
+          if (result.error) filterError = result.error;
+          entries = result.entries;
+        }
+        if (filters.regex) {
+          const result = filterByRegex(entries, filters.regex);
+          if (result.error) filterError = result.error;
+          entries = result.entries;
+        }
+      }
+
+      results = analyzeEntries(entries);
+      summary = getSummaryFromEntries(entries);
+      timeline = getTimelineData(entries);
+      loggerDist = getLoggerDistribution(entries);
+      hourlyHeatmap = getHourlyHeatmap(entries);
+      threadDist = getThreadDistribution(entries);
+    }
+
+    res.json({ success: true, summary, results, timeline, loggerDist, filterError, hourlyHeatmap, threadDist, logType: 'error' });
   } catch (error) {
     res.json({ success: false, error: sanitizeErrorMessage(error.message) });
   } finally {

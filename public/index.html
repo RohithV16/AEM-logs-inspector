@@ -33,13 +33,23 @@
     <aside id="sidebar" class="sidebar">
       <div class="filter-card">
 
-        <!-- Search -->
+        <!-- Search (shared) -->
         <div class="filter-input-group">
           <input type="text" id="searchInput" class="filter-input" placeholder="Search messages...">
         </div>
 
-        <!-- Advanced Filters -->
-        <div class="filter-input-group">
+        <!-- Date Range (shared) -->
+        <p class="filter-section-label">Date range</p>
+        <div class="filter-input-group" style="margin-bottom:1.5rem;">
+          <input type="datetime-local" id="startDate" class="filter-input" placeholder="From">
+          <input type="datetime-local" id="endDate" class="filter-input" placeholder="To">
+        </div>
+
+        <!-- Regex (shared) -->
+        <input type="text" id="regexFilter" class="filter-input" placeholder="Regex pattern..." title="Filter by regex pattern (case-insensitive)" style="margin-bottom:1.5rem;">
+
+        <!-- ERROR LOG FILTERS (default) -->
+        <div id="errorFilters" class="log-filter-panel">
           <div class="searchable-dropdown" id="loggerDropdown">
             <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
             <select id="loggerSelect" class="dropdown-select" size="6">
@@ -64,22 +74,70 @@
               <option value="">All Exceptions</option>
             </select>
           </div>
+          <select id="categoryFilter" class="filter-select" title="Filter by auto-detected error category" style="margin-bottom:1.5rem;">
+            <option value="">All Categories</option>
+          </select>
         </div>
 
-        <!-- Date Range -->
-        <p class="filter-section-label">Date range</p>
-        <div class="filter-input-group" style="margin-bottom:1.5rem;">
-          <input type="datetime-local" id="startDate" class="filter-input" placeholder="From">
-          <input type="datetime-local" id="endDate" class="filter-input" placeholder="To">
+        <!-- REQUEST LOG FILTERS -->
+        <div id="requestFilters" class="log-filter-panel hidden">
+          <p class="filter-section-label">HTTP Method</p>
+          <div class="searchable-dropdown" id="methodDropdown">
+            <select id="methodFilter" class="filter-select" style="margin-bottom:1rem;">
+              <option value="">All Methods</option>
+            </select>
+          </div>
+          <p class="filter-section-label">HTTP Status</p>
+          <div class="searchable-dropdown" id="statusDropdown">
+            <select id="statusFilter" class="filter-select" style="margin-bottom:1rem;">
+              <option value="">All Status Codes</option>
+            </select>
+          </div>
+          <p class="filter-section-label">Response Time</p>
+          <div class="filter-input-group" style="margin-bottom:1rem;">
+            <input type="number" id="minResponseTime" class="filter-input" placeholder="Min ms" min="0">
+            <input type="number" id="maxResponseTime" class="filter-input" placeholder="Max ms" min="0">
+          </div>
+          <p class="filter-section-label">Pod</p>
+          <div class="searchable-dropdown" id="podDropdown">
+            <select id="podFilter" class="filter-select" style="margin-bottom:1rem;">
+              <option value="">All Pods</option>
+            </select>
+          </div>
         </div>
 
-        <!-- Regex -->
-        <input type="text" id="regexFilter" class="filter-input" placeholder="Regex pattern..." title="Filter by regex pattern (case-insensitive)" style="margin-bottom:1.5rem;">
-
-        <!-- Category -->
-        <select id="categoryFilter" class="filter-select" title="Filter by auto-detected error category" style="margin-bottom:1.5rem;">
-          <option value="">All Categories</option>
-        </select>
+        <!-- CDN LOG FILTERS -->
+        <div id="cdnFilters" class="log-filter-panel hidden">
+          <p class="filter-section-label">HTTP Method</p>
+          <select id="cdnMethodFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All Methods</option>
+          </select>
+          <p class="filter-section-label">HTTP Status</p>
+          <select id="cdnStatusFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All Status Codes</option>
+          </select>
+          <p class="filter-section-label">Cache Status</p>
+          <select id="cacheStatusFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All Cache Status</option>
+          </select>
+          <p class="filter-section-label">Country</p>
+          <select id="countryFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All Countries</option>
+          </select>
+          <p class="filter-section-label">POP</p>
+          <select id="popFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All POPs</option>
+          </select>
+          <p class="filter-section-label">TTFB (ms)</p>
+          <div class="filter-input-group" style="margin-bottom:1rem;">
+            <input type="number" id="minTtfb" class="filter-input" placeholder="Min" min="0">
+            <input type="number" id="maxTtfb" class="filter-input" placeholder="Max" min="0">
+          </div>
+          <p class="filter-section-label">Host</p>
+          <select id="hostFilter" class="filter-select" style="margin-bottom:1rem;">
+            <option value="">All Hosts</option>
+          </select>
+        </div>
 
         <!-- Action Buttons -->
         <div class="filter-actions">
@@ -100,7 +158,7 @@
       <div class="upload-card">
         <div class="upload-row">
           <div id="dropZone" class="drop-zone compact">
-            <input type="file" id="fileInput" accept=".log,.txt" style="display:none;">
+            <input type="file" id="fileInput" accept=".log,.txt,.gz" style="display:none;">
             <span class="drop-zone-icon">&#128193;</span>
             <span class="drop-zone-text">Choose a file</span>
           </div>
@@ -120,25 +178,6 @@
         <p class="empty-hint">&#128161; Pro tip: You can also watch a log file in real-time for new entries</p>
       </div>
 
-      <!-- Summary Cards -->
-      <div id="summary" class="summary-section hidden">
-        <div class="summary-card error">
-          <span class="label">Total Errors</span>
-          <span class="value" id="totalErrors">0</span>
-        </div>
-        <div class="summary-card warning">
-          <span class="label">Total Warnings</span>
-          <span class="value" id="totalWarnings">0</span>
-        </div>
-        <div class="summary-card error">
-          <span class="label">Unique Errors</span>
-          <span class="value" id="uniqueErrors">0</span>
-        </div>
-        <div class="summary-card warning">
-          <span class="label">Unique Warnings</span>
-          <span class="value" id="uniqueWarnings">0</span>
-        </div>
-      </div>
 
       <!-- Charts Tab Content -->
       <div id="chartsTab" class="charts-tab hidden">

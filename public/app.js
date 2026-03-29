@@ -1,7 +1,6 @@
 const fileInput = document.getElementById('fileInput');
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
-const summarySection = document.getElementById('summary');
 const searchInput = document.getElementById('searchInput');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
@@ -33,7 +32,8 @@ let loggerChart = null;
 let threadChart = null;
 let heatmapChart = null;
 let rawEventsData = [];
-let lastFileContent = null; // Store file content after upload for reuse
+let lastFileContent = null;
+let currentLogType = 'error'; // Store file content after upload for reuse
 
 /* ============================================================
    Toast
@@ -279,25 +279,63 @@ async function analyzeFilePath(filePath) {
 }
 
 function handleAnalysisComplete(data) {
-  displaySummary(data.summary);
+  // Store the log type
+  currentLogType = data.logType || 'error';
+  
+  // Show/hide filter panels based on log type
+  const filterPanel = document.getElementById(currentLogType + 'Filters');
+  document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
+  if (filterPanel) filterPanel.classList.remove('hidden');
+  
   exportCsvBtn.disabled = false;
   exportJsonBtn.disabled = false;
   exportPdfBtn.disabled = false;
   document.getElementById('exportAllBtn').disabled = false;
 
-  // Populate category filter
-  const categories = [...new Set(data.results.map(r => r.category || 'Other'))].sort();
-  categoryFilter.innerHTML = '<option value="">All Categories</option>';
-  categories.forEach(c => {
-    categoryFilter.innerHTML += `<option value="${c}">${c}</option>`;
-  });
+  // Populate filters based on log type
+  if (currentLogType === 'error') {
+    // Error log filters
+    const categories = data.results ? [...new Set(data.results.map(r => r.category || 'Other'))].sort() : [];
+    if (categoryFilter) {
+      categoryFilter.innerHTML = '<option value="">All Categories</option>';
+      categories.forEach(c => {
+        categoryFilter.innerHTML += `<option value="${c}">${c}</option>`;
+      });
+    }
 
-  // Populate searchable dropdowns
-  if (data.loggers || data.threads || data.packages || data.exceptions) {
-    populateFilterDropdowns(data.loggers, data.threads, data.packages, data.exceptions);
+    if (data.loggers || data.threads || data.packages || data.exceptions) {
+      populateFilterDropdowns(data.loggers, data.threads, data.packages, data.exceptions);
+    }
+  } else if (currentLogType === 'request') {
+    // Request log filters
+    const filterOptions = data.filterOptions || {};
+    populateSelect('methodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('statusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('podFilter', filterOptions.pods || [], 'All Pods');
+  } else if (currentLogType === 'cdn') {
+    // CDN log filters
+    const filterOptions = data.filterOptions || {};
+    populateSelect('cdnMethodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('cdnStatusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('cacheStatusFilter', filterOptions.cacheStatuses || [], 'All Cache Status');
+    populateSelect('countryFilter', filterOptions.countries || [], 'All Countries');
+    populateSelect('popFilter', filterOptions.pops || [], 'All POPs');
+    populateSelect('hostFilter', filterOptions.hosts || [], 'All Hosts');
   }
 
   fetchRawEvents(1);
+}
+
+function populateSelect(selectId, options, defaultLabel) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  select.innerHTML = `<option value="">${defaultLabel}</option>`;
+  options.forEach(opt => {
+    const option = document.createElement('option');
+    option.value = opt;
+    option.textContent = opt;
+    select.appendChild(option);
+  });
 }
 
 /* ============================================================
@@ -464,18 +502,8 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
 }
 
 /* ============================================================
-   Summary
+   Filter Dropdowns
    ============================================================ */
-
-function displaySummary(summary) {
-  const el = (id) => document.getElementById(id);
-  const set = (id, val) => { const e = el(id); if (e) e.textContent = val; };
-  set('totalErrors', summary.totalErrors);
-  set('totalWarnings', summary.totalWarnings);
-  set('uniqueErrors', summary.uniqueErrors);
-  set('uniqueWarnings', summary.uniqueWarnings);
-  summarySection.classList.remove('hidden');
-}
 
 function populateFilterDropdowns(loggers, threads, packages, exceptions) {
   const populate = (select, items, allLabel) => {
@@ -706,7 +734,6 @@ async function fetchRawEvents(page = 1) {
   const body = {
     page,
     perPage: 50,
-    level: rawEventsLevel,
     search: rawEventsSearch
   };
 
@@ -717,15 +744,48 @@ async function fetchRawEvents(page = 1) {
     body.fileContent = lastFileContent;
   }
 
+  // Date filters
   if (startDate.value) body.from = startDate.value;
   if (endDate.value) body.to = endDate.value;
 
-  if (loggerFilter.value) body.logger = loggerFilter.value;
-  if (threadFilter.value) body.thread = threadFilter.value;
-  if (packageFilter.value) body.package = packageFilter.value;
-  if (exceptionFilter.value) body.exception = exceptionFilter.value;
-  if (regexFilter.value) body.regex = regexFilter.value;
-  if (categoryFilter.value) body.category = categoryFilter.value;
+  // Error log filters
+  if (currentLogType === 'error') {
+    body.level = rawEventsLevel;
+    if (loggerFilter.value) body.logger = loggerFilter.value;
+    if (threadFilter.value) body.thread = threadFilter.value;
+    if (packageFilter.value) body.package = packageFilter.value;
+    if (exceptionFilter.value) body.exception = exceptionFilter.value;
+    if (regexFilter.value) body.regex = regexFilter.value;
+    if (categoryFilter.value) body.category = categoryFilter.value;
+  } else if (currentLogType === 'request') {
+    const methodFilter = document.getElementById('methodFilter');
+    const statusFilter = document.getElementById('statusFilter');
+    const podFilter = document.getElementById('podFilter');
+    const minTimeFilter = document.getElementById('minResponseTime');
+    const maxTimeFilter = document.getElementById('maxResponseTime');
+    if (methodFilter?.value) body.method = methodFilter.value;
+    if (statusFilter?.value) body.httpStatus = statusFilter.value;
+    if (podFilter?.value) body.pod = podFilter.value;
+    if (minTimeFilter?.value) body.minResponseTime = minTimeFilter.value;
+    if (maxTimeFilter?.value) body.maxResponseTime = maxTimeFilter.value;
+  } else if (currentLogType === 'cdn') {
+    const cdnMethodFilter = document.getElementById('cdnMethodFilter');
+    const cdnStatusFilter = document.getElementById('cdnStatusFilter');
+    const cacheStatusFilter = document.getElementById('cacheStatusFilter');
+    const countryFilter = document.getElementById('countryFilter');
+    const popFilter = document.getElementById('popFilter');
+    const hostFilter = document.getElementById('hostFilter');
+    const minTtfbFilter = document.getElementById('minTtfb');
+    const maxTtfbFilter = document.getElementById('maxTtfb');
+    if (cdnMethodFilter?.value) body.method = cdnMethodFilter.value;
+    if (cdnStatusFilter?.value) body.httpStatus = cdnStatusFilter.value;
+    if (cacheStatusFilter?.value) body.cache = cacheStatusFilter.value;
+    if (countryFilter?.value) body.country = countryFilter.value;
+    if (popFilter?.value) body.pop = popFilter.value;
+    if (hostFilter?.value) body.host = hostFilter.value;
+    if (minTtfbFilter?.value) body.minTtfb = minTtfbFilter.value;
+    if (maxTtfbFilter?.value) body.maxTtfb = maxTtfbFilter.value;
+  }
 
   rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading events...</div>';
 
@@ -737,6 +797,7 @@ async function fetchRawEvents(page = 1) {
     const data = await response.json();
     if (!data.success) { showToast(data.error, 'error'); return; }
 
+    // Update level counts for error logs
     if (data.levelCounts) {
       const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
       set('countALL', data.levelCounts.ALL);
@@ -747,7 +808,7 @@ async function fetchRawEvents(page = 1) {
     }
 
     rawEventsData = data.events;
-    renderRawEvents(data.events, data.total, data.page, data.perPage);
+    renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || currentLogType);
   } catch (e) {
     showToast('Failed to load events: ' + e.message, 'error');
   }
@@ -771,7 +832,7 @@ function extractedExceptionBadge(evt) {
   return '';
 }
 
-function renderRawEvents(events, total, page, perPage) {
+function renderRawEvents(events, total, page, perPage, logType = 'error') {
   const totalPages = Math.ceil(total / perPage);
   const start = (page - 1) * perPage + 1;
   const end = Math.min(page * perPage, total);
@@ -779,40 +840,13 @@ function renderRawEvents(events, total, page, perPage) {
   let html = `<div class="pagination-info">Showing ${start}-${end} of ${total} events</div>`;
 
   events.forEach((evt, i) => {
-    const hasStack = evt.stackTrace && evt.stackTrace.trim();
-    const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
-
-    const jsonEntry = {
-      timestamp: evt.timestamp,
-      thread: evt.thread,
-      level: evt.level,
-      logger: evt.logger,
-      message: evt.message,
-      ...(hasStack && { stackTrace: evt.stackTrace })
-    };
-    const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
-
-    html += `
-      <div class="raw-event ${evt.level.toLowerCase()}" data-index="${i}" style="animation-delay:${i * 30}ms">
-        <div class="raw-event-header">
-          <span class="level-badge ${evt.level}">${evt.level}</span>
-          ${extractedExceptionBadge(evt)}
-          <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-          <span class="event-logger" title="${escapeHtml(evt.logger)}">${escapeHtml((evt.logger || '').split('.').pop())}</span>
-          <span class="event-message" title="${escapeHtml(evt.message)}">${highlightText(evt.message, rawEventsSearch || searchInput.value)}</span>
-          <span class="expand-arrow">&#9654;</span>
-        </div>
-        <div class="event-details">
-          <div class="event-details-tabs">
-            ${hasStack ? '<button class="detail-tab active" data-tab="stack">Stack Trace</button>' : ''}
-            <button class="detail-tab ${hasStack ? '' : 'active'}" data-tab="json">JSON</button>
-            <button class="copy-stack-btn" onclick="event.stopPropagation(); copyEventJson(this, ${i})">Copy JSON</button>
-          </div>
-          ${hasStack ? `<div class="tab-content stack-tab active"><div class="stack-trace-wrapper"><div class="stack-trace">${stackHtml}</div></div></div>` : ''}
-          <div class="tab-content json-tab ${hasStack ? '' : 'active'}">${jsonHtml}</div>
-        </div>
-      </div>
-    `;
+    if (logType === 'request') {
+      html += renderRequestEvent(evt, i);
+    } else if (logType === 'cdn') {
+      html += renderCDNEvent(evt, i);
+    } else {
+      html += renderErrorEvent(evt, i);
+    }
   });
 
   if (totalPages > 1) {
@@ -873,6 +907,113 @@ function formatStackTrace(trace) {
     }
     return escaped;
   }).join('\n');
+}
+
+function renderErrorEvent(evt, i) {
+  const hasStack = evt.stackTrace && evt.stackTrace.trim();
+  const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
+
+  const jsonEntry = {
+    timestamp: evt.timestamp,
+    thread: evt.thread,
+    level: evt.level,
+    logger: evt.logger,
+    message: evt.message,
+    ...(hasStack && { stackTrace: evt.stackTrace })
+  };
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+
+  return `
+    <div class="raw-event ${evt.level.toLowerCase()}" data-index="${i}" style="animation-delay:${i * 30}ms">
+      <div class="raw-event-header">
+        <span class="level-badge ${evt.level}">${evt.level}</span>
+        ${extractedExceptionBadge(evt)}
+        <span class="event-time">${escapeHtml(evt.timestamp)}</span>
+        <span class="event-logger" title="${escapeHtml(evt.logger)}">${escapeHtml((evt.logger || '').split('.').pop())}</span>
+        <span class="event-message" title="${escapeHtml(evt.message)}">${highlightText(evt.message, rawEventsSearch || searchInput.value)}</span>
+        <span class="expand-arrow">&#9654;</span>
+      </div>
+      <div class="event-details">
+        <div class="event-details-tabs">
+          ${hasStack ? '<button class="detail-tab active" data-tab="stack">Stack Trace</button>' : ''}
+          <button class="detail-tab ${hasStack ? '' : 'active'}" data-tab="json">JSON</button>
+          <button class="copy-stack-btn" onclick="event.stopPropagation(); copyEventJson(this, ${i})">Copy JSON</button>
+        </div>
+        ${hasStack ? `<div class="tab-content stack-tab active"><div class="stack-trace-wrapper"><div class="stack-trace">${stackHtml}</div></div></div>` : ''}
+        <div class="tab-content json-tab ${hasStack ? '' : 'active'}">${jsonHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRequestEvent(evt, i) {
+  const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const jsonEntry = {
+    timestamp: evt.timestamp,
+    method: evt.method,
+    url: evt.url,
+    status: evt.status,
+    responseTime: evt.responseTime,
+    pod: evt.pod
+  };
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+
+  return `
+    <div class="raw-event ${statusClass}" data-index="${i}" style="animation-delay:${i * 30}ms">
+      <div class="raw-event-header">
+        <span class="level-badge ${statusClass}">${evt.method}</span>
+        <span class="event-time">${escapeHtml(evt.timestamp)}</span>
+        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch || searchInput.value)}</span>
+        <span class="status-badge ${statusClass}">${evt.status}</span>
+        <span class="response-time">${evt.responseTime}ms</span>
+        <span class="expand-arrow">&#9654;</span>
+      </div>
+      <div class="event-details">
+        <div class="event-details-tabs">
+          <button class="detail-tab active" data-tab="json">JSON</button>
+          <button class="copy-stack-btn" onclick="event.stopPropagation(); copyEventJson(this, ${i})">Copy JSON</button>
+        </div>
+        <div class="tab-content json-tab active">${jsonHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCDNEvent(evt, i) {
+  const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const jsonEntry = {
+    timestamp: evt.timestamp,
+    method: evt.method,
+    url: evt.url,
+    status: evt.status,
+    ttfb: evt.ttfb,
+    ttlb: evt.ttlb,
+    cache: evt.cache,
+    clientCountry: evt.clientCountry,
+    pop: evt.pop,
+    host: evt.host
+  };
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+
+  return `
+    <div class="raw-event ${statusClass}" data-index="${i}" style="animation-delay:${i * 30}ms">
+      <div class="raw-event-header">
+        <span class="level-badge ${statusClass}">${evt.method}</span>
+        <span class="event-time">${escapeHtml(evt.timestamp)}</span>
+        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch || searchInput.value)}</span>
+        <span class="status-badge ${statusClass}">${evt.status}</span>
+        <span class="cache-badge">${evt.cache || '-'}</span>
+        <span class="expand-arrow">&#9654;</span>
+      </div>
+      <div class="event-details">
+        <div class="event-details-tabs">
+          <button class="detail-tab active" data-tab="json">JSON</button>
+          <button class="copy-stack-btn" onclick="event.stopPropagation(); copyEventJson(this, ${i})">Copy JSON</button>
+        </div>
+        <div class="tab-content json-tab active">${jsonHtml}</div>
+      </div>
+    </div>
+  `;
 }
 
 window.copyEventJson = (btn, index) => {
