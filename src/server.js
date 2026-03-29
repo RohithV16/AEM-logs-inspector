@@ -561,7 +561,7 @@ const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws) => {
   let watcher = null;
-  ws.on('message', (msg) => {
+  ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg);
 
@@ -595,8 +595,43 @@ wss.on('connection', (ws) => {
           fileSize
         }));
 
-        // Run single-pass analysis with progress callback
-        // Estimate ~300 bytes per line for progress calculation
+        // Detect log type and run appropriate analysis
+        const logType = await detectLogType(validatedPath);
+        
+        if (logType === 'request') {
+          const result = await analyzeRequestLog(validatedPath);
+          return ws.send(JSON.stringify({
+            type: 'complete',
+            analysisId,
+            logType: 'request',
+            summary: result.summary,
+            filterOptions: result.filterOptions,
+            methods: result.methods,
+            statuses: result.statuses,
+            pods: result.pods,
+            timeline: result.timeline
+          }));
+        }
+        
+        if (logType === 'cdn') {
+          const result = await analyzeCDNLog(validatedPath);
+          return ws.send(JSON.stringify({
+            type: 'complete',
+            analysisId,
+            logType: 'cdn',
+            summary: result.summary,
+            filterOptions: result.filterOptions,
+            methods: result.methods,
+            statuses: result.statuses,
+            cacheStatuses: result.cacheStatuses,
+            countries: result.countries,
+            pops: result.pops,
+            hosts: result.hosts,
+            timeline: result.timeline
+          }));
+        }
+        
+        // Default: error log
         analyzeAllInOnePass(validatedPath, (progress) => {
           const estimatedBytes = progress.totalLines * 300;
           const percent = Math.min(Math.round((estimatedBytes / fileSize) * 100), 99);
@@ -612,6 +647,7 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({
             type: 'complete',
             analysisId,
+            logType: 'error',
             summary: result.summary,
             results: result.results,
             loggers: result.loggers,
