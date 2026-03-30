@@ -33,20 +33,12 @@
     <aside id="sidebar" class="sidebar">
       <div class="filter-card">
 
-        <!-- Search (shared) -->
-        <div class="filter-input-group">
-          <input type="text" id="searchInput" class="filter-input" placeholder="Search messages...">
-        </div>
-
         <!-- Date Range (shared) -->
         <p class="filter-section-label">Date range</p>
         <div class="filter-input-group" style="margin-bottom:1.5rem;">
           <input type="datetime-local" id="startDate" class="filter-input" placeholder="From">
           <input type="datetime-local" id="endDate" class="filter-input" placeholder="To">
         </div>
-
-        <!-- Regex (shared) -->
-        <input type="text" id="regexFilter" class="filter-input" placeholder="Regex pattern..." title="Filter by regex pattern (case-insensitive)" style="margin-bottom:1.5rem;">
 
         <!-- ERROR LOG FILTERS (default) -->
         <div id="errorFilters" class="log-filter-panel">
@@ -161,12 +153,6 @@
       <!-- File Upload Card -->
       <div class="upload-card">
         <div class="upload-row">
-          <div id="dropZone" class="drop-zone compact">
-            <input type="file" id="fileInput" accept=".log,.txt,.gz" style="display:none;">
-            <span class="drop-zone-icon">&#128193;</span>
-            <span class="drop-zone-text">Choose a file</span>
-          </div>
-          <span class="upload-or">or</span>
           <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/aem-error.log">
           <button id="analyzeBtn" class="upload-btn">Analyze</button>
           <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
@@ -178,7 +164,7 @@
       <div id="emptyState" class="empty-state">
         <div class="empty-icon">&#128269;</div>
         <h2>No log file loaded</h2>
-        <p>Select a <code>.log</code> file or enter a server path, then click <strong>Analyze</strong>.</p>
+        <p>Enter a server file path, then click <strong>Analyze</strong>.</p>
         <p class="empty-hint">&#128161; Pro tip: You can also watch a log file in real-time for new entries</p>
       </div>
 

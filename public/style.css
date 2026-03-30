@@ -1184,9 +1184,10 @@ body {
   background: var(--color-bg-card);
   color: var(--color-text-primary);
   font-size: 13px;
-  overflow-y: auto;
   display: none;
   cursor: pointer;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 .dropdown-select option {
   padding: 6px 10px;
@@ -1194,6 +1195,9 @@ body {
 }
 .dropdown-select option:hover {
   background: var(--color-bg-hover);
+}
+.searchable-dropdown.open {
+  z-index: 1000;
 }
 .searchable-dropdown.open .dropdown-select {
   display: block;

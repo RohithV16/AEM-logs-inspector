@@ -1,10 +1,7 @@
-const fileInput = document.getElementById('fileInput');
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
-const searchInput = document.getElementById('searchInput');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
-const regexFilter = document.getElementById('regexFilter');
 const categoryFilter = document.getElementById('categoryFilter');
 const startDate = document.getElementById('startDate');
 const endDate = document.getElementById('endDate');
@@ -19,7 +16,6 @@ const darkModeBtn = document.getElementById('darkModeBtn');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
-const dropZone = document.getElementById('dropZone');
 const loggerSelect = document.getElementById('loggerSelect');
 const threadSelect = document.getElementById('threadSelect');
 const packageFilter = document.getElementById('packageFilter');
@@ -32,7 +28,6 @@ let loggerChart = null;
 let threadChart = null;
 let heatmapChart = null;
 let rawEventsData = [];
-let lastFileContent = null;
 let currentLogType = 'error';
 let selectedLoggers = [];
 let selectedPackages = [];
@@ -140,7 +135,6 @@ presetSelect.addEventListener('change', () => {
   if (preset) {
     loggerFilter.value = preset.logger || '';
     threadFilter.value = preset.thread || '';
-    regexFilter.value = preset.regex || '';
     startDate.value = preset.startDate || '';
     endDate.value = preset.endDate || '';
   }
@@ -153,7 +147,6 @@ savePresetBtn.addEventListener('click', () => {
   presets[name] = {
     logger: loggerFilter.value,
     thread: threadFilter.value,
-    regex: regexFilter.value,
     startDate: startDate.value,
     endDate: endDate.value
   };
@@ -162,98 +155,20 @@ savePresetBtn.addEventListener('click', () => {
 });
 
 /* ============================================================
-   Drag & Drop
-   ============================================================ */
-
-dropZone.addEventListener('click', () => fileInput.click());
-
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('dragover');
-});
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('dragover');
-});
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files.length > 0) {
-    fileInput.files = e.dataTransfer.files;
-    const name = e.dataTransfer.files[0].name;
-    const textEl = dropZone.querySelector('.drop-zone-text');
-    if (textEl) textEl.textContent = name;
-  }
-});
-fileInput.addEventListener('change', () => {
-  if (fileInput.files.length > 0) {
-    const name = fileInput.files[0].name;
-    const textEl = dropZone.querySelector('.drop-zone-text');
-    if (textEl) textEl.textContent = name;
-    // Restore normal placeholder when file is selected
-    filePathInput.placeholder = '/path/to/aem-error.log';
-  }
-});
-
-/* ============================================================
    Analyze
    ============================================================ */
 
 analyzeBtn.addEventListener('click', async () => {
-  const file = fileInput.files[0];
   const filePath = filePathInput.value.trim();
 
-  const MAX_UPLOAD_SIZE = 500 * 1024 * 1024; // 500MB
-
-  if (file) {
-    // File upload mode (for small files ≤500MB)
-    if (file.size > MAX_UPLOAD_SIZE) {
-      showToast('File too large for upload (>500MB). Enter the server file path instead.', 'error');
-      return;
-    }
-    localStorage.setItem('aem_lastPath', 'file:' + file.name);
-    await analyzeFileUpload(file);
-  } else if (filePath) {
-    // File path mode (server-side, up to 5GB)
+  if (filePath) {
     localStorage.setItem('aem_lastPath', filePath);
     await analyzeFilePath(filePath);
   } else {
-    showToast('Please select a file or enter a file path', 'warning');
+    showToast('Please enter a file path', 'warning');
     return;
   }
 });
-
-async function analyzeFileUpload(file) {
-  analyzeBtn.textContent = 'Uploading...';
-  analyzeBtn.disabled = true;
-  progressText.classList.remove('hidden');
-  progressText.textContent = 'Reading file...';
-  document.getElementById('emptyState').classList.add('hidden');
-
-  try {
-    const content = await file.text();
-    lastFileContent = content; // Store for raw events
-    progressText.textContent = 'Analyzing...';
-
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileContent: content })
-    });
-
-    const data = await response.json();
-    if (!data.success) {
-      showError(data.error);
-      return;
-    }
-    handleAnalysisComplete(data);
-  } catch (error) {
-    showError(error.message);
-  } finally {
-    analyzeBtn.textContent = 'Analyze';
-    analyzeBtn.disabled = false;
-    progressText.classList.add('hidden');
-  }
-}
 
 async function analyzeFilePath(filePath) {
   analyzeBtn.textContent = 'Analyzing...';
@@ -311,8 +226,6 @@ async function analyzeFilePath(filePath) {
     }
   };
 
-  // Clear cached file content - file path mode uses server-side processing
-  lastFileContent = null;
 }
 
 function handleAnalysisComplete(data) {
@@ -394,16 +307,11 @@ chartsToggleBtn.addEventListener('click', () => {
 });
 
 async function fetchChartsData() {
-  const file = fileInput.files[0];
   const filePath = filePathInput.value.trim();
 
-  let body;
-  if (file) {
-    const content = await file.text();
-    body = { fileContent: content, filters: {} };
-  } else if (filePath) {
-    body = { filePath, filters: {} };
-  } else return;
+  if (!filePath) return;
+
+  const body = { filePath, filters: {} };
 
   try {
     const response = await fetch('/api/filter', {
@@ -630,14 +538,16 @@ function renderPackageTags() {
 }
 
 window.removeLogger = (val) => {
-  selectedLoggers = selectedLoggers.filter(v => v !== val);
+  const idx = selectedLoggers.indexOf(val);
+  if (idx !== -1) selectedLoggers.splice(idx, 1);
   const opt = loggerSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
   if (opt) opt.selected = false;
   renderLoggerTags();
 };
 
 window.removePackage = (val) => {
-  selectedPackages = selectedPackages.filter(v => v !== val);
+  const idx = selectedPackages.indexOf(val);
+  if (idx !== -1) selectedPackages.splice(idx, 1);
   const opt = packageSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
   if (opt) opt.selected = false;
   renderPackageTags();
@@ -688,11 +598,17 @@ function filterAndPopulateLoggers() {
     const opt = document.createElement('option');
     opt.value = name;
     opt.textContent = `${name} (${count})`;
+    opt.title = name;
     opt.selected = selectedLoggers.includes(name);
     loggerSelect.appendChild(opt);
   });
   const visibleValues = new Set(Array.from(loggerSelect.options).map(o => o.value));
-  selectedLoggers = selectedLoggers.filter(v => visibleValues.has(v));
+  // Mutate array in-place instead of reassigning to preserve reference
+  for (let i = selectedLoggers.length - 1; i >= 0; i--) {
+    if (!visibleValues.has(selectedLoggers[i])) {
+      selectedLoggers.splice(i, 1);
+    }
+  }
   renderLoggerTags();
 }
 
@@ -701,7 +617,7 @@ function filterAndPopulateLoggers() {
    ============================================================ */
 
 function applyRawEventFilters() {
-  rawEventsSearch = searchInput.value;
+  rawEventsSearch = rawSearchInput.value;
   rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
   fetchRawEvents(1);
 }
@@ -709,18 +625,18 @@ function applyRawEventFilters() {
 applyFiltersBtn.addEventListener('click', applyRawEventFilters);
 
 clearFiltersBtn.addEventListener('click', () => {
-  searchInput.value = '';
+  rawSearchInput.value = '';
+  rawEventsSearch = '';
   loggerFilter.value = '';
   threadFilter.value = '';
   packageFilter.value = '';
   exceptionFilter.value = '';
-  regexFilter.value = '';
   startDate.value = '';
   endDate.value = '';
   
-  // Clear multi-select loggers and packages
-  selectedLoggers = [];
-  selectedPackages = [];
+  // Clear multi-select loggers and packages (mutate in place to preserve references)
+  selectedLoggers.splice(0, selectedLoggers.length);
+  selectedPackages.splice(0, selectedPackages.length);
   if (packageSelect) {
     Array.from(packageSelect.options).forEach(o => {
       o.style.display = '';
@@ -813,7 +729,7 @@ function downloadFile(blob, filename, type) {
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey && e.key === 'f') || (e.key === '/' && document.activeElement.tagName !== 'INPUT')) {
     e.preventDefault();
-    searchInput.focus();
+    rawSearchInput.focus();
   }
   if (e.key === 'Escape') {
     document.activeElement.blur();
@@ -888,23 +804,17 @@ async function fetchRawEvents(page = 1) {
   rawEventsPage = page;
   const filePath = filePathInput.value.trim();
 
-  if (!filePath && !lastFileContent) {
-    showToast('Enter a file path or select a file to view events', 'warning');
+  if (!filePath) {
+    showToast('Enter a file path to view events', 'warning');
     return;
   }
 
   const body = {
     page,
     perPage: 50,
-    search: rawEventsSearch
+    search: rawEventsSearch,
+    filePath
   };
-
-  // Use file path if available, otherwise use stored file content
-  if (filePath) {
-    body.filePath = filePath;
-  } else if (lastFileContent) {
-    body.fileContent = lastFileContent;
-  }
 
   // Date filters
   if (startDate.value) body.from = startDate.value;
@@ -917,7 +827,7 @@ async function fetchRawEvents(page = 1) {
     if (threadFilter.value) body.thread = threadFilter.value;
     if (selectedPackages.length > 0) body.package = selectedPackages;
     if (exceptionFilter.value) body.exception = exceptionFilter.value;
-    if (regexFilter.value) body.regex = regexFilter.value;
+    if (rawSearchInput.value) body.search = rawSearchInput.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
   } else if (currentLogType === 'request') {
     const methodFilter = document.getElementById('methodFilter');
@@ -1083,7 +993,7 @@ function renderErrorEvent(evt, i) {
     message: evt.message,
     ...(hasStack && { stackTrace: evt.stackTrace })
   };
-  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 
   return `
     <div class="raw-event ${evt.level.toLowerCase()}" data-index="${i}" style="animation-delay:${i * 30}ms">
@@ -1092,7 +1002,7 @@ function renderErrorEvent(evt, i) {
         ${extractedExceptionBadge(evt)}
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
         <span class="event-logger" title="${escapeHtml(evt.logger)}">${escapeHtml((evt.logger || '').split('.').pop())}</span>
-        <span class="event-message" title="${escapeHtml(evt.message)}">${highlightText(evt.message, rawEventsSearch || searchInput.value)}</span>
+        <span class="event-message" title="${escapeHtml(evt.message)}">${highlightText(evt.message, rawEventsSearch)}</span>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -1118,14 +1028,14 @@ function renderRequestEvent(evt, i) {
     responseTime: evt.responseTime,
     pod: evt.pod
   };
-  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 
   return `
     <div class="raw-event ${statusClass}" data-index="${i}" style="animation-delay:${i * 30}ms">
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch || searchInput.value)}</span>
+        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="response-time">${evt.responseTime}ms</span>
         <span class="expand-arrow">&#9654;</span>
@@ -1155,14 +1065,14 @@ function renderCDNEvent(evt, i) {
     pop: evt.pop,
     host: evt.host
   };
-  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch || searchInput.value)}</pre>`;
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 
   return `
     <div class="raw-event ${statusClass}" data-index="${i}" style="animation-delay:${i * 30}ms">
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch || searchInput.value)}</span>
+        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="cache-badge">${evt.cache || '-'}</span>
         <span class="expand-arrow">&#9654;</span>
@@ -1279,7 +1189,8 @@ function initMultiSelectDropdown(dropdownId, searchInputId, selectId, selectedAr
     });
   });
 
-  select.addEventListener('click', (e) => {
+  select.addEventListener('mousedown', (e) => {
+    e.preventDefault();
     const opt = e.target.closest('option');
     if (!opt || opt.value === '') return;
 
@@ -1316,25 +1227,13 @@ initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect'
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');
 if (lastPath) {
-  if (lastPath.startsWith('file:')) {
-    // File was uploaded previously - show name and prompt to re-select
-    const fileName = lastPath.substring(5);
-    filePathInput.value = '';
-    filePathInput.placeholder = 'Last used: ' + fileName + ' (re-select to analyze)';
-    console.log('[AEM] Last file uploaded:', fileName);
-  } else {
-    filePathInput.value = lastPath;
-    console.log('[AEM] Restored path:', lastPath);
-  }
+  filePathInput.value = lastPath;
+  console.log('[AEM] Restored path:', lastPath);
 }
 
 // Debounced save on input for instant persistence
 let savePathTimeout;
 filePathInput.addEventListener('input', () => {
-  // Restore normal placeholder when user types
-  if (filePathInput.placeholder.includes('Last used:')) {
-    filePathInput.placeholder = '/path/to/aem-error.log';
-  }
   clearTimeout(savePathTimeout);
   savePathTimeout = setTimeout(() => {
     const val = filePathInput.value.trim();
