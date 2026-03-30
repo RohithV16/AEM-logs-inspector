@@ -20,6 +20,8 @@
     "start": "node src/index.js",
     "dashboard": "node src/server.js",
     "test": "jest",
+    "test:api": "node scripts/test-api.js",
+    "test:api:start": "npm run dashboard & PID=$!; sleep 3; node scripts/test-api.js; kill $PID",
     "lint": "eslint src/**/*.js"
   },
   "dependencies": {

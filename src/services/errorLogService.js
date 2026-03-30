@@ -36,6 +36,7 @@ async function analyzeAllInOnePass(filePath, onProgress) {
   const packages = {};
   const exceptions = {};
   const timeline = {};
+  const levelCounts = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
 
   /* Regex patterns for extracting exception types from log messages and stack traces.
      Using [a-zA-Z] prefix ensures we match valid Java class names, avoiding false positives
@@ -45,6 +46,10 @@ async function analyzeAllInOnePass(filePath, onProgress) {
 
   for await (const entry of stream) {
     totalLines++;
+
+    if (entry.level && levelCounts[entry.level] !== undefined) {
+      levelCounts[entry.level]++;
+    }
 
     if (entry.level === 'ERROR') {
       totalErrors++;
@@ -119,10 +124,10 @@ async function analyzeAllInOnePass(filePath, onProgress) {
        Using hour granularity balances detail with memory efficiency for large logs. */
     if (entry.timestamp) {
       const hour = entry.timestamp.substring(0, 13);
-      if (!timeline[hour]) timeline[hour] = { errors: 0, warnings: 0, total: 0 };
+      if (!timeline[hour]) timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
       timeline[hour].total++;
-      if (entry.level === 'ERROR') timeline[hour].errors++;
-      if (entry.level === 'WARN') timeline[hour].warnings++;
+      if (entry.level === 'ERROR') timeline[hour].ERROR++;
+      if (entry.level === 'WARN') timeline[hour].WARN++;
     }
 
     if (onProgress && totalLines % 100000 === 0) {
@@ -147,7 +152,8 @@ async function analyzeAllInOnePass(filePath, onProgress) {
     threads,
     packages,
     exceptions,
-    timeline
+    timeline,
+    levelCounts: { ...levelCounts, ALL: levelCounts.ERROR + levelCounts.WARN + levelCounts.INFO + levelCounts.DEBUG }
   };
 }
 
@@ -272,17 +278,21 @@ async function countMatchingEntriesWithLevels(filePath, levels = ['ERROR', 'WARN
  * @param {Object|function} filters - Filter criteria or pre-built filter function
  * @param {number} page - Page number (1-indexed)
  * @param {number} pageSize - Number of entries per page
- * @returns {Promise<Object>} Object with entries array and total count
+ * @returns {Promise<Object>} Object with entries array, total count, and level counts
  */
 async function extractPage(filePath, filters = {}, page = 1, pageSize = 50) {
   const stream = createLogStream(filePath, { levels: 'all' });
   const filter = typeof filters === 'function' ? filters : buildEntryFilter(filters);
   const entries = [];
+  const levelCounts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
   let skipped = (page - 1) * pageSize;
   let pageCount = 0;
 
   for await (const entry of stream) {
     if (filter(entry)) {
+      levelCounts.ALL++;
+      if (entry.level) levelCounts[entry.level] = (levelCounts[entry.level] || 0) + 1;
+      
       if (skipped > 0) {
         skipped--;
       } else if (entries.length < pageSize) {
@@ -292,7 +302,7 @@ async function extractPage(filePath, filters = {}, page = 1, pageSize = 50) {
     }
   }
 
-  return { entries, total: pageCount };
+  return { entries, total: pageCount, levelCounts };
 }
 
 module.exports = {

@@ -111,7 +111,8 @@ async function handleAnalyzeAction(ws, filePath) {
         threads: result.threads,
         packages: result.packages,
         exceptions: result.exceptions,
-        timeline: result.timeline
+        timeline: result.timeline,
+        levelCounts: result.levelCounts
       };
     }
 

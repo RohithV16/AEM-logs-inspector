@@ -135,8 +135,33 @@ presetSelect.addEventListener('change', () => {
   if (preset) {
     loggerFilter.value = preset.logger || '';
     threadFilter.value = preset.thread || '';
+    packageFilter.value = preset.package || '';
+    exceptionFilter.value = preset.exception || '';
+    categoryFilter.value = preset.category || '';
     startDate.value = preset.startDate || '';
     endDate.value = preset.endDate || '';
+    
+    if (preset.level) {
+      document.querySelectorAll('.level-chip').forEach(c => c.classList.remove('active'));
+      const chip = document.querySelector(`.level-chip[data-level="${preset.level}"]`);
+      if (chip) chip.classList.add('active');
+    }
+    
+    document.getElementById('methodFilter').value = preset.method || '';
+    document.getElementById('statusFilter').value = preset.httpStatus || '';
+    document.getElementById('podFilter').value = preset.pod || '';
+    document.getElementById('minResponseTime').value = preset.minResponseTime || '';
+    document.getElementById('maxResponseTime').value = preset.maxResponseTime || '';
+    document.getElementById('cdnMethodFilter').value = preset.cdnMethod || '';
+    document.getElementById('cdnStatusFilter').value = preset.cdnStatus || '';
+    document.getElementById('cacheStatusFilter').value = preset.cacheStatus || '';
+    document.getElementById('countryFilter').value = preset.country || '';
+    document.getElementById('popFilter').value = preset.pop || '';
+    document.getElementById('hostFilter').value = preset.host || '';
+    document.getElementById('minTtfb').value = preset.minTtfb || '';
+    document.getElementById('maxTtfb').value = preset.maxTtfb || '';
+    
+    showToast(`Preset "${presetSelect.value}" loaded`, 'success');
   }
 });
 
@@ -144,14 +169,33 @@ savePresetBtn.addEventListener('click', () => {
   const name = prompt('Enter preset name:');
   if (!name) return;
   const presets = safeJsonParse(localStorage.getItem('filterPresets'));
+  const rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
   presets[name] = {
     logger: loggerFilter.value,
     thread: threadFilter.value,
+    package: packageFilter.value,
+    exception: exceptionFilter.value,
+    category: categoryFilter.value,
     startDate: startDate.value,
-    endDate: endDate.value
+    endDate: endDate.value,
+    level: rawEventsLevel,
+    method: document.getElementById('methodFilter')?.value || '',
+    httpStatus: document.getElementById('statusFilter')?.value || '',
+    pod: document.getElementById('podFilter')?.value || '',
+    minResponseTime: document.getElementById('minResponseTime')?.value || '',
+    maxResponseTime: document.getElementById('maxResponseTime')?.value || '',
+    cdnMethod: document.getElementById('cdnMethodFilter')?.value || '',
+    cdnStatus: document.getElementById('cdnStatusFilter')?.value || '',
+    cacheStatus: document.getElementById('cacheStatusFilter')?.value || '',
+    country: document.getElementById('countryFilter')?.value || '',
+    pop: document.getElementById('popFilter')?.value || '',
+    host: document.getElementById('hostFilter')?.value || '',
+    minTtfb: document.getElementById('minTtfb')?.value || '',
+    maxTtfb: document.getElementById('maxTtfb')?.value || ''
   };
   localStorage.setItem('filterPresets', JSON.stringify(presets));
   loadPresets();
+  showToast(`Preset "${name}" saved`, 'success');
 });
 
 /* ============================================================
@@ -244,6 +288,17 @@ function handleAnalysisComplete(data) {
   exportJsonBtn.disabled = false;
   exportPdfBtn.disabled = false;
   document.getElementById('exportAllBtn').disabled = false;
+
+  // Update level counts for error logs
+  if (data.levelCounts) {
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
+    const lc = data.levelCounts;
+    set('countALL', (lc.ERROR || 0) + (lc.WARN || 0) + (lc.INFO || 0) + (lc.DEBUG || 0));
+    set('countERROR', lc.ERROR);
+    set('countWARN', lc.WARN);
+    set('countINFO', lc.INFO);
+    set('countDEBUG', lc.DEBUG);
+  }
 
   // Populate filters based on log type
   if (currentLogType === 'error') {

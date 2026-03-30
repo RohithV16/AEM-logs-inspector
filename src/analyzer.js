@@ -159,10 +159,10 @@ function getTimelineData(entries) {
   for (const entry of entries) {
     if (entry.timestamp) {
       const hour = entry.timestamp.substring(0, 13);
-      if (!timeline[hour]) timeline[hour] = { errors: 0, warnings: 0, total: 0 };
+      if (!timeline[hour]) timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
       timeline[hour].total++;
-      if (entry.level === 'ERROR') timeline[hour].errors++;
-      if (entry.level === 'WARN') timeline[hour].warnings++;
+      if (entry.level === 'ERROR') timeline[hour].ERROR++;
+      if (entry.level === 'WARN') timeline[hour].WARN++;
     }
   }
   
@@ -231,10 +231,10 @@ async function getTimelineDataStream(stream) {
   for await (const entry of stream) {
     if (entry.timestamp) {
       const hour = entry.timestamp.substring(0, 13);
-      if (!timeline[hour]) timeline[hour] = { errors: 0, warnings: 0, total: 0 };
+      if (!timeline[hour]) timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
       timeline[hour].total++;
-      if (entry.level === 'ERROR') timeline[hour].errors++;
-      if (entry.level === 'WARN') timeline[hour].warnings++;
+      if (entry.level === 'ERROR') timeline[hour].ERROR++;
+      if (entry.level === 'WARN') timeline[hour].WARN++;
     }
   }
   

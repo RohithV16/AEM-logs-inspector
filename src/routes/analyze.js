@@ -77,7 +77,8 @@ function createAnalyzeRouter() {
           threads: result.threads,
           packages: result.packages,
           exceptions: result.exceptions,
-          timeline: result.timeline
+          timeline: result.timeline,
+          levelCounts: result.levelCounts
         });
       }
     } catch (error) {

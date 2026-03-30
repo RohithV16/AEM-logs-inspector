@@ -81,9 +81,9 @@ function createEventsRouter() {
       /* Build filter with support for level, logger, thread, package, exception, category */
       const filter = buildEntryFilter({ level, search, from, to, logger, thread, package: pkg, exception, category });
       const skip = (page - 1) * perPage;
-      const { entries: events, total } = await extractPage(targetPath, filter, skip, perPage);
+      const { entries: events, total, levelCounts } = await extractPage(targetPath, filter, skip, perPage);
 
-      /* Return paginated results with total count for client-side pagination UI */
+      /* Return paginated results with total count and level counts for filter chips */
       res.json({
         success: true,
         total,
@@ -91,6 +91,7 @@ function createEventsRouter() {
         perPage: Number(perPage),
         totalPages: Math.ceil(total / perPage),
         events,
+        levelCounts,
         logType: 'error'
       });
     } catch (error) {
