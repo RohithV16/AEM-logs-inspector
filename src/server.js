@@ -13,6 +13,7 @@ const { PORT } = require('./utils/constants');
 
 /* === Route Imports === */
 const createAnalyzeRouter = require('./routes/analyze');
+const createMultiErrorRouter = require('./routes/multiError');
 const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
@@ -29,6 +30,7 @@ app.use(express.static('public'));
 
 /* Mount API routes */
 app.use('/api', createAnalyzeRouter());
+app.use('/api', createMultiErrorRouter());
 app.use('/api', createFilterRouter());
 app.use('/api', createEventsRouter());
 app.use('/api', createExportRouter());

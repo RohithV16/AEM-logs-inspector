@@ -37,6 +37,13 @@ describe('error log HTTP request filters', () => {
     expect(entry.requestPath).toBe('/bin/wcmcommand');
   });
 
+  test('parseLine does not treat plain message words as loggers', () => {
+    const entry = parseLine('16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.mandg.core.utils.ArticleUtils] as without in from which the asset failed');
+
+    expect(entry.logger).toBe('');
+    expect(entry.message).toBe('as without in from which the asset failed');
+  });
+
   test('buildEntryFilter supports httpMethod and requestPath for error logs', () => {
     const entry = parseLine('09.02.2026 23:59:07.330 [author-pod-1] *WARN* [208.127.46.120 [1770681547310] GET /content/site/page.html HTTP/1.1] com.example.Logger Something happened');
     const matchingFilter = buildEntryFilter({ httpMethod: 'GET', requestPath: '/content/site' });

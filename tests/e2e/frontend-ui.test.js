@@ -1,6 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const yaml = require('js-yaml');
 
 const CONFIG_PATH = path.join(__dirname, 'config.yaml');
@@ -13,6 +14,12 @@ const REQUEST_LOG = path.join(TEST_DATA_DIR, config.logs.request);
 const CDN_LOG = path.join(TEST_DATA_DIR, config.logs.cdn);
 
 const TIMEOUTS = config.timeouts;
+
+function writeTempErrorLog(dir, name, lines) {
+  const filePath = path.join(dir, name);
+  fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+  return filePath;
+}
 
 test.describe('AEM Log Inspector - Frontend UI Tests', () => {
   test.beforeEach(async ({ page }) => {
@@ -211,7 +218,73 @@ test.describe('AEM Log Inspector - Frontend UI Tests', () => {
     await expect(rawEvents).toBeVisible();
   });
 
-  test.skip('13. Pagination navigation works (next/prev)', async ({ page }) => {
+  test('13. Multi-error analysis filters merged results by package and logger', async ({ page }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-ui-batch-'));
+    const errorOne = writeTempErrorLog(tempDir, 'error-one.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.mandg.core.utils.ArticleUtils] Failed request',
+      'java.lang.RuntimeException: boom'
+    ]);
+    const errorTwo = writeTempErrorLog(tempDir, 'error-two.log', [
+      '16.03.2026 14:31:15.123 [qtp-2] *ERROR* [com.mandg.core.utils.OtherUtils] Another failure',
+      'java.lang.IllegalStateException: broken'
+    ]);
+    const errorThree = writeTempErrorLog(tempDir, 'error-three.log', [
+      '16.03.2026 14:32:15.123 [qtp-3] *ERROR* [com.other.Logger] Different failure',
+      'java.lang.IllegalArgumentException: no'
+    ]);
+
+    await page.locator('#filePath').fill(`${errorOne},${errorTwo},${errorThree}`);
+    await page.locator('#analyzeBtn').click();
+
+    await expect(page.locator('#errorFilters')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#countALL')).toContainText('3');
+    await expect(page.locator('#loggerResults .token-picker-option')).toHaveCount(3);
+    await expect(page.locator('#rawEvents .raw-event')).toHaveCount(3);
+
+    await page.locator('#packageFilter').fill('com.mandg');
+    await page.locator('#packageResults .token-picker-option[data-value="com.mandg"]').click();
+
+    await expect(page.locator('#countALL')).toContainText('2', { timeout: 10000 });
+    await expect(page.locator('#rawEvents .raw-event')).toHaveCount(2, { timeout: 10000 });
+
+    await page.locator('#loggerFilter').fill('ArticleUtils');
+    await page.locator('#loggerFilter').press('Enter');
+
+    await expect(page.locator('#countALL')).toContainText('1', { timeout: 10000 });
+    await expect(page.locator('#rawEvents .raw-event')).toHaveCount(1, { timeout: 10000 });
+    await expect(page.locator('#loggerTags .filter-tag')).toHaveCount(1);
+  });
+
+  test('14. Multi-error exception filter narrows merged results', async ({ page }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-ui-exception-'));
+    const fileOne = writeTempErrorLog(tempDir, 'exception-one.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.mandg.one.ServiceA] Failed request',
+      'java.io.IOException: disk not ready'
+    ]);
+    const fileTwo = writeTempErrorLog(tempDir, 'exception-two.log', [
+      '16.03.2026 14:31:15.123 [qtp-2] *ERROR* [com.mandg.two.ServiceB] Another failure',
+      'java.io.IOException: cache miss'
+    ]);
+    const fileThree = writeTempErrorLog(tempDir, 'exception-three.log', [
+      '16.03.2026 14:32:15.123 [qtp-3] *ERROR* [com.mandg.three.ServiceC] Different failure',
+      'java.lang.IllegalStateException: broken'
+    ]);
+
+    await page.locator('#filePath').fill(`${fileOne},${fileTwo},${fileThree}`);
+    await page.locator('#analyzeBtn').click();
+
+    await expect(page.locator('#errorFilters')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('#countALL')).toContainText('3', { timeout: 10000 });
+
+    await page.locator('#exceptionFilter').fill('java.io.IOException');
+    await page.locator('#exceptionFilter').press('Enter');
+
+    await expect(page.locator('#exceptionSelect')).toHaveValue('java.io.IOException', { timeout: 10000 });
+    await expect(page.locator('#countALL')).toContainText('2', { timeout: 10000 });
+    await expect(page.locator('#rawEvents .raw-event')).toHaveCount(2, { timeout: 10000 });
+  });
+
+  test.skip('14. Pagination navigation works (next/prev)', async ({ page }) => {
     // Skipped - requires more investigation into pagination loading
     // The pagination element exists but content loads asynchronously
   });

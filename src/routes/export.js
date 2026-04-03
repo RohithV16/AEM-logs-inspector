@@ -1,7 +1,7 @@
 /* === Imports === */
 const express = require('express');
 const { exportToCSV, exportToJSON, generatePDFSummary } = require('../exporter');
-const { collectBatchEvents } = require('../services/batchAnalysisService');
+const { collectMultiErrorEvents } = require('../services/multiErrorAnalysisService');
 const { checkAlerts } = require('../alerts');
 const { sanitizeErrorMessage } = require('../utils/files');
 
@@ -13,14 +13,23 @@ function createExportRouter() {
   const router = express.Router();
 
   async function resolveExportResults(body) {
-    if (body && body.input) {
-      return collectBatchEvents(body.input, {
-        advancedRules: body.advancedRules,
-        search: body.search,
+    if (body && body.mode === 'multi-error' && body.input) {
+      const filters = body.filters || {};
+      return collectMultiErrorEvents(body.input, {
+        advancedRules: body.advancedRules || filters.advancedRules,
+        search: body.search || filters.search,
+        level: filters.level || filters.severity || body.level || body.severity,
+        logger: filters.logger || body.logger,
+        thread: filters.thread || body.thread,
+        package: filters.package || body.package,
+        exception: filters.exception || body.exception,
+        category: filters.category || body.category,
+        startDate: filters.startDate || body.startDate,
+        endDate: filters.endDate || body.endDate,
+        from: filters.from || body.from,
+        to: filters.to || body.to,
         hourOfDay: body.hourOfDay,
-        severity: body.severity,
-        logType: body.logType,
-        sourceFile: body.sourceFile
+        sourceFile: filters.sourceFile || body.sourceFile
       }, { includeStackTrace: true });
     }
 

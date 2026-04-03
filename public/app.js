@@ -1,7 +1,5 @@
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
-const analyzeBatchBtn = document.getElementById('analyzeBatchBtn');
-const batchFeatureIcon = document.getElementById('batchFeatureIcon');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -17,9 +15,6 @@ const exportPdfBtn = document.getElementById('exportPdfBtn');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
-const addBatchPathBtn = document.getElementById('addBatchPathBtn');
-const clearBatchPathsBtn = document.getElementById('clearBatchPathsBtn');
-const batchPathList = document.getElementById('batchPathList');
 const loggerResults = document.getElementById('loggerResults');
 const threadSelect = document.getElementById('threadSelect');
 const packageFilter = document.getElementById('packageFilter');
@@ -28,24 +23,25 @@ const exceptionFilter = document.getElementById('exceptionFilter');
 const exceptionSelect = document.getElementById('exceptionSelect');
 const packageVisibleCount = document.getElementById('packageVisibleCount');
 const loggerVisibleCount = document.getElementById('loggerVisibleCount');
+const packageSelectionHint = document.getElementById('packageSelectionHint');
+const loggerSelectionHint = document.getElementById('loggerSelectionHint');
 const threadVisibleCount = document.getElementById('threadVisibleCount');
 const exceptionVisibleCount = document.getElementById('exceptionVisibleCount');
-const correlationPanel = document.getElementById('correlationPanel');
-const correlationSummary = document.getElementById('correlationSummary');
-const correlationFilters = document.getElementById('correlationFilters');
-const correlationEvents = document.getElementById('correlationEvents');
 const advancedSearchRules = document.getElementById('advancedSearchRules');
 const addSearchRuleBtn = document.getElementById('addSearchRuleBtn');
 const clearSearchRulesBtn = document.getElementById('clearSearchRulesBtn');
 const runSearchBuilderBtn = document.getElementById('runSearchBuilderBtn');
+const sidebar = document.getElementById('sidebar');
+const sidebarBody = document.getElementById('sidebarBody');
+const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 
 let timelineChart = null;
 let loggerChart = null;
 let threadChart = null;
 let heatmapChart = null;
-let correlationChart = null;
 let rawEventsData = [];
 let currentLogType = 'error';
+let currentAnalysisMode = 'single';
 let currentBatchInput = null;
 let currentBatchSummary = null;
 let selectedLoggers = [];
@@ -58,22 +54,85 @@ let packageThreadsByPackage = {};
 let packageExceptionsByPackage = {};
 let visiblePackageOptionCount = 0;
 let visibleLoggerOptionCount = 0;
-let correlationData = null;
-let correlationState = {
-  hourOfDay: '',
-  severity: '',
-  logType: '',
-  sourceFile: ''
-};
 let advancedRulesState = [];
-let batchPathCounter = 0;
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'aem_sidebarCollapsed';
+const SIDEBAR_COLLAPSE_BREAKPOINT = 768;
+let sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
+
+function isSidebarCollapseSupported() {
+  return window.innerWidth > SIDEBAR_COLLAPSE_BREAKPOINT;
+}
+
+function syncSidebarToggleButton(isCollapsed) {
+  if (!sidebarToggleBtn) return;
+  const label = sidebarToggleBtn.querySelector('.sidebar-toggle-label');
+  const icon = sidebarToggleBtn.querySelector('.sidebar-toggle-icon');
+  if (label) label.textContent = isCollapsed ? 'Expand' : 'Collapse';
+  if (icon) icon.textContent = isCollapsed ? '▶' : '◀';
+  sidebarToggleBtn.setAttribute('aria-expanded', String(!isCollapsed));
+  sidebarToggleBtn.setAttribute('aria-label', isCollapsed ? 'Expand filters panel' : 'Collapse filters panel');
+}
+
+function applySidebarState({ persist = false } = {}) {
+  const shouldCollapse = sidebarCollapsedPreference && isSidebarCollapseSupported();
+  if (sidebar) {
+    sidebar.classList.toggle('collapsed', shouldCollapse);
+  }
+  if (sidebarBody) {
+    sidebarBody.setAttribute('aria-hidden', String(shouldCollapse));
+  }
+  document.body.classList.toggle('sidebar-collapsed', shouldCollapse);
+  syncSidebarToggleButton(shouldCollapse);
+  if (persist) {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsedPreference ? '1' : '0');
+  }
+}
+
+function setSidebarCollapsed(nextCollapsed) {
+  sidebarCollapsedPreference = Boolean(nextCollapsed);
+  applySidebarState({ persist: true });
+}
+
+if (sidebarToggleBtn) {
+  sidebarToggleBtn.addEventListener('click', () => {
+    setSidebarCollapsed(!sidebarCollapsedPreference);
+  });
+}
+
+window.addEventListener('resize', () => {
+  applySidebarState();
+});
 
 function extractExceptionNames(text) {
   if (!text) return [];
   const matches = String(text).match(EXCEPTION_TOKEN_REGEX);
   return matches ? [...new Set(matches)] : [];
+}
+
+function formatDateTimeForDisplay(value) {
+  if (!value) return '';
+  const text = String(value).trim();
+  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  if (isoMatch) {
+    return `${isoMatch[1]} ${isoMatch[2]}`;
+  }
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  if (spaceMatch) {
+    return `${spaceMatch[1]} ${spaceMatch[2]}`;
+  }
+  return text;
+}
+
+function normalizeDateTimeForApi(value) {
+  if (!value) return '';
+  const text = String(value).trim();
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  if (spaceMatch) {
+    return `${spaceMatch[1]}T${spaceMatch[2]}`;
+  }
+  return text;
 }
 
 function setDateRangeBounds(timeline, logType) {
@@ -99,74 +158,15 @@ function setDateRangeBounds(timeline, logType) {
   const first = parseKey(sorted[0]);
   const last = parseKey(sorted[sorted.length - 1]);
 
-  const firstTime = `${first.date}T${first.hour}:00`;
-  const lastTime = `${last.date}T${last.hour}:59`;
+  const firstTime = `${first.date} ${first.hour}:00`;
+  const lastTime = `${last.date} ${last.hour}:59`;
 
-  startDate.min = firstTime;
-  startDate.max = lastTime;
-  startDate.value = firstTime;
-  endDate.min = firstTime;
-  endDate.max = lastTime;
-  endDate.value = lastTime;
-}
-
-function createBatchPathRow(value = '') {
-  const row = document.createElement('div');
-  row.className = 'batch-path-row';
-  row.dataset.rowId = String(++batchPathCounter);
-  row.innerHTML = `
-    <input type="text" class="upload-input compact batch-path-input" placeholder="/path/to/log1.log">
-    <button type="button" class="btn-clear remove-batch-path-btn">Remove</button>
-  `;
-
-  const input = row.querySelector('.batch-path-input');
-  input.value = value;
-
-  row.querySelector('.remove-batch-path-btn').addEventListener('click', () => {
-    if (batchPathList.querySelectorAll('.batch-path-row').length === 1) {
-      input.value = '';
-      saveBatchPathsToStorage();
-      input.focus();
-      return;
-    }
-    row.remove();
-    saveBatchPathsToStorage();
-  });
-
-  input.addEventListener('input', saveBatchPathsToStorage);
-  input.addEventListener('blur', saveBatchPathsToStorage);
-
-  return row;
-}
-
-function ensureBatchPathRow() {
-  if (!batchPathList) return;
-  if (!batchPathList.querySelector('.batch-path-row')) {
-    batchPathList.appendChild(createBatchPathRow());
-  }
-}
-
-function getBatchPaths() {
-  return Array.from(batchPathList.querySelectorAll('.batch-path-input'))
-    .map(input => input.value.trim())
-    .filter(Boolean);
-}
-
-function saveBatchPathsToStorage() {
-  const paths = getBatchPaths();
-  localStorage.setItem('aem_batchPaths', JSON.stringify(paths));
-}
-
-function loadBatchPaths() {
-  if (!batchPathList) return;
-  const stored = safeJsonParse(localStorage.getItem('aem_batchPaths'), []);
-  batchPathList.innerHTML = '';
-
-  if (Array.isArray(stored) && stored.length) {
-    stored.forEach(value => batchPathList.appendChild(createBatchPathRow(value)));
-  } else {
-    batchPathList.appendChild(createBatchPathRow());
-  }
+  startDate.min = formatDateTimeForDisplay(firstTime);
+  startDate.max = formatDateTimeForDisplay(lastTime);
+  startDate.value = formatDateTimeForDisplay(firstTime);
+  endDate.min = formatDateTimeForDisplay(firstTime);
+  endDate.max = formatDateTimeForDisplay(lastTime);
+  endDate.value = formatDateTimeForDisplay(lastTime);
 }
 
 function getSeverityClass(severity) {
@@ -253,14 +253,11 @@ function renderAdvancedRuleBuilder() {
   }
 }
 
-function getBatchInputPayload() {
-  return getBatchPaths();
-}
-
-function addBatchPathRow(value = '') {
-  if (!batchPathList) return;
-  batchPathList.appendChild(createBatchPathRow(value));
-  saveBatchPathsToStorage();
+function parseMultiErrorInput(value) {
+  return String(value || '')
+    .split(/[\n,]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
 }
 
 /* ============================================================
@@ -315,6 +312,7 @@ function clearDropdownSearchInputs() {
   threadFilter.value = '';
   packageFilter.value = '';
   exceptionFilter.value = '';
+  renderSelectionHints();
 }
 
 function selectMultiValues(allowedValues, selectedArray, values = []) {
@@ -334,8 +332,8 @@ function getCurrentErrorPresetState() {
     thread: threadSelect?.value || '',
     exception: exceptionSelect?.value || '',
     category: categoryFilter.value || '',
-    startDate: startDate.value,
-    endDate: endDate.value,
+    startDate: normalizeDateTimeForApi(startDate.value),
+    endDate: normalizeDateTimeForApi(endDate.value),
     level: getActiveErrorLevel()
   };
 }
@@ -371,6 +369,7 @@ function applyCurrentSelectionsToFilterUI() {
   filterAndPopulateLoggers();
   refreshPackageScopedDropdowns();
   renderLoggerTags();
+  renderSelectionHints();
 }
 
 function resetErrorFilterState(options = {}) {
@@ -427,8 +426,8 @@ function applyErrorPresetState(preset = {}) {
   }
 
   categoryFilter.value = preset.category || '';
-  startDate.value = preset.startDate || '';
-  endDate.value = preset.endDate || '';
+  startDate.value = formatDateTimeForDisplay(preset.startDate || '');
+  endDate.value = formatDateTimeForDisplay(preset.endDate || '');
   setActiveErrorLevel(preset.level || 'ALL');
 }
 
@@ -502,6 +501,12 @@ savePresetBtn.addEventListener('click', () => {
 
 analyzeBtn.addEventListener('click', async () => {
   const filePath = filePathInput.value.trim();
+  const multiPaths = parseMultiErrorInput(filePath);
+
+  if (multiPaths.length > 1) {
+    await analyzeBatchInput(multiPaths);
+    return;
+  }
 
   if (filePath) {
     localStorage.setItem('aem_lastPath', filePath);
@@ -512,45 +517,15 @@ analyzeBtn.addEventListener('click', async () => {
   }
 });
 
-analyzeBatchBtn.addEventListener('click', async () => {
-  const input = getBatchInputPayload();
-
-  if (!input.length) {
-    showToast('Please add at least one file path', 'warning');
-    return;
-  }
-
-  localStorage.setItem('aem_batchPaths', JSON.stringify(input));
-  await analyzeBatchInput(input);
-});
-
-if (batchFeatureIcon) {
-  batchFeatureIcon.addEventListener('click', () => {
-    showToast('Batch analysis is hidden in the dashboard for now.', 'info');
-  });
-}
-
-addBatchPathBtn.addEventListener('click', () => {
-  addBatchPathRow();
-});
-
-clearBatchPathsBtn.addEventListener('click', () => {
-  if (!batchPathList) return;
-  batchPathList.innerHTML = '';
-  localStorage.removeItem('aem_batchPaths');
-  batchPathList.appendChild(createBatchPathRow());
-});
-
 async function analyzeBatchInput(input) {
   analyzeBtn.textContent = 'Analyzing...';
-  analyzeBatchBtn.disabled = true;
   analyzeBtn.disabled = true;
   progressText.classList.remove('hidden');
-  progressText.textContent = 'Analyzing batch...';
+  progressText.textContent = 'Analyzing error files...';
   document.getElementById('emptyState').classList.add('hidden');
 
   try {
-    const response = await fetch('/api/analyze/batch', {
+    const response = await fetch('/api/analyze/multi-error', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input, filters: { advancedRules: advancedRulesState } })
@@ -558,17 +533,16 @@ async function analyzeBatchInput(input) {
     const data = await response.json();
 
     if (!data.success) {
-      showError(data.error || 'Batch analysis failed');
+      showError(data.error || 'Multi-error analysis failed');
       return;
     }
 
-    handleBatchAnalysisComplete(data, input);
+    handleMultiErrorAnalysisComplete(data, input);
   } catch (error) {
-    showError('Batch analysis failed: ' + error.message);
+    showError('Multi-error analysis failed: ' + error.message);
   } finally {
     analyzeBtn.textContent = 'Analyze';
     analyzeBtn.disabled = false;
-    analyzeBatchBtn.disabled = false;
     progressText.classList.add('hidden');
   }
 }
@@ -632,11 +606,9 @@ async function analyzeFilePath(filePath) {
 }
 
 function handleAnalysisComplete(data) {
-  correlationPanel.classList.add('hidden');
-  correlationData = null;
+  currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
-  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
   chartsToggleBtn.disabled = false;
 
   // Store the log type
@@ -712,13 +684,11 @@ function handleAnalysisComplete(data) {
   fetchRawEvents(1);
 }
 
-function handleBatchAnalysisComplete(data, input) {
-  currentLogType = 'batch';
+function handleMultiErrorAnalysisComplete(data, input) {
+  currentAnalysisMode = 'multi-error';
+  currentLogType = 'error';
   currentBatchInput = input;
   currentBatchSummary = data.summary || null;
-  correlationData = data.correlation || null;
-  rawEventsData = [];
-  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
   chartsToggleBtn.disabled = true;
   exportCsvBtn.disabled = true;
   exportJsonBtn.disabled = true;
@@ -726,9 +696,20 @@ function handleBatchAnalysisComplete(data, input) {
   document.getElementById('exportAllBtn').disabled = true;
 
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
-  correlationPanel.classList.remove('hidden');
+  const filterPanel = document.getElementById('errorFilters');
+  if (filterPanel) filterPanel.classList.remove('hidden');
+  applyErrorFilterSidebarResponse(data);
+  if (data.levelCounts) {
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
+    const lc = data.levelCounts;
+    set('countALL', lc.ALL);
+    set('countERROR', lc.ERROR);
+    set('countWARN', lc.WARN);
+    set('countINFO', lc.INFO);
+    set('countDEBUG', lc.DEBUG);
+  }
   chartsTab.classList.add('hidden');
-  renderBatchCorrelation(data);
+  fetchRawEvents(1);
 }
 
 function populateSelect(selectId, options, defaultLabel) {
@@ -759,17 +740,16 @@ chartsToggleBtn.addEventListener('click', () => {
 });
 
 async function fetchChartsData() {
+  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
   const filePath = filePathInput.value.trim();
+  if (!isMultiError && !filePath) return;
 
-  if (!filePath) return;
-
-  const body = {
-    filePath,
-    filters: getCurrentLogFilterPayload()
-  };
+  const body = isMultiError
+    ? { input: currentBatchInput, filters: getCurrentErrorFilterPayload() }
+    : { filePath, filters: getCurrentLogFilterPayload() };
 
   try {
-    const response = await fetch('/api/filter', {
+    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -811,8 +791,8 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
         if (elements.length > 0) {
           const dateLabel = dates[elements[0].index];
           const [dd, mm, yyyy] = dateLabel.split('.');
-          startDate.value = `${yyyy}-${mm}-${dd}T00:00`;
-          endDate.value = `${yyyy}-${mm}-${dd}T23:59`;
+          startDate.value = formatDateTimeForDisplay(`${yyyy}-${mm}-${dd} 00:00`);
+          endDate.value = formatDateTimeForDisplay(`${yyyy}-${mm}-${dd} 23:59`);
           applyRawEventFilters();
           showToast(`Filtered to ${dateLabel}`, 'info');
         }
@@ -881,8 +861,17 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
 
   const ctx4 = document.getElementById('heatmapChart').getContext('2d');
   const hourBuckets = {};
-  if (hourlyHeatmap && Array.isArray(hourlyHeatmap)) {
-    hourlyHeatmap.forEach(h => {
+  const heatmapEntries = Array.isArray(hourlyHeatmap)
+    ? hourlyHeatmap
+    : hourlyHeatmap && typeof hourlyHeatmap === 'object' && hourlyHeatmap.heatmap
+      ? Object.entries(hourlyHeatmap.heatmap).flatMap(([hour, days]) => {
+        const total = Object.values(days || {}).reduce((sum, count) => sum + count, 0);
+        return [{ hour: Number(hour), count: total }];
+      })
+      : [];
+
+  if (heatmapEntries.length) {
+    heatmapEntries.forEach(h => {
       if (!hourBuckets[h.hour]) hourBuckets[h.hour] = 0;
       hourBuckets[h.hour] += h.count;
     });
@@ -906,160 +895,6 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       plugins: { title: { display: true, text: 'Events by Hour of Day' } }
     }
   });
-}
-
-function renderBatchCorrelation(data) {
-  const correlation = data.correlation || {};
-  const summary = data.summary || {};
-  const incidents = correlation.incidents || [];
-  const hourOfDaySeverity = correlation.hourOfDaySeverity || {};
-
-  const summaryHtml = [
-    `<div class="summary-card"><strong>${summary.totalFiles || 0}</strong><span>Files</span></div>`,
-    `<div class="summary-card"><strong>${summary.totalEvents || 0}</strong><span>Events</span></div>`,
-    `<div class="summary-card"><strong>${summary.totalErrors || 0}</strong><span>Errors</span></div>`,
-    `<div class="summary-card"><strong>${summary.totalWarnings || 0}</strong><span>Warnings</span></div>`,
-    `<div class="summary-card"><strong>${summary.totalRequests || 0}</strong><span>Requests</span></div>`
-  ].join('');
-  correlationSummary.innerHTML = summaryHtml;
-
-  const incidentsHtml = incidents.slice(0, 8).map((incident, index) => {
-    const sourceText = (incident.sources || []).slice(0, 3).map(s => `${s.name} (${s.count})`).join(', ');
-    const severityText = (incident.severities || []).map(s => `${s.name} (${s.count})`).join(', ');
-    return `
-      <div class="incident-card" data-index="${index}" data-hour="${escapeHtml(getHourFromTimestamp(incident.startTimestamp || ''))}" data-source="${escapeHtml((incident.sources || [])[0]?.name || '')}">
-        <div class="incident-card-header">
-          <strong>${escapeHtml(incident.startTimestamp || '')}</strong>
-          <span>${escapeHtml(incident.lastTimestamp || '')}</span>
-          <span>${incident.total || 0} events</span>
-        </div>
-        <div class="incident-card-meta">
-          <span>${escapeHtml(sourceText || 'No source data')}</span>
-          <span>${escapeHtml(severityText || '')}</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-  correlationFilters.innerHTML = `
-    <div class="correlation-events-header">
-      <h3>Incidents</h3>
-      <p>Click a bar to drill into an hour and severity bucket.</p>
-    </div>
-    <div class="incident-list">${incidentsHtml || '<div class="empty-correlation">No incidents found.</div>'}</div>
-  `;
-
-  correlationFilters.querySelectorAll('.incident-card').forEach(card => {
-    card.addEventListener('click', () => {
-      correlationState.hourOfDay = card.dataset.hour || '';
-      correlationState.severity = '';
-      correlationState.sourceFile = '';
-      renderBatchDrilldown();
-    });
-  });
-
-  const chartCtx = document.getElementById('correlationChart').getContext('2d');
-  const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-  const severityKeys = ['ERROR', 'WARN', 'INFO', 'DEBUG', '2XX', '3XX', '4XX', '5XX'];
-  const datasets = severityKeys.map((severity, index) => {
-    const colorMap = {
-      ERROR: '#DC2626',
-      WARN: '#F59E0B',
-      INFO: '#0EA5E9',
-      DEBUG: '#6B7280',
-      '2XX': '#10B981',
-      '3XX': '#2563EB',
-      '4XX': '#D97706',
-      '5XX': '#991B1B'
-    };
-    return {
-      label: severity,
-      data: labels.map((_, hour) => {
-        const bucket = hourOfDaySeverity[hour];
-        if (!bucket) return 0;
-        return bucket.severityCounts?.[severity] || 0;
-      }),
-      backgroundColor: colorMap[severity],
-      stack: 'severity'
-    };
-  });
-
-  if (correlationChart) correlationChart.destroy();
-  correlationChart = new Chart(chartCtx, {
-    type: 'bar',
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      scales: { x: { stacked: true }, y: { stacked: true } },
-      onClick: (e, elements, chart) => {
-        if (!elements.length) return;
-        const element = elements[0];
-        const hour = String(element.index);
-        const severity = chart.data.datasets[element.datasetIndex].label;
-        correlationState = { hourOfDay: hour, severity, logType: '', sourceFile: '' };
-        renderBatchDrilldown();
-      },
-      plugins: { title: { display: true, text: 'Merged incidents by hour and severity' } }
-    }
-  });
-
-  renderBatchDrilldown();
-}
-
-function renderCorrelationEvents(events, total = events.length, page = 1, perPage = events.length || 1) {
-  if (!correlationEvents) return;
-  const header = correlationState.hourOfDay || correlationState.severity
-    ? `<div class="correlation-active-filter">Filtered by ${escapeHtml([correlationState.hourOfDay !== '' ? `${correlationState.hourOfDay}:00` : '', correlationState.severity].filter(Boolean).join(' / '))}</div>`
-    : '';
-  const pageStart = total ? (page - 1) * perPage + 1 : 0;
-  const pageEnd = total ? Math.min(page * perPage, total) : 0;
-
-  correlationEvents.innerHTML = `
-    <div class="correlation-events-header">
-      <h3>Correlation Events</h3>
-      ${header}
-      <p>Showing ${pageStart}-${pageEnd} of ${total}</p>
-    </div>
-    <div class="incident-list">
-      ${events.map((event, index) => renderCorrelationEvent(event, index)).join('')}
-      ${!events.length ? '<div class="empty-correlation">No events match the current drill-down.</div>' : ''}
-    </div>
-  `;
-
-  correlationEvents.querySelectorAll('.correlation-event').forEach(item => {
-    item.addEventListener('click', () => item.classList.toggle('expanded'));
-  });
-}
-
-function renderBatchDrilldown() {
-  if (!correlationEvents) return;
-  correlationEvents.innerHTML = `
-    <div class="correlation-events-header">
-      <h3>Correlation Events</h3>
-      <p>Loading batch drill-down...</p>
-    </div>
-  `;
-  fetchRawEvents(1);
-}
-
-function renderCorrelationEvent(event, index) {
-  const jsonHtml = `<pre class="json-view">${escapeHtml(JSON.stringify(event, null, 2))}</pre>`;
-  return `
-    <div class="correlation-event" data-index="${index}">
-      <div class="correlation-event-header">
-        <span class="level-badge ${getSeverityClass(event.severity)}">${escapeHtml(event.severity)}</span>
-        <span class="event-time">${escapeHtml(event.timestamp || '')}</span>
-        <span class="event-source">${escapeHtml(event.sourceName || event.sourceFile || '')}</span>
-        <span class="event-message">${escapeHtml(event.title || event.message || '')}</span>
-        <span class="expand-arrow">&#9654;</span>
-      </div>
-      <div class="event-details">
-        <div class="event-details-tabs">
-          <button class="detail-tab active" data-tab="json">JSON</button>
-        </div>
-        <div class="tab-content json-tab active">${jsonHtml}</div>
-      </div>
-    </div>
-  `;
 }
 
 /* ============================================================
@@ -1146,6 +981,32 @@ function updateCascadeCountBadges() {
   updateFilterCountBadge(packageVisibleCount, selectedPackages.length, packageTotal, 'package', 'selected');
 }
 
+function renderSelectionHint(element, selectedValues, label, searchValue = '') {
+  if (!element) return;
+
+  const query = String(searchValue || '').trim();
+  if (!selectedValues.length) {
+    if (query) {
+      element.innerHTML = `Typing filters matches for <strong>${escapeHtml(query)}</strong>. Press Enter to apply the top match.`;
+    } else {
+      element.innerHTML = `Type to filter ${label}s. Press Enter to apply the top match.`;
+    }
+    return;
+  }
+
+  if (selectedValues.length === 1) {
+    element.innerHTML = `Active ${label}: <strong title="${escapeHtml(selectedValues[0])}">${escapeHtml(selectedValues[0])}</strong>`;
+    return;
+  }
+
+  element.innerHTML = `Active ${label}s: <strong>${selectedValues.length}</strong> selected`;
+}
+
+function renderSelectionHints() {
+  renderSelectionHint(packageSelectionHint, selectedPackages, 'package', packageFilter?.value || '');
+  renderSelectionHint(loggerSelectionHint, selectedLoggers, 'logger', loggerFilter?.value || '');
+}
+
 function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
   for (let i = selectedArray.length - 1; i >= 0; i--) {
     if (!visibleValues.has(selectedArray[i])) {
@@ -1207,13 +1068,14 @@ function populateFilterDropdowns(loggers, threads, packages, exceptions, package
   populateSelectWithSelection(categoryFilter, categories || [], 'All Categories', categoryFilter?.value || '');
 
   updateCascadeCountBadges();
+  renderSelectionHints();
 }
 
 function getCurrentErrorFilterPayload() {
   const filters = {};
 
-  if (startDate.value) filters.startDate = startDate.value;
-  if (endDate.value) filters.endDate = endDate.value;
+  if (startDate.value) filters.startDate = normalizeDateTimeForApi(startDate.value);
+  if (endDate.value) filters.endDate = normalizeDateTimeForApi(endDate.value);
   if (rawEventsLevel && rawEventsLevel !== 'ALL') filters.level = rawEventsLevel;
   if (selectedLoggers.length > 0) filters.logger = [...selectedLoggers];
   if (threadSelect?.value) filters.thread = threadSelect.value;
@@ -1257,6 +1119,14 @@ function getCurrentLogFilterPayload() {
   return getCurrentErrorFilterPayload();
 }
 
+function getActiveErrorFilterPayload() {
+  const filters = getCurrentErrorFilterPayload();
+  if (rawSearchInput?.value) {
+    filters.search = rawSearchInput.value;
+  }
+  return filters;
+}
+
 function applyErrorFilterSidebarResponse(data) {
   if (!data || !data.success) return;
 
@@ -1274,21 +1144,30 @@ function applyErrorFilterSidebarResponse(data) {
 
 let errorFilterRefreshTimer = null;
 let errorFilterRefreshSeq = 0;
+let errorFilterApplyTimer = null;
+
+function scheduleErrorFilterApply() {
+  if (currentLogType !== 'error') return;
+  clearTimeout(errorFilterApplyTimer);
+  errorFilterApplyTimer = setTimeout(() => {
+    applyRawEventFilters();
+  }, 120);
+}
 
 async function refreshErrorFilterOptions() {
   if (currentLogType !== 'error') return;
 
+  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
   const filePath = filePathInput.value.trim();
-  if (!filePath) return;
+  if (!isMultiError && !filePath) return;
 
   const seq = ++errorFilterRefreshSeq;
-  const payload = {
-    filePath,
-    filters: getCurrentErrorFilterPayload()
-  };
+  const payload = isMultiError
+    ? { input: currentBatchInput, filters: getCurrentErrorFilterPayload() }
+    : { filePath, filters: getCurrentErrorFilterPayload() };
 
   try {
-    const response = await fetch('/api/filter', {
+    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1337,6 +1216,7 @@ function renderLoggerTags() {
   container.innerHTML = selectedLoggers.map(val =>
     `<span class="filter-tag"><span title="${escapeHtml(val)}">${escapeHtml(val.split('.').pop())}</span> <button onclick="removeLogger('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
+  renderSelectionHints();
 }
 
 function renderPackageTags() {
@@ -1345,6 +1225,7 @@ function renderPackageTags() {
   container.innerHTML = selectedPackages.map(val =>
     `<span class="filter-tag"><span>${escapeHtml(val)}</span> <button onclick="removePackage('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
+  renderSelectionHints();
 }
 
 function getFilteredPackageEntries() {
@@ -1375,6 +1256,7 @@ function renderPackagePicker() {
   visiblePackageOptionCount = entries.length;
   renderTokenPickerResults(packageResults, entries, selectedPackages);
   updateCascadeCountBadges();
+  renderSelectionHints();
 }
 
 window.removeLogger = (val) => {
@@ -1383,6 +1265,7 @@ window.removeLogger = (val) => {
   renderLoggerTags();
   renderLoggerPicker();
   scheduleErrorFilterRefresh();
+  scheduleErrorFilterApply();
 };
 
 window.removePackage = (val) => {
@@ -1393,6 +1276,7 @@ window.removePackage = (val) => {
   filterAndPopulateLoggers();
   refreshPackageScopedDropdowns();
   scheduleErrorFilterRefresh();
+  scheduleErrorFilterApply();
 };
 
 /* ============================================================
@@ -1421,6 +1305,7 @@ function renderLoggerPicker() {
   visibleLoggerOptionCount = entries.length;
   renderTokenPickerResults(loggerResults, entries, selectedLoggers);
   updateCascadeCountBadges();
+  renderSelectionHints();
 }
 
 function filterAndPopulateLoggers() {
@@ -1436,6 +1321,39 @@ function filterAndPopulateLoggers() {
   renderLoggerPicker();
 }
 
+function getVisibleTokenPickerEntries(resultsEl) {
+  if (!resultsEl) return [];
+  return Array.from(resultsEl.querySelectorAll('.token-picker-option'))
+    .map((button) => ({
+      value: button.dataset.value || '',
+      selected: button.classList.contains('selected'),
+      text: button.querySelector('.token-picker-option-label')?.textContent || ''
+    }))
+    .filter(item => item.value);
+}
+
+function commitTopTokenPickerMatch(resultsEl, query = '') {
+  const candidates = getVisibleTokenPickerEntries(resultsEl);
+  if (!candidates.length) return false;
+
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const exactUnselected = candidates.find(item =>
+    !item.selected && (
+      item.value.toLowerCase() === normalizedQuery ||
+      item.text.toLowerCase() === normalizedQuery ||
+      item.value.toLowerCase().includes(normalizedQuery)
+    )
+  );
+  const firstUnselected = candidates.find(item => !item.selected);
+  const target = exactUnselected || firstUnselected;
+  if (!target) return false;
+
+  const button = resultsEl.querySelector(`.token-picker-option[data-value="${CSS.escape(target.value)}"]`);
+  if (!button) return false;
+  button.click();
+  return true;
+}
+
 /* ============================================================
    Filtering
    ============================================================ */
@@ -1444,7 +1362,7 @@ function applyRawEventFilters() {
   rawEventsSearch = rawSearchInput.value;
   rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
 
-  if (currentLogType === 'batch' && correlationData) {
+  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
     fetchRawEvents(1);
     return;
   }
@@ -1475,7 +1393,6 @@ clearFiltersBtn.addEventListener('click', () => {
   advancedSearchRules.innerHTML = '';
   renderAdvancedRuleBuilder();
   advancedRulesState = [];
-  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
   applyRawEventFilters();
 });
 
@@ -1514,7 +1431,7 @@ runSearchBuilderBtn.addEventListener('click', () => {
    ============================================================ */
 
 exportCsvBtn.addEventListener('click', async () => {
-  const body = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
+  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
   const response = await fetch('/api/export/csv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1524,7 +1441,7 @@ exportCsvBtn.addEventListener('click', async () => {
 });
 
 exportJsonBtn.addEventListener('click', async () => {
-  const body = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
+  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
   const response = await fetch('/api/export/json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1535,8 +1452,8 @@ exportJsonBtn.addEventListener('click', async () => {
 
 exportPdfBtn.addEventListener('click', async () => {
   const summary = getSummaryFromDOM();
-  const body = currentLogType === 'batch'
-    ? { ...getBatchExportPayload(), summary }
+  const body = currentAnalysisMode === 'multi-error'
+    ? { ...getBatchExportPayload(), summary, mode: 'multi-error' }
     : { summary, events: rawEventsData };
 
   const response = await fetch('/api/export/pdf', {
@@ -1550,17 +1467,14 @@ exportPdfBtn.addEventListener('click', async () => {
 function getBatchExportPayload() {
   return {
     input: currentBatchInput,
+    filters: getActiveErrorFilterPayload(),
     advancedRules: advancedRulesState,
-    search: rawEventsSearch,
-    hourOfDay: correlationState.hourOfDay,
-    severity: correlationState.severity,
-    logType: correlationState.logType,
-    sourceFile: correlationState.sourceFile
+    search: rawEventsSearch
   };
 }
 
 function getSummaryFromDOM() {
-  if (currentLogType === 'batch' && currentBatchSummary) {
+  if (currentAnalysisMode === 'multi-error' && currentBatchSummary) {
     return {
       totalErrors: currentBatchSummary.totalErrors || 0,
       totalWarnings: currentBatchSummary.totalWarnings || 0,
@@ -1584,9 +1498,9 @@ document.getElementById('exportAllBtn').addEventListener('click', async () => {
   showToast('Generating all exports...', 'info');
   const summary = getSummaryFromDOM();
   try {
-    const csvBody = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
-    const jsonBody = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
-    const pdfBody = currentLogType === 'batch' ? { ...getBatchExportPayload(), summary } : { summary, events: rawEventsData };
+    const csvBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+    const jsonBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+    const pdfBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), summary, mode: 'multi-error' } : { summary, events: rawEventsData };
     const [csvRes, jsonRes, pdfRes] = await Promise.all([
       fetch('/api/export/csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(csvBody) }),
       fetch('/api/export/json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody) }),
@@ -1691,23 +1605,19 @@ const rawEventsSection = document.getElementById('rawEvents');
 async function fetchRawEvents(page = 1) {
   rawEventsPage = page;
 
-  if (currentLogType === 'batch' && currentBatchInput) {
+  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
     const body = {
       input: currentBatchInput,
       page,
       perPage: 50,
-      search: rawEventsSearch,
-      advancedRules: advancedRulesState,
-      hourOfDay: correlationState.hourOfDay,
-      severity: correlationState.severity,
-      logType: correlationState.logType,
-      sourceFile: correlationState.sourceFile
+      filters: getActiveErrorFilterPayload(),
+      search: rawEventsSearch
     };
 
-    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading batch events...</div>';
+    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading merged error events...</div>';
 
     try {
-      const response = await fetch('/api/raw-events/batch', {
+      const response = await fetch('/api/raw-events/multi-error', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -1719,10 +1629,19 @@ async function fetchRawEvents(page = 1) {
       }
 
       rawEventsData = data.events;
-      renderCorrelationEvents(data.events, data.total, data.page, data.perPage);
-      renderRawEvents(data.events, data.total, data.page, data.perPage, 'batch');
+      if (data.levelCounts) {
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
+        const lc = data.levelCounts;
+        set('countALL', lc.ALL);
+        set('countERROR', lc.ERROR);
+        set('countWARN', lc.WARN);
+        set('countINFO', lc.INFO);
+        set('countDEBUG', lc.DEBUG);
+      }
+      applyErrorFilterSidebarResponse(data);
+      renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || 'error');
     } catch (e) {
-      showToast('Failed to load batch events: ' + e.message, 'error');
+      showToast('Failed to load merged error events: ' + e.message, 'error');
     }
     return;
   }
@@ -1742,8 +1661,8 @@ async function fetchRawEvents(page = 1) {
   };
 
   // Date filters
-  if (startDate.value) body.from = startDate.value;
-  if (endDate.value) body.to = endDate.value;
+  if (startDate.value) body.from = normalizeDateTimeForApi(startDate.value);
+  if (endDate.value) body.to = normalizeDateTimeForApi(endDate.value);
 
   // Error log filters
   if (currentLogType === 'error') {
@@ -1835,8 +1754,6 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
       html += renderRequestEvent(evt, i);
     } else if (logType === 'cdn') {
       html += renderCDNEvent(evt, i);
-    } else if (logType === 'batch') {
-      html += renderBatchEvent(evt, i);
     } else {
       html += renderErrorEvent(evt, i);
     }
@@ -1903,27 +1820,32 @@ function formatStackTrace(trace) {
 }
 
 function renderErrorEvent(evt, i) {
+  const level = evt.level || evt.severity || 'INFO';
+  const loggerName = evt.logger || evt.sourceName || '';
+  const messageText = evt.message || evt.title || '';
   const hasStack = evt.stackTrace && evt.stackTrace.trim();
   const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
 
   const jsonEntry = {
     timestamp: evt.timestamp,
     thread: evt.thread,
-    level: evt.level,
-    logger: evt.logger,
-    message: evt.message,
+    level,
+    logger: loggerName,
+    message: messageText,
+    sourceFile: evt.sourceFile || '',
+    sourceName: evt.sourceName || '',
     ...(hasStack && { stackTrace: evt.stackTrace })
   };
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 
   return `
-    <div class="raw-event ${evt.level.toLowerCase()}" data-index="${i}" style="animation-delay:${i * 30}ms">
+    <div class="raw-event ${String(level).toLowerCase()}" data-index="${i}" style="animation-delay:${i * 30}ms">
       <div class="raw-event-header">
-        <span class="level-badge ${evt.level}">${evt.level}</span>
+        <span class="level-badge ${level}">${level}</span>
         ${extractedExceptionBadge(evt)}
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-logger" title="${escapeHtml(evt.logger)}">${escapeHtml((evt.logger || '').split('.').pop())}</span>
-        <span class="event-message" title="${escapeHtml(evt.message)}">${highlightText(evt.message, rawEventsSearch)}</span>
+        <span class="event-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop())}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -2051,8 +1973,7 @@ document.querySelectorAll('.level-chip').forEach(chip => {
     });
     chip.classList.add('active');
     rawEventsLevel = chip.dataset.level;
-    if (currentLogType === 'batch' && correlationData) {
-      correlationState.severity = chip.dataset.level === 'ALL' ? '' : chip.dataset.level;
+    if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
       fetchRawEvents(1);
     } else {
       scheduleErrorFilterRefresh();
@@ -2065,7 +1986,7 @@ const rawSearchInput = document.getElementById('rawSearchInput');
 const rawSearchBtn = document.getElementById('rawSearchBtn');
 rawSearchBtn.addEventListener('click', () => {
   rawEventsSearch = rawSearchInput.value;
-  if (currentLogType === 'batch' && correlationData) {
+  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
     applyRawEventFilters();
   } else {
     fetchRawEvents(1);
@@ -2074,7 +1995,7 @@ rawSearchBtn.addEventListener('click', () => {
 rawSearchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     rawEventsSearch = rawSearchInput.value;
-    if (currentLogType === 'batch' && correlationData) {
+    if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
       applyRawEventFilters();
     } else {
       fetchRawEvents(1);
@@ -2109,6 +2030,30 @@ function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInput
       const text = (opt.value + ' ' + opt.textContent).toLowerCase();
       opt.style.display = text.includes(query) ? '' : 'none';
     });
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+
+    const query = searchInput.value.trim().toLowerCase();
+    const visibleOptions = Array.from(select.options).filter((opt) => {
+      if (opt.value === '') return false;
+      if (opt.style.display === 'none') return false;
+      if (!query) return true;
+      const text = (opt.value + ' ' + opt.textContent).toLowerCase();
+      return text.includes(query);
+    });
+
+    const exact = visibleOptions.find((opt) => opt.value.toLowerCase() === query || opt.textContent.toLowerCase() === query);
+    const target = exact || visibleOptions[0];
+    if (!target) return;
+
+    e.preventDefault();
+    select.value = target.value;
+    searchInput.value = target.value;
+    dropdown.classList.remove('open');
+    if (onChangeCallback) onChangeCallback();
+    applyRawEventFilters();
   });
 
   select.addEventListener('change', () => {
@@ -2159,6 +2104,14 @@ function initMultiSelectDropdown(dropdownId, searchInputId, resultsId, selectedA
       renderResultsFn();
       hasPendingSelectionChange = true;
       if (onSelectionChange) onSelectionChange();
+    }
+
+    if (e.key === 'Enter') {
+      const applied = commitTopTokenPickerMatch(results, searchInput.value);
+      if (applied) {
+        e.preventDefault();
+        commitSelectionChanges();
+      }
     }
 
     if (e.key === 'Escape') {
@@ -2212,7 +2165,10 @@ initMultiSelectDropdown(
   selectedLoggers,
   renderLoggerTags,
   renderLoggerPicker,
-  scheduleErrorFilterRefresh,
+  () => {
+    scheduleErrorFilterRefresh();
+    scheduleErrorFilterApply();
+  },
   renderLoggerPicker
 );
 initSearchableDropdown('threadDropdown', 'threadFilter', 'threadSelect', null, scheduleErrorFilterRefresh);
@@ -2227,7 +2183,10 @@ initMultiSelectDropdown(
     filterAndPopulateLoggers();
     refreshPackageScopedDropdowns();
   },
-  scheduleErrorFilterRefresh,
+  () => {
+    scheduleErrorFilterRefresh();
+    scheduleErrorFilterApply();
+  },
   renderPackagePicker
 );
 initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect', null, scheduleErrorFilterRefresh);
@@ -2247,14 +2206,19 @@ initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect'
 });
 
 renderAdvancedRuleBuilder();
-loadBatchPaths();
 updateCascadeCountBadges();
+renderSelectionHints();
+applySidebarState();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');
 if (lastPath) {
-  filePathInput.value = lastPath;
-  console.log('[AEM] Restored path:', lastPath);
+  if (parseMultiErrorInput(lastPath).length > 1) {
+    localStorage.removeItem('aem_lastPath');
+  } else {
+    filePathInput.value = lastPath;
+    console.log('[AEM] Restored path:', lastPath);
+  }
 }
 
 // Debounced save on input for instant persistence
@@ -2263,7 +2227,7 @@ filePathInput.addEventListener('input', () => {
   clearTimeout(savePathTimeout);
   savePathTimeout = setTimeout(() => {
     const val = filePathInput.value.trim();
-    if (val) {
+    if (val && parseMultiErrorInput(val).length <= 1) {
       localStorage.setItem('aem_lastPath', val);
       console.log('[AEM] Saved path on input:', val);
     }
@@ -2272,7 +2236,8 @@ filePathInput.addEventListener('input', () => {
 
 // Also save on blur (immediate)
 filePathInput.addEventListener('blur', () => {
-  if (filePathInput.value.trim()) {
-    localStorage.setItem('aem_lastPath', filePathInput.value.trim());
+  const val = filePathInput.value.trim();
+  if (val && parseMultiErrorInput(val).length <= 1) {
+    localStorage.setItem('aem_lastPath', val);
   }
 });

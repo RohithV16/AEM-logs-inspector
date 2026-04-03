@@ -2,26 +2,6 @@
 
 A Node.js tool for analyzing Adobe Experience Manager (AEM) logs with CLI and Express web dashboard.
 
-> **Important**: Always use the `brainstorming` skill when starting any feature work, planning, or implementation. This ensures proper exploration of requirements and design before writing code.
-
-## Available Superpowers Skills
-
-| Skill | When to Use |
-|-------|-------------|
-| `brainstorming` | Before any creative work - creating features, building components, adding functionality |
-| `systematic-debugging` | When encountering any bug, test failure, or unexpected behavior |
-| `test-driven-development` | When implementing any feature or bugfix |
-| `writing-plans` | When you have a spec or requirements for a multi-step task |
-| `executing-plans` | When you have a written implementation plan to execute |
-| `verification-before-completion` | Before claiming work is complete, fixed, or passing |
-| `requesting-code-review` | When completing tasks or before merging |
-| `receiving-code-review` | When receiving code review feedback |
-| `finishing-a-development-branch` | When implementation is complete and deciding how to integrate |
-| `dispatching-parallel-agents` | When facing 1 or more independent tasks |
-| `subagent-driven-development` | When executing implementation plans with independent tasks |
-| `writing-skills` | When creating new skills or editing existing ones |
-| `using-superpowers` | At the start of any conversation |
-
 ## Project Structure
 
 ```
@@ -100,90 +80,6 @@ npm run lint                      # Lint all JS files
 - `module.exports` at end of file
 - Private functions prefixed with `_` or kept module-local
 
-### Async/Await Patterns
-
-```javascript
-// Prefer async/await over .then()/.catch()
-async function analyzeLogFileStream(stream) {
-  const grouped = {};
-  for await (const entry of stream) {
-    // process entry
-  }
-  return Object.values(grouped).sort((a, b) => b.count - a.count);
-}
-
-// Generator functions for streaming
-async function* createLogStream(filePath, options = {}) {
-  const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
-  for await (const line of readline.createInterface({ input: stream })) {
-    const parsed = parseLine(line);
-    if (parsed) yield parsed;
-  }
-}
-```
-
-### Error Handling
-
-```javascript
-// CLI: Use process.exit(1) for fatal errors
-if (!filePath) {
-  console.error('Usage: npm start <path-to-log-file>');
-  process.exit(1);
-}
-
-// Express routes: Return JSON with success boolean
-// Always cleanup temp files in finally blocks
-app.post('/api/analyze', async (req, res) => {
-  let tempFile = null;
-  try {
-    res.json({ success: true, summary, results });
-  } catch (error) {
-    res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-  } finally {
-    cleanupTempFile(tempFile);
-  }
-});
-
-// Sanitize error messages before sending to client
-function sanitizeErrorMessage(message) {
-  return message.replace(/[<>"'&]/g, '').substring(0, 500);
-}
-```
-
-### Security Patterns
-
-```javascript
-// Validate file paths to prevent directory traversal
-function validateFilePath(filePath) {
-  const resolved = path.resolve(filePath);
-  const ext = path.extname(filePath).toLowerCase();
-  const allowed = ['.log', '.txt', '.gz'];
-  if (!allowed.includes(ext)) {
-    throw new Error('Invalid file type.');
-  }
-  return resolved;
-}
-
-// Safe regex validation for user input
-function isSafeRegex(pattern) {
-  if (!pattern || typeof pattern !== 'string') return null;
-  if (pattern.length > 100) {
-    return { error: 'Pattern too long (max 100 characters)' };
-  }
-  const dangerous = [/\([^)]*\*\)[*+]/, /\([^)]*\+\)[*+]/];
-  for (const dp of dangerous) {
-    if (dp.test(pattern)) {
-      return { error: 'Pattern may cause catastrophic backtracking' };
-    }
-  }
-  try {
-    const regex = new RegExp(pattern, 'i');
-    return { regex, error: null };
-  } catch (e) {
-    return { error: `Invalid regex: ${e.message}` };
-  }
-}
-```
 
 ## Adding New Features
 
@@ -225,9 +121,3 @@ const REGEX_TIMEOUT_MS = 100;
 const PORT = 3000;
 ```
 
-## References
-
-- No Cursor rules found (`.cursor/rules/`, `.cursorrules`)
-- No Copilot instructions found (`.github/copilot-instructions.md`)
-- Express.js: https://expressjs.com/
-- Chart.js: https://www.chartjs.org/

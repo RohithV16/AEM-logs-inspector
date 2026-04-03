@@ -4,7 +4,10 @@ const { resolveAnalysisTargets } = require('../utils/files');
 const { buildAdvancedMatcher } = require('./searchBuilder');
 const { buildCorrelationData, normalizeCorrelationEvent, getTimestampValue } = require('./correlationService');
 const { normalizeMessage } = require('../grouper');
+const { extractExceptionNames } = require('./errorLogService');
 const { categorizeError } = require('../categorizer');
+
+const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
 
 function createEntryStream(filePath, logType) {
   if (logType === 'request') return createRequestLogStream(filePath);
@@ -34,6 +37,12 @@ function createSourceTracker(filePath, logType) {
     pops: {},
     hosts: {}
   };
+}
+
+function derivePackageGroup(logger) {
+  if (!logger) return null;
+  const match = String(logger).match(packageRegex);
+  return match ? match[1] : null;
 }
 
 function incrementTimelineBucket(timeline, hour, fields) {
@@ -172,6 +181,128 @@ function createSourceSummary(tracker) {
   };
 }
 
+function createEmptyMergedErrorStats() {
+  return {
+    levelCounts: { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 },
+    loggers: {},
+    threads: {},
+    packages: {},
+    exceptions: {},
+    packageThreads: {},
+    packageExceptions: {},
+    categories: {},
+    timeline: {},
+    hourlyHeatmap: {
+      heatmap: {},
+      days: new Set()
+    },
+    summary: {
+      totalErrors: 0,
+      totalWarnings: 0,
+      uniqueErrors: new Set(),
+      uniqueWarnings: new Set(),
+      totalEvents: 0
+    }
+  };
+}
+
+function addMergedCount(bucket, key, amount = 1) {
+  if (!key) return;
+  bucket[key] = (bucket[key] || 0) + amount;
+}
+
+function collectMergedErrorStats(stats, event) {
+  const level = String(event.level || event.severity || '').toUpperCase();
+  const message = event.message || event.title || '';
+  const logger = event.logger || '';
+  const thread = event.thread || '';
+  const pkg = derivePackageGroup(logger);
+
+  if (level && stats.levelCounts[level] !== undefined) {
+    stats.levelCounts[level]++;
+  }
+  stats.levelCounts.ALL++;
+  stats.summary.totalEvents++;
+
+  if (level === 'ERROR') {
+    stats.summary.totalErrors++;
+    stats.summary.uniqueErrors.add(normalizeMessage(message));
+  } else if (level === 'WARN') {
+    stats.summary.totalWarnings++;
+    stats.summary.uniqueWarnings.add(normalizeMessage(message));
+  }
+
+  if (logger) {
+    addMergedCount(stats.loggers, logger);
+    if (pkg) addMergedCount(stats.packages, pkg);
+  }
+
+  if (thread) {
+    addMergedCount(stats.threads, thread);
+    if (pkg) {
+      if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
+      addMergedCount(stats.packageThreads[pkg], thread);
+    }
+  }
+
+  const exceptionNames = [
+    ...extractExceptionNames(message),
+    ...extractExceptionNames(event.stackTrace)
+  ];
+  [...new Set(exceptionNames)].forEach((exceptionName) => {
+    addMergedCount(stats.exceptions, exceptionName);
+    if (pkg) {
+      if (!stats.packageExceptions[pkg]) stats.packageExceptions[pkg] = {};
+      addMergedCount(stats.packageExceptions[pkg], exceptionName);
+    }
+  });
+
+  if (level === 'ERROR' || level === 'WARN') {
+    addMergedCount(stats.categories, categorizeError(message, logger));
+  }
+
+  if (event.timestamp) {
+    const hour = event.timestamp.substring(0, 13);
+    if (!stats.timeline[hour]) stats.timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
+    stats.timeline[hour].total++;
+    if (level === 'ERROR') stats.timeline[hour].ERROR++;
+    if (level === 'WARN') stats.timeline[hour].WARN++;
+
+    const date = event.timestamp.substring(0, 10);
+    const hourNumber = Number(event.timestamp.substring(11, 13));
+    stats.hourlyHeatmap.days.add(date);
+    if (!Number.isNaN(hourNumber)) {
+      if (!stats.hourlyHeatmap.heatmap[hourNumber]) stats.hourlyHeatmap.heatmap[hourNumber] = {};
+      stats.hourlyHeatmap.heatmap[hourNumber][date] = (stats.hourlyHeatmap.heatmap[hourNumber][date] || 0) + 1;
+    }
+  }
+}
+
+function finalizeMergedErrorStats(stats) {
+  return {
+    levelCounts: { ...stats.levelCounts },
+    loggers: stats.loggers,
+    threads: stats.threads,
+    packages: stats.packages,
+    exceptions: stats.exceptions,
+    packageThreads: stats.packageThreads,
+    packageExceptions: stats.packageExceptions,
+    categories: Object.keys(stats.categories).sort(),
+    timeline: stats.timeline,
+    hourlyHeatmap: {
+      heatmap: stats.hourlyHeatmap.heatmap,
+      days: Array.from(stats.hourlyHeatmap.days).sort()
+    },
+    summary: {
+      totalErrors: stats.summary.totalErrors,
+      totalWarnings: stats.summary.totalWarnings,
+      uniqueErrors: stats.summary.uniqueErrors.size,
+      uniqueWarnings: stats.summary.uniqueWarnings.size,
+      totalEvents: stats.summary.totalEvents
+    }
+  };
+}
+
 function buildSearchText(event) {
   return [
     event.timestamp,
@@ -198,18 +329,73 @@ function buildSearchText(event) {
     .toLowerCase();
 }
 
+function matchesFilterText(actualValue, filterValue) {
+  if (!filterValue) return true;
+  const values = Array.isArray(filterValue) ? filterValue : [filterValue];
+  const actualText = String(actualValue || '');
+
+  return values.some((value) => {
+    const pattern = String(value || '').trim();
+    if (!pattern) return false;
+    if (actualText === pattern || actualText.includes(pattern)) return true;
+    try {
+      return new RegExp(pattern, 'i').test(actualText);
+    } catch {
+      return false;
+    }
+  });
+}
+
 function buildBatchEventMatcher(filters = {}) {
   const advancedMatcher = buildAdvancedMatcher(filters.advancedRules || []);
   const search = String(filters.search || '').trim().toLowerCase();
+  const level = String(filters.level || filters.severity || '').trim().toUpperCase();
+  const logger = filters.logger;
+  const thread = filters.thread;
+  const exception = String(filters.exception || '').trim();
+  const category = String(filters.category || '').trim();
+  const startDate = filters.startDate || filters.from || '';
+  const endDate = filters.endDate || filters.to || '';
+  const pkg = Array.isArray(filters.package) ? filters.package : (filters.package ? [filters.package] : []);
   const hourOfDay = String(filters.hourOfDay || '').trim();
-  const severity = String(filters.severity || '').trim();
   const logType = String(filters.logType || '').trim();
   const sourceFile = String(filters.sourceFile || '').trim();
 
   return (event) => {
     if (!advancedMatcher(event)) return false;
+    const eventLevel = String(event.level || event.severity || '').toUpperCase();
+    if (level && level !== 'ALL' && eventLevel !== level) return false;
+    if (startDate) {
+      const startValue = new Date(startDate).getTime();
+      if (!Number.isNaN(startValue) && getTimestampValue(event.timestamp) < startValue) return false;
+    }
+    if (endDate) {
+      const endValue = new Date(endDate).getTime();
+      if (!Number.isNaN(endValue) && getTimestampValue(event.timestamp) > endValue) return false;
+    }
+    if (!matchesFilterText(event.logger, logger)) return false;
+    if (!matchesFilterText(event.thread, thread)) return false;
+    if (exception) {
+      const text = `${event.message || ''} ${event.stackTrace || ''}`.toLowerCase();
+      const exceptionMatch = [event.message, event.stackTrace]
+        .flatMap(value => extractExceptionNames(value))
+        .some(name => {
+          const lower = name.toLowerCase();
+          const simple = name.split('.').pop().toLowerCase();
+          const filterLower = exception.toLowerCase();
+          return lower === filterLower || simple === filterLower || lower.includes(filterLower) || text.includes(filterLower);
+        });
+      if (!exceptionMatch && !text.includes(exception.toLowerCase())) return false;
+    }
+    if (category) {
+      const entryCategory = categorizeError(event.message || event.title || '', event.logger || '');
+      if (entryCategory !== category) return false;
+    }
+    if (pkg.length > 0) {
+      const entryPkg = derivePackageGroup(event.logger);
+      if (!entryPkg || !pkg.some(p => entryPkg === p || entryPkg.startsWith(`${p}.`))) return false;
+    }
     if (hourOfDay && String(Number(event.hour?.slice(-2))) !== String(hourOfDay)) return false;
-    if (severity && event.severity !== severity) return false;
     if (logType && event.logType !== logType) return false;
     if (sourceFile && event.sourceFile !== sourceFile && event.sourceName !== sourceFile) return false;
     if (search && !buildSearchText(event).includes(search)) return false;
@@ -315,6 +501,7 @@ async function countAndExtractBatchEntries(input, filters = {}, page = 1, pageSi
   const filePaths = resolveAnalysisTargets(input);
   const matcher = buildBatchEventMatcher(filters);
   const entries = [];
+  const stats = createEmptyMergedErrorStats();
   let total = 0;
   let skipped = (page - 1) * pageSize;
 
@@ -323,6 +510,7 @@ async function countAndExtractBatchEntries(input, filters = {}, page = 1, pageSi
     compact: false,
     includeTrackers: false
   })) {
+    collectMergedErrorStats(stats, event);
     total++;
     if (skipped > 0) {
       skipped--;
@@ -333,7 +521,38 @@ async function countAndExtractBatchEntries(input, filters = {}, page = 1, pageSi
     }
   }
 
-  return { entries, total };
+  return {
+    entries,
+    total,
+    ...finalizeMergedErrorStats(stats)
+  };
+}
+
+async function analyzeMergedErrorFilters(input, filters = {}) {
+  const filePaths = resolveAnalysisTargets(input);
+  const matcher = buildBatchEventMatcher(filters);
+  const stats = createEmptyMergedErrorStats();
+  const matchedEvents = [];
+
+  for await (const event of mergeNormalizedEvents(filePaths, {
+    matcher,
+    compact: false,
+    includeTrackers: false
+  })) {
+    matchedEvents.push(event);
+    collectMergedErrorStats(stats, event);
+  }
+
+  const levelCounts = { ...stats.levelCounts };
+  const summary = finalizeMergedErrorStats(stats).summary;
+  const results = matchedEvents.length ? matchedEvents : [];
+
+  return {
+    summary,
+    results,
+    levelCounts,
+    ...finalizeMergedErrorStats(stats)
+  };
 }
 
 async function analyzeBatch(input, filters = {}, onProgress) {
@@ -407,6 +626,13 @@ async function analyzeBatch(input, filters = {}, onProgress) {
   summary.uniqueWarnings = uniqueWarnings.size;
 
   const correlationData = buildCorrelationData(matchedEvents);
+  const mergedErrorStats = finalizeMergedErrorStats(
+    matchedEvents.reduce((stats, event) => {
+      collectMergedErrorStats(stats, event);
+      return stats;
+    }, createEmptyMergedErrorStats())
+  );
+  const { summary: mergedSummary, ...mergedFields } = mergedErrorStats;
 
   return {
     logType: 'batch',
@@ -419,12 +645,15 @@ async function analyzeBatch(input, filters = {}, onProgress) {
       summary: correlationData.summary,
       hourOfDaySeverity: correlationData.hourOfDaySeverity,
       incidents: correlationData.incidents
-    }
+    },
+    mergedSummary,
+    ...mergedFields
   };
 }
 
 module.exports = {
   analyzeBatch,
+  analyzeMergedErrorFilters,
   buildBatchEventMatcher,
   collectBatchEvents,
   countAndExtractBatchEntries

@@ -23,6 +23,13 @@ const REQUEST_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\
 const RESPONSE_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\d+)\] <- (\d{3}) (.+?) (\d+)ms \[([^\]]+)\]$/;
 const ERROR_LOG_REQUEST_CONTEXT_PATTERN = /(?:^|]\s)(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+(\S+)\s+HTTP\/[\d.]+$/;
 
+function isLikelyLoggerToken(token) {
+  const value = String(token || '').trim();
+  if (!value) return false;
+  if (!/^[a-zA-Z][a-zA-Z0-9_.<>$]*$/.test(value)) return false;
+  return value.includes('.') || value.includes('$') || value.includes('<') || value.includes('>') || /[A-Z]/.test(value);
+}
+
 /**
  * Parses AEM error log timestamp format: DD.MM.YYYY HH:MM:SS.mmm
  * Note: Java months are 1-indexed, JS Date expects 0-indexed months
@@ -61,7 +68,10 @@ function parseLine(line) {
   if (!match) return null;
 
   // Extract groups: 1=timestamp, 2=instance-id, 3=level, 4=thread, 5=logger (Java class), 6=message
-  const [, timestamp, instanceId, level, thread, logger, message] = match;
+  const [, timestamp, instanceId, level, thread, loggerCandidate, message] = match;
+  const hasLogger = isLikelyLoggerToken(loggerCandidate);
+  const logger = hasLogger ? loggerCandidate : '';
+  const normalizedMessage = hasLogger ? message : `${loggerCandidate} ${message}`.trim();
   const requestMeta = parseErrorRequestContext(thread);
   // Normalize field names for consistency across log types
   return {
@@ -70,7 +80,7 @@ function parseLine(line) {
     level,
     threadName: thread,
     logger,
-    message,
+    message: normalizedMessage,
     requestContext: thread,
     httpMethod: requestMeta.httpMethod,
     requestPath: requestMeta.requestPath

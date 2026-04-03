@@ -4,7 +4,6 @@ const { detectLogType } = require('../parser');
 const { buildEntryFilter, extractPage } = require('../services/errorLogService');
 const { buildRequestFilter, countAndExtractRequestEntries } = require('../services/requestLogService');
 const { buildCDNFilter, countAndExtractCDNEntries } = require('../services/cdnLogService');
-const { countAndExtractBatchEntries } = require('../services/batchAnalysisService');
 const { validateFilePath, sanitizeErrorMessage } = require('../utils/files');
 const { isSafeRegex } = require('../utils/regex');
 
@@ -14,47 +13,6 @@ const { isSafeRegex } = require('../utils/regex');
  */
 function createEventsRouter() {
   const router = express.Router();
-
-  router.post('/raw-events/batch', async (req, res) => {
-    const {
-      input,
-      page = 1,
-      perPage = 50,
-      advancedRules,
-      search,
-      hourOfDay,
-      severity,
-      logType,
-      sourceFile
-    } = req.body;
-
-    try {
-      if (!input) {
-        throw new Error('Batch input required.');
-      }
-
-      const { entries: events, total } = await countAndExtractBatchEntries(input, {
-        advancedRules,
-        search,
-        hourOfDay,
-        severity,
-        logType,
-        sourceFile
-      }, Number(page), Number(perPage));
-
-      return res.json({
-        success: true,
-        total,
-        page: Number(page),
-        perPage: Number(perPage),
-        totalPages: Math.ceil(total / perPage),
-        events,
-        logType: 'batch'
-      });
-    } catch (error) {
-      return res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-    }
-  });
 
   /* === POST /api/raw-events === */
   /* Paginated endpoint for retrieving individual log entries with optional filtering */

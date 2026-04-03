@@ -13,8 +13,8 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) error and warning lo
 - Thread distribution analysis
 - Hourly heatmap visualization (events by hour of day)
 - Trend comparison (recent vs. previous period)
-- Batch correlation across multiple logs and directories
-- Merged incident timeline across error, request, and CDN logs
+- Multi-error analysis across multiple error logs
+- Merged error-log output across multiple files
 
 ### Filtering & Search
 - Filter by date range, logger, thread, or regex
@@ -26,7 +26,7 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) error and warning lo
 
 ### Export & Reporting
 - Export to CSV, JSON, or PDF
-- Batch export (download all formats at once)
+- Export multi-error results in all formats at once
 
 ### Real-Time Monitoring
 - WebSocket-based live log tailing
@@ -104,13 +104,6 @@ Example:
 npm start /path/to/author_aemerror.log
 ```
 
-Batch examples:
-
-```bash
-npm start --batch /path/to/error.log /path/to/request.log
-npm start --directory /path/to/log-directory
-```
-
 ### Web Dashboard
 
 Start the interactive dashboard:
@@ -121,7 +114,9 @@ npm run dashboard
 
 Then open http://localhost:3000 in your browser.
 
-Use the batch button to analyze comma-separated paths or a directory and open the correlation timeline.
+Use the main Analyze source field for one or more error log paths.
+If you paste two or more error log paths into the main field, the dashboard merges them into the same results view.
+The multi-error flow uses the dedicated multi-error endpoints internally.
 
 ### Keyboard Shortcuts
 
@@ -138,6 +133,8 @@ Use the batch button to analyze comma-separated paths or a directory and open th
 - `POST /api/filter` - Filter and analyze with additional filters (includes timeline, logger distribution, hourly heatmap, thread distribution)
 - `POST /api/trend` - Get trend comparison data
 - `POST /api/raw-events` - Get raw log entries (paginated)
+- `POST /api/analyze/multi-error` - Analyze multiple error logs in one merged view
+- `POST /api/raw-events/multi-error` - Get merged raw events for multiple error logs
 - `POST /api/alerts/check` - Check analysis results against alert thresholds
 - `POST /api/export/csv` - Export results to CSV
 - `POST /api/export/json` - Export results to JSON
