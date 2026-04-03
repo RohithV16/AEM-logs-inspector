@@ -14,7 +14,6 @@ const presetSelect = document.getElementById('presetSelect');
 const exportCsvBtn = document.getElementById('exportCsvBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
-const darkModeBtn = document.getElementById('darkModeBtn');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
@@ -68,6 +67,14 @@ let correlationState = {
 };
 let advancedRulesState = [];
 let batchPathCounter = 0;
+
+const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
+
+function extractExceptionNames(text) {
+  if (!text) return [];
+  const matches = String(text).match(EXCEPTION_TOKEN_REGEX);
+  return matches ? [...new Set(matches)] : [];
+}
 
 function setDateRangeBounds(timeline, logType) {
   const keys = Object.keys(timeline);
@@ -276,22 +283,6 @@ function showError(message) {
 
 function hideError() {
   // Toasts auto-dismiss
-}
-
-/* ============================================================
-   Dark Mode
-   ============================================================ */
-
-darkModeBtn.addEventListener('click', () => {
-  const isDark = document.body.getAttribute('data-theme') === 'dark';
-  document.body.setAttribute('data-theme', isDark ? 'light' : 'dark');
-  darkModeBtn.textContent = isDark ? '\u{1F319}' : '\u{2600}\u{FE0F}';
-  localStorage.setItem('darkMode', isDark ? 'light' : 'dark');
-});
-
-if (localStorage.getItem('darkMode') === 'dark') {
-  document.body.setAttribute('data-theme', 'dark');
-  darkModeBtn.textContent = '\u{2600}\u{FE0F}';
 }
 
 /* ============================================================
@@ -1821,19 +1812,13 @@ async function fetchRawEvents(page = 1) {
 }
 
 function extractedExceptionBadge(evt) {
-  const exceptionRegex = /^([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/;
-  let exType = null;
-  if (evt.message) {
-    const m = evt.message.match(exceptionRegex);
-    if (m) exType = m[1].split('.').pop();
-  }
-  if (!exType && evt.stackTrace) {
-    const causedByRegex = /Caused by:\s*([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/;
-    const m = evt.stackTrace.match(causedByRegex);
-    if (m) exType = m[1].split('.').pop();
-  }
-  if (exType) {
-    return `<span class="exception-badge">${escapeHtml(exType)}</span>`;
+  const names = [
+    ...extractExceptionNames(evt.message),
+    ...extractExceptionNames(evt.stackTrace)
+  ];
+  if (names.length > 0) {
+    const simpleName = names[0].split('.').pop();
+    return `<span class="exception-badge">${escapeHtml(simpleName)}</span>`;
   }
   return '';
 }

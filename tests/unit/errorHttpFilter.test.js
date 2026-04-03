@@ -1,5 +1,5 @@
 const { parseLine, parseErrorRequestContext } = require('../../src/parser');
-const { buildEntryFilter, analyzeAllInOnePass } = require('../../src/services/errorLogService');
+const { buildEntryFilter, analyzeAllInOnePass, extractExceptionNames } = require('../../src/services/errorLogService');
 const { buildErrorFilterStats } = require('../../src/analyzer');
 const fs = require('fs');
 const os = require('os');
@@ -60,5 +60,44 @@ describe('error log HTTP request filters', () => {
 
     expect(analysis.httpMethods).toMatchObject({ GET: 1, POST: 1 });
     expect(stats.httpMethods).toMatchObject({ GET: 1, POST: 1 });
+  });
+
+  test('extractExceptionNames correctly identifies Java exception patterns and excludes handleError', () => {
+    const line = 'handleError (5)javax.jcr.InvalidItemStateException (1)org.apache.jackrabbit.oak.api.CommitFailedException (1)';
+    const extracted = extractExceptionNames(line);
+
+    expect(extracted).toContain('javax.jcr.InvalidItemStateException');
+    expect(extracted).toContain('org.apache.jackrabbit.oak.api.CommitFailedException');
+    expect(extracted).not.toContain('handleError');
+  });
+
+  test('exception extraction in message and stackTrace produces consistent results', async () => {
+    const filePath = writeTempFile(tempDir, 'exception_extraction.log', [
+      '09.02.2026 23:59:07.330 [author-pod-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger handleError (5)javax.jcr.InvalidItemStateException (1)org.apache.jackrabbit.oak.api.CommitFailedException'
+    ].join('\n'));
+
+    const analysis = await analyzeAllInOnePass(filePath);
+    const entry = parseLine('09.02.2026 23:59:07.330 [author-pod-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger handleError (5)javax.jcr.InvalidItemStateException (1)org.apache.jackrabbit.oak.api.CommitFailedException');
+
+    expect(Object.keys(analysis.exceptions)).toContain('javax.jcr.InvalidItemStateException');
+    expect(Object.keys(analysis.exceptions)).toContain('org.apache.jackrabbit.oak.api.CommitFailedException');
+    expect(Object.keys(analysis.exceptions)).not.toContain('handleError');
+
+    const stats = buildErrorFilterStats([entry]);
+    expect(Object.keys(stats.exceptions)).toContain('javax.jcr.InvalidItemStateException');
+    expect(Object.keys(stats.exceptions)).toContain('org.apache.jackrabbit.oak.api.CommitFailedException');
+  });
+
+  test('buildEntryFilter exception filter matches extracted exceptions', () => {
+    const entry = parseLine('09.02.2026 23:59:07.330 [author-pod-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger handleError (5)javax.jcr.InvalidItemStateException (1)org.apache.jackrabbit.oak.api.CommitFailedException');
+
+    const filterByFullName = buildEntryFilter({ exception: 'javax.jcr.InvalidItemStateException' });
+    expect(filterByFullName(entry)).toBe(true);
+
+    const filterBySimpleName = buildEntryFilter({ exception: 'InvalidItemStateException' });
+    expect(filterBySimpleName(entry)).toBe(true);
+
+    const filterByNonExistent = buildEntryFilter({ exception: 'NonExistentException' });
+    expect(filterByNonExistent(entry)).toBe(false);
   });
 });

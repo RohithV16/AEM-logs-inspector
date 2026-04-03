@@ -6,6 +6,7 @@ const fs = require('fs');
 const { normalizeMessage, groupEntries, groupEntriesStream, getSummaryFromEntries, getSummaryStream } = require('./grouper');
 const { exportToCSV, exportToJSON, generatePDFSummary } = require('./exporter');
 const errorLogService = require('./services/errorLogService');
+const { extractExceptionNames } = errorLogService;
 const requestLogService = require('./services/requestLogService');
 const cdnLogService = require('./services/cdnLogService');
 const { isSafeRegex } = require('./utils/regex');
@@ -149,9 +150,6 @@ function addCount(bucket, key, amount = 1) {
 
 function collectErrorFilterStats(stats, entry) {
   const pkg = derivePackageGroup(entry.logger);
-  const exceptionNames = new Set();
-  const exceptionRegex = /^([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/;
-  const causedByRegex = /Caused by:\s*([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/g;
 
   if (entry.logger) {
     addCount(stats.loggers, entry.logger);
@@ -169,20 +167,13 @@ function collectErrorFilterStats(stats, entry) {
     }
   }
 
-  if (entry.message) {
-    const msgMatch = entry.message.match(exceptionRegex);
-    if (msgMatch) exceptionNames.add(msgMatch[1]);
-  }
+  const exceptionNames = [
+    ...extractExceptionNames(entry.message),
+    ...extractExceptionNames(entry.stackTrace)
+  ];
+  const uniqueExceptions = [...new Set(exceptionNames)];
 
-  if (entry.stackTrace) {
-    causedByRegex.lastIndex = 0;
-    let match;
-    while ((match = causedByRegex.exec(entry.stackTrace)) !== null) {
-      exceptionNames.add(match[1]);
-    }
-  }
-
-  exceptionNames.forEach((exceptionName) => {
+  uniqueExceptions.forEach((exceptionName) => {
     addCount(stats.exceptions, exceptionName);
     if (pkg) {
       if (!stats.packageExceptions[pkg]) stats.packageExceptions[pkg] = {};

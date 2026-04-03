@@ -3,6 +3,43 @@ const { createLogStream } = require('../parser');
 const { categorizeError } = require('../categorizer');
 const { groupEntries, groupEntriesStream, getSummaryFromEntries, getSummaryStream, normalizeMessage } = require('../grouper');
 
+/* === Exception Token Regex === */
+
+const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
+
+function extractExceptionNames(text) {
+  if (!text) return [];
+  const matches = String(text).match(EXCEPTION_TOKEN_REGEX);
+  return matches ? [...new Set(matches)] : [];
+}
+
+function getEntryExceptionNames(entry) {
+  const names = new Set();
+  if (entry.message) {
+    extractExceptionNames(entry.message).forEach(n => names.add(n));
+  }
+  if (entry.stackTrace) {
+    extractExceptionNames(entry.stackTrace).forEach(n => names.add(n));
+  }
+  return [...names];
+}
+
+function matchesExceptionFilter(entry, exception) {
+  if (!exception) return true;
+  const filterLower = String(exception).toLowerCase();
+  const extracted = getEntryExceptionNames(entry);
+
+  for (const name of extracted) {
+    if (name.toLowerCase() === filterLower) return true;
+    const simpleName = name.split('.').pop();
+    if (simpleName.toLowerCase() === filterLower) return true;
+    if (name.toLowerCase().includes(filterLower)) return true;
+  }
+
+  const rawText = String(entry.message || '') + ' ' + String(entry.stackTrace || '');
+  return rawText.toLowerCase().includes(filterLower);
+}
+
 /* === Package Derivation === */
 
 const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
@@ -62,12 +99,6 @@ async function analyzeAllInOnePass(filePath, onProgress) {
   const packageExceptions = {};
   const timeline = {};
   const levelCounts = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
-
-  /* Regex patterns for extracting exception types from log messages and stack traces.
-     Using [a-zA-Z] prefix ensures we match valid Java class names, avoiding false positives
-     from embedded exceptions in strings. */
-  const exceptionRegex = /^([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/;
-  const causedByRegex = /Caused by:\s*([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/g;
 
   for await (const entry of stream) {
     totalLines++;
@@ -135,35 +166,14 @@ async function analyzeAllInOnePass(filePath, onProgress) {
       }
     }
 
-    /* Extract exception types from both log message and stack trace.
-       Stack traces may contain "Caused by:" chains showing the root exception,
-       which is critical for understanding the actual failure point. */
-    if (entry.message) {
-      const msgMatch = entry.message.match(exceptionRegex);
-      if (msgMatch) {
-        exceptions[msgMatch[1]] = (exceptions[msgMatch[1]] || 0) + 1;
-      }
-    }
-    if (entry.stackTrace) {
-      /* Reset regex lastIndex - necessary because 'g' flag persists across calls */
-      causedByRegex.lastIndex = 0;
-      let match;
-      while ((match = causedByRegex.exec(entry.stackTrace)) !== null) {
-        exceptions[match[1]] = (exceptions[match[1]] || 0) + 1;
-        if (pkg) {
-          if (!packageExceptions[pkg]) packageExceptions[pkg] = {};
-          packageExceptions[pkg][match[1]] = (packageExceptions[pkg][match[1]] || 0) + 1;
-        }
-      }
-    }
-
-    if (pkg && entry.level && (entry.level === 'ERROR' || entry.level === 'WARN')) {
-      const msgMatch = entry.message ? entry.message.match(exceptionRegex) : null;
-      if (msgMatch) {
+    const exceptionNames = getEntryExceptionNames(entry);
+    exceptionNames.forEach(name => {
+      exceptions[name] = (exceptions[name] || 0) + 1;
+      if (pkg) {
         if (!packageExceptions[pkg]) packageExceptions[pkg] = {};
-        packageExceptions[pkg][msgMatch[1]] = (packageExceptions[pkg][msgMatch[1]] || 0) + 1;
+        packageExceptions[pkg][name] = (packageExceptions[pkg][name] || 0) + 1;
       }
-    }
+    });
 
     /* Build hourly timeline for identifying error bursts or patterns over time.
        Using hour granularity balances detail with memory efficiency for large logs. */
@@ -275,8 +285,8 @@ function buildEntryFilter(filters = {}) {
         return false;
       }
     }
-    /* Exception filter checks stack trace since message may not contain full exception name */
-    if (exception && (!entry.stackTrace || !entry.stackTrace.includes(exception))) return false;
+    /* Exception filter uses matchesExceptionFilter for flexible matching */
+    if (!matchesExceptionFilter(entry, exception)) return false;
     if (category) {
       const entryCategory = categorizeError(entry.message, entry.logger);
       if (entryCategory !== category) return false;
@@ -363,5 +373,8 @@ module.exports = {
   groupEntries,
   groupEntriesStream,
   getSummaryFromEntries,
-  getSummaryStream
+  getSummaryStream,
+  extractExceptionNames,
+  getEntryExceptionNames,
+  matchesExceptionFilter
 };

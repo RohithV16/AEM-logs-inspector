@@ -7,24 +7,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
-
-  <!-- Header -->
-  <header class="app-header">
-    <div class="header-left">
-      <div class="header-logo">A</div>
-      <div>
-        <h1 class="header-title">AEM Log Analyzer</h1>
-        <p class="header-subtitle">Intelligent error &amp; warning analysis for AEM logs</p>
-      </div>
-    </div>
-    <div class="header-right">
-      <button id="darkModeBtn" class="icon-btn" title="Toggle dark mode">&#127763;</button>
-    </div>
-  </header>
-  <div class="keyboard-hint" style="text-align:center; font-size:12px; color:var(--color-text-tertiary); margin-bottom:1rem;">
-    Shortcuts: <kbd>/</kbd> Search &nbsp; <kbd>Esc</kbd> Clear &nbsp; <kbd>&#8592;</kbd><kbd>&#8594;</kbd> Pages
-  </div>
+<body data-theme="dark">
 
   <!-- Main Grid -->
   <div class="main-grid">
@@ -32,6 +15,13 @@
     <!-- Left Sidebar: Filters -->
     <aside id="sidebar" class="sidebar">
       <div class="filter-card">
+        <div class="sidebar-header">
+          <div>
+            <h3>Filters</h3>
+            <p class="sidebar-subtitle">Refine the log stream without losing context</p>
+          </div>
+          <span class="filter-badge">Live</span>
+        </div>
 
         <!-- Date Range (shared) -->
         <p class="filter-section-label">Date range</p>
@@ -172,6 +162,13 @@
 
       <!-- File Upload Card -->
       <div class="upload-card">
+        <div class="upload-card-header">
+          <div>
+            <p class="filter-section-label">Analyze source</p>
+            <h2>Load a log file path or keep a file open in tail mode</h2>
+          </div>
+          <span class="upload-card-chip">Dark only</span>
+        </div>
         <div class="upload-row">
           <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/aem-error.log">
           <button id="analyzeBtn" class="upload-btn">Analyze</button>
