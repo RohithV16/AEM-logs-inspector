@@ -6,8 +6,9 @@ const zlib = require('zlib');
 /**
  * Matches AEM error log format: 29.03.2026 00:00:00.000 [thread-id] *LEVEL* [logger-class] message
  * Captures: timestamp, instance-id, level, thread, logger (Java class), message
+ * Note: Java class name can contain angle brackets like JobQueueImpl.<main queue>
  */
-const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] ([a-zA-Z][a-zA-Z0-9_.]*) (.+)$/;
+const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
 
 /* === Request Log Patterns === */
 /**
