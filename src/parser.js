@@ -8,7 +8,7 @@ const zlib = require('zlib');
  * Captures: timestamp, instance-id, level, thread, logger (Java class), message
  * Note: Java class name can contain angle brackets like JobQueueImpl.<main queue>
  */
-const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
+const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[(.+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
 
 /* === Request Log Patterns === */
 /**
@@ -21,6 +21,7 @@ const REQUEST_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\
  * Used to capture response status and timing from AEM instances
  */
 const RESPONSE_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\d+)\] <- (\d{3}) (.+?) (\d+)ms \[([^\]]+)\]$/;
+const ERROR_LOG_REQUEST_CONTEXT_PATTERN = /(?:^|]\s)(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+(\S+)\s+HTTP\/[\d.]+$/;
 
 /**
  * Parses AEM error log timestamp format: DD.MM.YYYY HH:MM:SS.mmm
@@ -61,8 +62,35 @@ function parseLine(line) {
 
   // Extract groups: 1=timestamp, 2=instance-id, 3=level, 4=thread, 5=logger (Java class), 6=message
   const [, timestamp, instanceId, level, thread, logger, message] = match;
+  const requestMeta = parseErrorRequestContext(thread);
   // Normalize field names for consistency across log types
-  return { timestamp, thread: instanceId, level, threadName: thread, logger, message };
+  return {
+    timestamp,
+    thread: instanceId,
+    level,
+    threadName: thread,
+    logger,
+    message,
+    requestContext: thread,
+    httpMethod: requestMeta.httpMethod,
+    requestPath: requestMeta.requestPath
+  };
+}
+
+function parseErrorRequestContext(context) {
+  if (!context) {
+    return { httpMethod: '', requestPath: '' };
+  }
+
+  const match = String(context).match(ERROR_LOG_REQUEST_CONTEXT_PATTERN);
+  if (!match) {
+    return { httpMethod: '', requestPath: '' };
+  }
+
+  return {
+    httpMethod: match[1].toUpperCase(),
+    requestPath: match[2]
+  };
 }
 
 /**
@@ -410,6 +438,7 @@ module.exports = {
   createLogStream, 
   getFileSize, 
   isErrorOrWarn,
+  parseErrorRequestContext,
   parseRequestLine,
   createRequestLogStream,
   parseCDNLine,

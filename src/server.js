@@ -1,7 +1,7 @@
 /* === Imports === */
 const express = require('express');
-const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { watchLogFile } = require('./tailer');
 const { detectLogType } = require('./parser');
@@ -19,6 +19,7 @@ const createExportRouter = require('./routes/export');
 
 /* === Express App Setup === */
 const app = express();
+const DASHBOARD_URL = `http://localhost:${PORT}`;
 
 /* Large limit needed for uploading log files up to 500MB */
 app.use(express.json({ limit: '500mb' }));
@@ -32,14 +33,8 @@ app.use('/api', createFilterRouter());
 app.use('/api', createEventsRouter());
 app.use('/api', createExportRouter());
 
-/* === HTTP Server === */
-const httpServer = app.listen(PORT, () => {
-  console.log(`Open http://localhost:${PORT} in your browser`);
-});
-
-/* === WebSocket Server === */
-/* Enables real-time log tailing and progress updates without polling */
-const wss = new WebSocketServer({ server: httpServer });
+let httpServer = null;
+let wss = null;
 
 /**
  * Handles WebSocket log analysis request
@@ -111,6 +106,7 @@ async function handleAnalyzeAction(ws, filePath) {
         threads: result.threads,
         packages: result.packages,
         exceptions: result.exceptions,
+        httpMethods: result.httpMethods,
         timeline: result.timeline,
         levelCounts: result.levelCounts
       };
@@ -124,47 +120,86 @@ async function handleAnalyzeAction(ws, filePath) {
   }
 }
 
-/* === WebSocket Message Handlers === */
-wss.on('connection', (ws) => {
-  console.log('WebSocket client connected');
-  
-  ws.on('message', async (message) => {
-    try {
-      const data = JSON.parse(message);
-      
-      /* Handle analyze action - full file analysis */
-      if (data.action === 'analyze' && data.filePath) {
-        await handleAnalyzeAction(ws, data.filePath);
-      } 
-      /* Handle tail action - real-time file watching */
-      else if (data.type === 'tail') {
-        const { filePath } = data;
+function attachWebSocketHandlers(server) {
+  const socketServer = new WebSocketServer({ server });
+
+  socketServer.on('connection', (ws) => {
+    console.log('WebSocket client connected');
+    
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message);
         
-        /* Verify file exists before attempting to watch */
-        if (!fs.existsSync(filePath)) {
-          ws.send(JSON.stringify({ type: 'error', message: 'File not found' }));
-          return;
+        /* Handle analyze action - full file analysis */
+        if (data.action === 'analyze' && data.filePath) {
+          await handleAnalyzeAction(ws, data.filePath);
+        } 
+        /* Handle tail action - real-time file watching */
+        else if (data.type === 'tail') {
+          const { filePath } = data;
+          
+          /* Verify file exists before attempting to watch */
+          if (!fs.existsSync(filePath)) {
+            ws.send(JSON.stringify({ type: 'error', message: 'File not found' }));
+            return;
+          }
+          
+          /* Start watching file for new entries */
+          const watcher = watchLogFile(filePath, (newEntries) => {
+            ws.send(JSON.stringify({ type: 'entries', entries: newEntries }));
+          });
+          
+          /* Cleanup watcher when client disconnects to prevent resource leaks */
+          ws.on('close', () => {
+            watcher.close();
+          });
         }
-        
-        /* Start watching file for new entries */
-        const watcher = watchLogFile(filePath, (newEntries) => {
-          ws.send(JSON.stringify({ type: 'entries', entries: newEntries }));
-        });
-        
-        /* Cleanup watcher when client disconnects to prevent resource leaks */
-        ws.on('close', () => {
-          watcher.close();
-        });
+      } catch (err) {
+        ws.send(JSON.stringify({ type: 'error', message: err.message }));
       }
-    } catch (err) {
-      ws.send(JSON.stringify({ type: 'error', message: err.message }));
+    });
+    
+    ws.on('error', (err) => {
+      console.error('WebSocket error:', err);
+    });
+  });
+
+  return socketServer;
+}
+
+function startServer() {
+  if (httpServer) return httpServer;
+
+  httpServer = app.listen(PORT, () => {
+    console.log(`Open ${DASHBOARD_URL} in your browser`);
+    if (process.env.CI || process.env.NO_OPEN_BROWSER === '1') {
+      return;
     }
+
+    const opener = process.platform === 'darwin'
+      ? 'open'
+      : process.platform === 'win32'
+        ? 'cmd'
+        : 'xdg-open';
+
+    const args = process.platform === 'win32'
+      ? ['/c', 'start', '', DASHBOARD_URL]
+      : [DASHBOARD_URL];
+
+    execFile(opener, args, { detached: true, stdio: 'ignore' }, () => {});
   });
-  
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
-});
+
+  wss = attachWebSocketHandlers(httpServer);
+
+  return httpServer;
+}
+
+if (require.main === module) {
+  startServer();
+}
 
 /* === Module Exports === */
-module.exports = app;
+module.exports = {
+  app,
+  startServer
+};

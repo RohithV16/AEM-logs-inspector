@@ -42,28 +42,38 @@
 
         <!-- ERROR LOG FILTERS (default) -->
         <div id="errorFilters" class="log-filter-panel">
-          <p class="filter-section-label">Java Package</p>
+          <div class="filter-section-header">
+            <p class="filter-section-label">Java Package</p>
+            <span class="filter-count" id="packageVisibleCount"></span>
+          </div>
           <div class="searchable-dropdown" id="packageDropdown">
             <input type="text" id="packageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
-            <select id="packageSelect" class="dropdown-select" size="6" multiple>
-            </select>
+            <div id="packageResults" class="token-picker-results"></div>
           </div>
           <div id="packageTags" class="filter-tags"></div>
-          <p class="filter-section-label">Logger</p>
+          <div class="filter-section-header">
+            <p class="filter-section-label">Logger</p>
+            <span class="filter-count" id="loggerVisibleCount"></span>
+          </div>
           <div class="searchable-dropdown" id="loggerDropdown">
             <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
-            <select id="loggerSelect" class="dropdown-select" size="6" multiple>
-            </select>
+            <div id="loggerResults" class="token-picker-results"></div>
           </div>
           <div id="loggerTags" class="filter-tags"></div>
-          <p class="filter-section-label">AEMaaCs Pods</p>
+          <div class="filter-section-header">
+            <p class="filter-section-label">AEMaaCs Pods</p>
+            <span class="filter-count" id="threadVisibleCount"></span>
+          </div>
           <div class="searchable-dropdown" id="threadDropdown">
             <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search pods...">
             <select id="threadSelect" class="dropdown-select" size="6">
               <option value="">All Pods</option>
             </select>
           </div>
-          <p class="filter-section-label">Exception</p>
+          <div class="filter-section-header">
+            <p class="filter-section-label">Exception</p>
+            <span class="filter-count" id="exceptionVisibleCount"></span>
+          </div>
           <div class="searchable-dropdown" id="exceptionDropdown">
             <input type="text" id="exceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
             <select id="exceptionSelect" class="dropdown-select" size="6">
@@ -144,6 +154,16 @@
         <select id="presetSelect" class="filter-select" style="margin-top:0.75rem;">
           <option value="">Load Preset...</option>
         </select>
+
+        <div class="advanced-search-card" style="margin-top:1.5rem;">
+          <p class="filter-section-label">Advanced search</p>
+          <div id="advancedSearchRules" class="advanced-search-rules"></div>
+          <div class="filter-actions" style="margin-top:0.75rem;">
+            <button id="addSearchRuleBtn" class="btn-apply" type="button">Add rule</button>
+            <button id="clearSearchRulesBtn" class="btn-clear" type="button">Clear rules</button>
+          </div>
+          <button id="runSearchBuilderBtn" class="btn-preset" type="button" style="margin-top:0.75rem;">Run search</button>
+        </div>
       </div>
     </aside>
 
@@ -156,7 +176,22 @@
           <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/aem-error.log">
           <button id="analyzeBtn" class="upload-btn">Analyze</button>
           <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
+          <button id="batchFeatureIcon" class="feature-icon-btn" type="button" title="Batch analysis is hidden for now" aria-label="Batch analysis hidden for now">&#128193;</button>
           <span id="progressText" class="hidden"></span>
+        </div>
+        <div class="batch-paths-card batch-paths-card-hidden" aria-hidden="true">
+          <div class="batch-paths-header">
+            <p class="filter-section-label">Multiple file paths</p>
+            <div class="batch-path-actions">
+              <button id="clearBatchPathsBtn" class="btn-clear" type="button">Clear all</button>
+              <button id="addBatchPathBtn" class="btn-preset" type="button">Add file path</button>
+            </div>
+          </div>
+          <div id="batchPathList" class="batch-path-list"></div>
+          <div class="batch-actions">
+            <button id="analyzeBatchBtn" class="upload-btn secondary" type="button">Analyze Batch</button>
+          </div>
+          <p class="upload-hint">Add one or more log file paths to analyze them together.</p>
         </div>
       </div>
 
@@ -187,10 +222,19 @@
         </div>
       </div>
 
+      <div id="correlationPanel" class="correlation-panel hidden">
+        <div class="correlation-summary" id="correlationSummary"></div>
+        <div class="chart-container">
+          <canvas id="correlationChart"></canvas>
+        </div>
+        <div id="correlationFilters" class="correlation-filters"></div>
+        <div id="correlationEvents" class="correlation-events"></div>
+      </div>
+
       <div id="errorMessage" class="error-message hidden"></div>
 
       <!-- Export Buttons -->
-      <div class="export-row">
+      <div class="export-row export-row-hidden" aria-hidden="true">
         <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
         <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
         <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>

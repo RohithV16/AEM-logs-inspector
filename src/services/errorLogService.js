@@ -13,6 +13,28 @@ function derivePackageGroup(logger) {
   return match ? match[1] : null;
 }
 
+function matchesFilterText(actualValue, filterValue) {
+  if (!filterValue) return true;
+
+  const values = Array.isArray(filterValue) ? filterValue : [filterValue];
+  const actualText = String(actualValue || '');
+
+  return values.some((value) => {
+    const pattern = String(value || '').trim();
+    if (!pattern) return false;
+
+    if (actualText === pattern || actualText.includes(pattern)) {
+      return true;
+    }
+
+    try {
+      return new RegExp(pattern, 'i').test(actualText);
+    } catch {
+      return false;
+    }
+  });
+}
+
 /* === Core Analysis === */
 
 /**
@@ -35,6 +57,9 @@ async function analyzeAllInOnePass(filePath, onProgress) {
   const threads = {};
   const packages = {};
   const exceptions = {};
+  const httpMethods = {};
+  const packageThreads = {};
+  const packageExceptions = {};
   const timeline = {};
   const levelCounts = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
 
@@ -91,15 +116,23 @@ async function analyzeAllInOnePass(filePath, onProgress) {
       }
     }
 
+    const pkg = entry.logger ? derivePackageGroup(entry.logger) : null;
+
     if (entry.logger) {
       loggers[entry.logger] = (loggers[entry.logger] || 0) + 1;
-      const pkg = derivePackageGroup(entry.logger);
       if (pkg) {
         packages[pkg] = (packages[pkg] || 0) + 1;
       }
     }
+    if (entry.httpMethod) {
+      httpMethods[entry.httpMethod] = (httpMethods[entry.httpMethod] || 0) + 1;
+    }
     if (entry.thread) {
       threads[entry.thread] = (threads[entry.thread] || 0) + 1;
+      if (pkg) {
+        if (!packageThreads[pkg]) packageThreads[pkg] = {};
+        packageThreads[pkg][entry.thread] = (packageThreads[pkg][entry.thread] || 0) + 1;
+      }
     }
 
     /* Extract exception types from both log message and stack trace.
@@ -117,6 +150,18 @@ async function analyzeAllInOnePass(filePath, onProgress) {
       let match;
       while ((match = causedByRegex.exec(entry.stackTrace)) !== null) {
         exceptions[match[1]] = (exceptions[match[1]] || 0) + 1;
+        if (pkg) {
+          if (!packageExceptions[pkg]) packageExceptions[pkg] = {};
+          packageExceptions[pkg][match[1]] = (packageExceptions[pkg][match[1]] || 0) + 1;
+        }
+      }
+    }
+
+    if (pkg && entry.level && (entry.level === 'ERROR' || entry.level === 'WARN')) {
+      const msgMatch = entry.message ? entry.message.match(exceptionRegex) : null;
+      if (msgMatch) {
+        if (!packageExceptions[pkg]) packageExceptions[pkg] = {};
+        packageExceptions[pkg][msgMatch[1]] = (packageExceptions[pkg][msgMatch[1]] || 0) + 1;
       }
     }
 
@@ -152,6 +197,9 @@ async function analyzeAllInOnePass(filePath, onProgress) {
     threads,
     packages,
     exceptions,
+    httpMethods,
+    packageThreads,
+    packageExceptions,
     timeline,
     levelCounts: { ...levelCounts, ALL: levelCounts.ERROR + levelCounts.WARN + levelCounts.INFO + levelCounts.DEBUG }
   };
@@ -166,15 +214,17 @@ async function analyzeAllInOnePass(filePath, onProgress) {
  * @param {string} filters.search - Regex search pattern for message content
  * @param {string} filters.from - Start date filter (ISO string or log format)
  * @param {string} filters.to - End date filter
- * @param {string} filters.logger - Exact logger name match
- * @param {string} filters.thread - Thread name match
+ * @param {string|string[]} filters.logger - Logger name or pattern match
+ * @param {string|string[]} filters.thread - Thread or pod name or pattern match
  * @param {string[]} filters.package - Array of package prefixes to match
  * @param {string} filters.exception - Exception type to search for in stack traces
  * @param {string} filters.category - Error category from categorizer
+ * @param {string} filters.httpMethod - HTTP method extracted from error log request context
+ * @param {string} filters.requestPath - Request path extracted from error log request context
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildEntryFilter(filters = {}) {
-  const { level, search, from, to, logger, thread, package: pkg, exception, category } = filters;
+  const { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath } = filters;
   let searchRegex = null;
 
   /* Safely compile user-provided regex - invalid patterns should not crash the service */
@@ -214,11 +264,10 @@ function buildEntryFilter(filters = {}) {
       const entryDate = parseLogTimestamp(entry.timestamp);
       if (entryDate && entryDate > toDate) return false;
     }
-    if (logger && logger.length > 0) {
-      const loggerArray = Array.isArray(logger) ? logger : [logger];
-      if (!loggerArray.some(l => entry.logger === l)) return false;
-    }
-    if (thread && entry.thread !== thread) return false;
+    if (!matchesFilterText(entry.logger, logger)) return false;
+    if (!matchesFilterText(entry.thread, thread)) return false;
+    if (httpMethod && String(entry.httpMethod || '').toUpperCase() !== String(httpMethod).toUpperCase()) return false;
+    if (requestPath && !String(entry.requestPath || '').toLowerCase().includes(String(requestPath).toLowerCase())) return false;
     /* Package matching supports hierarchical matching - "com.example" matches "com.example.service" */
     if (pkg && pkg.length > 0) {
       const entryPkg = derivePackageGroup(entry.logger);
@@ -265,7 +314,7 @@ async function countMatchingEntriesWithLevels(filePath, levels = ['ERROR', 'WARN
   const stream = createLogStream(filePath, { levels });
   let count = 0;
 
-  for await (const entry of stream) {
+  for await (const _entry of stream) {
     count++;
   }
 

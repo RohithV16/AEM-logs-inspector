@@ -124,6 +124,107 @@ function derivePackageGroup(logger) {
   return match ? match[1] : null;
 }
 
+function createEmptyErrorFilterStats() {
+  return {
+    loggers: {},
+    threads: {},
+    packages: {},
+    exceptions: {},
+    httpMethods: {},
+    packageThreads: {},
+    packageExceptions: {},
+    categories: {},
+    timeline: {},
+    hourlyHeatmap: {
+      heatmap: {},
+      days: new Set()
+    }
+  };
+}
+
+function addCount(bucket, key, amount = 1) {
+  if (!key) return;
+  bucket[key] = (bucket[key] || 0) + amount;
+}
+
+function collectErrorFilterStats(stats, entry) {
+  const pkg = derivePackageGroup(entry.logger);
+  const exceptionNames = new Set();
+  const exceptionRegex = /^([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/;
+  const causedByRegex = /Caused by:\s*([a-zA-Z][a-zA-Z0-9_.]*(?:Exception|Error))/g;
+
+  if (entry.logger) {
+    addCount(stats.loggers, entry.logger);
+    if (pkg) addCount(stats.packages, pkg);
+  }
+  if (entry.httpMethod) {
+    addCount(stats.httpMethods, entry.httpMethod);
+  }
+
+  if (entry.thread) {
+    addCount(stats.threads, entry.thread);
+    if (pkg) {
+      if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
+      addCount(stats.packageThreads[pkg], entry.thread);
+    }
+  }
+
+  if (entry.message) {
+    const msgMatch = entry.message.match(exceptionRegex);
+    if (msgMatch) exceptionNames.add(msgMatch[1]);
+  }
+
+  if (entry.stackTrace) {
+    causedByRegex.lastIndex = 0;
+    let match;
+    while ((match = causedByRegex.exec(entry.stackTrace)) !== null) {
+      exceptionNames.add(match[1]);
+    }
+  }
+
+  exceptionNames.forEach((exceptionName) => {
+    addCount(stats.exceptions, exceptionName);
+    if (pkg) {
+      if (!stats.packageExceptions[pkg]) stats.packageExceptions[pkg] = {};
+      addCount(stats.packageExceptions[pkg], exceptionName);
+    }
+  });
+
+  if (entry.level === 'ERROR' || entry.level === 'WARN') {
+    const category = categorizeError(entry.message, entry.logger);
+    addCount(stats.categories, category);
+  }
+
+  if (entry.timestamp) {
+    const hour = entry.timestamp.substring(0, 13);
+    if (!stats.timeline[hour]) stats.timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
+    stats.timeline[hour].total++;
+    if (entry.level === 'ERROR') stats.timeline[hour].ERROR++;
+    if (entry.level === 'WARN') stats.timeline[hour].WARN++;
+
+    const date = entry.timestamp.substring(0, 10);
+    const hourNumber = parseInt(entry.timestamp.substring(11, 13), 10);
+    stats.hourlyHeatmap.days.add(date);
+    if (!stats.hourlyHeatmap.heatmap[hourNumber]) stats.hourlyHeatmap.heatmap[hourNumber] = {};
+    if (!stats.hourlyHeatmap.heatmap[hourNumber][date]) stats.hourlyHeatmap.heatmap[hourNumber][date] = 0;
+    stats.hourlyHeatmap.heatmap[hourNumber][date]++;
+  }
+}
+
+function buildErrorFilterStats(entries = []) {
+  const stats = createEmptyErrorFilterStats();
+  for (const entry of entries) {
+    collectErrorFilterStats(stats, entry);
+  }
+  return {
+    ...stats,
+    hourlyHeatmap: {
+      heatmap: stats.hourlyHeatmap.heatmap,
+      days: Array.from(stats.hourlyHeatmap.days).sort()
+    }
+  };
+}
+
 /**
  * Filters entries by Java package (supports subpackages via prefix matching)
  * @param {Array} entries - Log entries
@@ -274,12 +375,15 @@ async function filterAndAnalyzeStream(stream, filters = {}) {
   const uniqueErrorMessages = new Set();
   const uniqueWarningMessages = new Set();
   let filterError = null;
+  const stats = createEmptyErrorFilterStats();
 
   // Build compound filter once for efficiency
   const filter = filters ? errorLogService.buildEntryFilter(filters) : null;
 
   for await (const entry of stream) {
     if (filter && !filter(entry)) continue;
+
+    collectErrorFilterStats(stats, entry);
 
     if (entry.level === 'ERROR') {
       totalErrors++;
@@ -325,7 +429,12 @@ async function filterAndAnalyzeStream(stream, filters = {}) {
       uniqueErrors: uniqueErrorMessages.size,
       uniqueWarnings: uniqueWarningMessages.size
     },
-    filterError
+    filterError,
+    ...stats,
+    hourlyHeatmap: {
+      heatmap: stats.hourlyHeatmap.heatmap,
+      days: Array.from(stats.hourlyHeatmap.days).sort()
+    }
   };
 }
 
@@ -465,6 +574,7 @@ module.exports = {
   getThreadDistribution,
   getTrendComparison,
   isSafeRegex,
+  buildErrorFilterStats,
   analyzeAllInOnePass,
   buildEntryFilter,
   countMatchingEntries,

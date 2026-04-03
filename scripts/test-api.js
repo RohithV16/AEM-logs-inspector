@@ -56,6 +56,12 @@ const endpoints = [
     body: { filePath }
   },
   {
+    name: 'POST /api/analyze/batch',
+    method: 'POST',
+    path: '/api/analyze/batch',
+    body: { input: filePath }
+  },
+  {
     name: 'POST /api/filter',
     method: 'POST',
     path: '/api/filter',

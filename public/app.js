@@ -1,5 +1,7 @@
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
+const analyzeBatchBtn = document.getElementById('analyzeBatchBtn');
+const batchFeatureIcon = document.getElementById('batchFeatureIcon');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -16,22 +18,56 @@ const darkModeBtn = document.getElementById('darkModeBtn');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
-const loggerSelect = document.getElementById('loggerSelect');
+const addBatchPathBtn = document.getElementById('addBatchPathBtn');
+const clearBatchPathsBtn = document.getElementById('clearBatchPathsBtn');
+const batchPathList = document.getElementById('batchPathList');
+const loggerResults = document.getElementById('loggerResults');
 const threadSelect = document.getElementById('threadSelect');
 const packageFilter = document.getElementById('packageFilter');
-const packageSelect = document.getElementById('packageSelect');
+const packageResults = document.getElementById('packageResults');
 const exceptionFilter = document.getElementById('exceptionFilter');
 const exceptionSelect = document.getElementById('exceptionSelect');
+const packageVisibleCount = document.getElementById('packageVisibleCount');
+const loggerVisibleCount = document.getElementById('loggerVisibleCount');
+const threadVisibleCount = document.getElementById('threadVisibleCount');
+const exceptionVisibleCount = document.getElementById('exceptionVisibleCount');
+const correlationPanel = document.getElementById('correlationPanel');
+const correlationSummary = document.getElementById('correlationSummary');
+const correlationFilters = document.getElementById('correlationFilters');
+const correlationEvents = document.getElementById('correlationEvents');
+const advancedSearchRules = document.getElementById('advancedSearchRules');
+const addSearchRuleBtn = document.getElementById('addSearchRuleBtn');
+const clearSearchRulesBtn = document.getElementById('clearSearchRulesBtn');
+const runSearchBuilderBtn = document.getElementById('runSearchBuilderBtn');
 
 let timelineChart = null;
 let loggerChart = null;
 let threadChart = null;
 let heatmapChart = null;
+let correlationChart = null;
 let rawEventsData = [];
 let currentLogType = 'error';
+let currentBatchInput = null;
+let currentBatchSummary = null;
 let selectedLoggers = [];
 let selectedPackages = [];
 let allLoggers = {};  // Store all loggers for cascading filter
+let allPackages = {};
+let allThreads = {};
+let allExceptions = {};
+let packageThreadsByPackage = {};
+let packageExceptionsByPackage = {};
+let visiblePackageOptionCount = 0;
+let visibleLoggerOptionCount = 0;
+let correlationData = null;
+let correlationState = {
+  hourOfDay: '',
+  severity: '',
+  logType: '',
+  sourceFile: ''
+};
+let advancedRulesState = [];
+let batchPathCounter = 0;
 
 function setDateRangeBounds(timeline, logType) {
   const keys = Object.keys(timeline);
@@ -65,6 +101,159 @@ function setDateRangeBounds(timeline, logType) {
   endDate.min = firstTime;
   endDate.max = lastTime;
   endDate.value = lastTime;
+}
+
+function createBatchPathRow(value = '') {
+  const row = document.createElement('div');
+  row.className = 'batch-path-row';
+  row.dataset.rowId = String(++batchPathCounter);
+  row.innerHTML = `
+    <input type="text" class="upload-input compact batch-path-input" placeholder="/path/to/log1.log">
+    <button type="button" class="btn-clear remove-batch-path-btn">Remove</button>
+  `;
+
+  const input = row.querySelector('.batch-path-input');
+  input.value = value;
+
+  row.querySelector('.remove-batch-path-btn').addEventListener('click', () => {
+    if (batchPathList.querySelectorAll('.batch-path-row').length === 1) {
+      input.value = '';
+      saveBatchPathsToStorage();
+      input.focus();
+      return;
+    }
+    row.remove();
+    saveBatchPathsToStorage();
+  });
+
+  input.addEventListener('input', saveBatchPathsToStorage);
+  input.addEventListener('blur', saveBatchPathsToStorage);
+
+  return row;
+}
+
+function ensureBatchPathRow() {
+  if (!batchPathList) return;
+  if (!batchPathList.querySelector('.batch-path-row')) {
+    batchPathList.appendChild(createBatchPathRow());
+  }
+}
+
+function getBatchPaths() {
+  return Array.from(batchPathList.querySelectorAll('.batch-path-input'))
+    .map(input => input.value.trim())
+    .filter(Boolean);
+}
+
+function saveBatchPathsToStorage() {
+  const paths = getBatchPaths();
+  localStorage.setItem('aem_batchPaths', JSON.stringify(paths));
+}
+
+function loadBatchPaths() {
+  if (!batchPathList) return;
+  const stored = safeJsonParse(localStorage.getItem('aem_batchPaths'), []);
+  batchPathList.innerHTML = '';
+
+  if (Array.isArray(stored) && stored.length) {
+    stored.forEach(value => batchPathList.appendChild(createBatchPathRow(value)));
+  } else {
+    batchPathList.appendChild(createBatchPathRow());
+  }
+}
+
+function getSeverityClass(severity) {
+  const value = String(severity || '').toUpperCase();
+  if (value === 'ERROR' || value === '5XX') return 'error';
+  if (value === 'WARN' || value === '4XX') return 'warn';
+  return 'info';
+}
+
+function getHourFromTimestamp(timestamp) {
+  if (!timestamp || typeof timestamp !== 'string' || timestamp.length < 13) return '';
+  return timestamp.substring(11, 13);
+}
+
+function createAdvancedRuleRow(rule = {}) {
+  const row = document.createElement('div');
+  row.className = 'advanced-search-row';
+  row.innerHTML = `
+    <select class="advanced-field">
+      <option value="message">Message</option>
+      <option value="logger">Logger</option>
+      <option value="thread">Thread / Pod</option>
+      <option value="package">Package</option>
+      <option value="exception">Exception</option>
+      <option value="category">Category</option>
+      <option value="method">Method</option>
+      <option value="status">Status</option>
+      <option value="cache">Cache</option>
+      <option value="country">Country</option>
+      <option value="pop">POP</option>
+      <option value="host">Host</option>
+      <option value="responseTime">Response Time</option>
+      <option value="ttfb">TTFB</option>
+      <option value="ttlb">TTLB</option>
+      <option value="severity">Severity</option>
+      <option value="sourceFile">Source File</option>
+    </select>
+    <select class="advanced-operator">
+      <option value="contains">contains</option>
+      <option value="equals">equals</option>
+      <option value="startswith">starts with</option>
+      <option value="endswith">ends with</option>
+      <option value="regex">regex</option>
+      <option value="gt">&gt;</option>
+      <option value="gte">&ge;</option>
+      <option value="lt">&lt;</option>
+      <option value="lte">&le;</option>
+      <option value="in">in</option>
+    </select>
+    <input type="text" class="advanced-value" placeholder="Value">
+    <button type="button" class="btn-clear remove-rule-btn">×</button>
+  `;
+
+  const field = row.querySelector('.advanced-field');
+  const operator = row.querySelector('.advanced-operator');
+  const value = row.querySelector('.advanced-value');
+
+  field.value = rule.field || 'message';
+  operator.value = rule.operator || 'contains';
+  value.value = rule.value || '';
+
+  row.querySelector('.remove-rule-btn').addEventListener('click', () => {
+    row.remove();
+  });
+
+  row.addEventListener('change', syncAdvancedRulesFromUI);
+  row.addEventListener('input', syncAdvancedRulesFromUI);
+
+  return row;
+}
+
+function syncAdvancedRulesFromUI() {
+  advancedRulesState = Array.from(advancedSearchRules.querySelectorAll('.advanced-search-row')).map(row => ({
+    field: row.querySelector('.advanced-field')?.value || 'message',
+    operator: row.querySelector('.advanced-operator')?.value || 'contains',
+    value: row.querySelector('.advanced-value')?.value || ''
+  })).filter(rule => String(rule.value || '').trim());
+}
+
+function renderAdvancedRuleBuilder() {
+  if (!advancedSearchRules) return;
+  if (!advancedSearchRules.children.length) {
+    advancedSearchRules.appendChild(createAdvancedRuleRow({ field: 'message', operator: 'contains', value: '' }));
+  }
+}
+
+function getBatchInputPayload() {
+  return getBatchPaths();
+}
+
+function addBatchPathRow(value = '') {
+  if (!batchPathList) return;
+  batchPathList.appendChild(createBatchPathRow(value));
+  saveBatchPathsToStorage();
 }
 
 /* ============================================================
@@ -117,6 +306,141 @@ function safeJsonParse(value, fallback = {}) {
   }
 }
 
+function getActiveErrorLevel() {
+  return document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
+}
+
+function setActiveErrorLevel(level = 'ALL') {
+  document.querySelectorAll('.level-chip').forEach(c => {
+    if (c.id !== 'chartsToggleBtn') c.classList.remove('active');
+  });
+  const chip = document.querySelector(`.level-chip[data-level="${level}"]`) || document.querySelector('.level-chip[data-level="ALL"]');
+  if (chip) chip.classList.add('active');
+  rawEventsLevel = chip?.dataset.level || 'ALL';
+}
+
+function clearDropdownSearchInputs() {
+  loggerFilter.value = '';
+  threadFilter.value = '';
+  packageFilter.value = '';
+  exceptionFilter.value = '';
+}
+
+function selectMultiValues(allowedValues, selectedArray, values = []) {
+  const allowed = new Set(allowedValues || []);
+  selectedArray.splice(0, selectedArray.length);
+  (values || []).forEach((value) => {
+    if (allowed.has(value) && !selectedArray.includes(value)) {
+      selectedArray.push(value);
+    }
+  });
+}
+
+function getCurrentErrorPresetState() {
+  return {
+    selectedLoggers: [...selectedLoggers],
+    selectedPackages: [...selectedPackages],
+    thread: threadSelect?.value || '',
+    exception: exceptionSelect?.value || '',
+    category: categoryFilter.value || '',
+    startDate: startDate.value,
+    endDate: endDate.value,
+    level: getActiveErrorLevel()
+  };
+}
+
+function applyLegacyPresetSelections(preset) {
+  if (preset.package) {
+    const matchingPackage = Object.prototype.hasOwnProperty.call(allPackages, preset.package);
+    if (matchingPackage) selectedPackages.push(preset.package);
+    else packageFilter.value = preset.package;
+  }
+
+  if (preset.logger) {
+    const matchingLogger = Object.prototype.hasOwnProperty.call(allLoggers, preset.logger);
+    if (matchingLogger) selectedLoggers.push(preset.logger);
+    else loggerFilter.value = preset.logger;
+  }
+
+  if (preset.thread) {
+    const matchingThread = Array.from(threadSelect?.options || []).find(opt => opt.value === preset.thread);
+    if (matchingThread) threadSelect.value = matchingThread.value;
+    threadFilter.value = preset.thread;
+  }
+
+  if (preset.exception) {
+    const matchingException = Array.from(exceptionSelect?.options || []).find(opt => opt.value === preset.exception);
+    if (matchingException) exceptionSelect.value = matchingException.value;
+    exceptionFilter.value = preset.exception;
+  }
+}
+
+function applyCurrentSelectionsToFilterUI() {
+  renderPackageTags();
+  filterAndPopulateLoggers();
+  refreshPackageScopedDropdowns();
+  renderLoggerTags();
+}
+
+function resetErrorFilterState(options = {}) {
+  const { preserveDates = false } = options;
+  selectedLoggers.splice(0, selectedLoggers.length);
+  selectedPackages.splice(0, selectedPackages.length);
+  clearDropdownSearchInputs();
+  if (threadSelect) threadSelect.value = '';
+  if (exceptionSelect) exceptionSelect.value = '';
+  categoryFilter.value = '';
+  if (!preserveDates) {
+    startDate.value = '';
+    endDate.value = '';
+  }
+  setActiveErrorLevel('ALL');
+}
+
+function applyErrorPresetState(preset = {}) {
+  selectedPackages.splice(0, selectedPackages.length);
+  selectedLoggers.splice(0, selectedLoggers.length);
+  clearDropdownSearchInputs();
+
+  selectMultiValues(Object.keys(allPackages), selectedPackages, preset.selectedPackages);
+  applyCurrentSelectionsToFilterUI();
+
+  if (preset.selectedLoggers?.length) {
+    selectMultiValues(Object.keys(allLoggers), selectedLoggers, preset.selectedLoggers);
+    renderLoggerTags();
+  } else {
+    applyLegacyPresetSelections(preset);
+    applyCurrentSelectionsToFilterUI();
+  }
+
+  if (threadSelect) {
+    threadSelect.value = '';
+    if (preset.thread) {
+      const threadOption = Array.from(threadSelect.options).find(opt => opt.value === preset.thread);
+      if (threadOption) {
+        threadSelect.value = threadOption.value;
+        threadFilter.value = threadOption.value;
+      }
+    }
+  }
+
+  if (exceptionSelect) {
+    exceptionSelect.value = '';
+    if (preset.exception) {
+      const exceptionOption = Array.from(exceptionSelect.options).find(opt => opt.value === preset.exception);
+      if (exceptionOption) {
+        exceptionSelect.value = exceptionOption.value;
+        exceptionFilter.value = exceptionOption.value;
+      }
+    }
+  }
+
+  categoryFilter.value = preset.category || '';
+  startDate.value = preset.startDate || '';
+  endDate.value = preset.endDate || '';
+  setActiveErrorLevel(preset.level || 'ALL');
+}
+
 function loadPresets() {
   const presets = safeJsonParse(localStorage.getItem('filterPresets'));
   presetSelect.innerHTML = '<option value="">Load Preset...</option>';
@@ -133,19 +457,7 @@ presetSelect.addEventListener('change', () => {
   const presets = safeJsonParse(localStorage.getItem('filterPresets'));
   const preset = presets[presetSelect.value];
   if (preset) {
-    loggerFilter.value = preset.logger || '';
-    threadFilter.value = preset.thread || '';
-    packageFilter.value = preset.package || '';
-    exceptionFilter.value = preset.exception || '';
-    categoryFilter.value = preset.category || '';
-    startDate.value = preset.startDate || '';
-    endDate.value = preset.endDate || '';
-    
-    if (preset.level) {
-      document.querySelectorAll('.level-chip').forEach(c => c.classList.remove('active'));
-      const chip = document.querySelector(`.level-chip[data-level="${preset.level}"]`);
-      if (chip) chip.classList.add('active');
-    }
+    applyErrorPresetState(preset);
     
     document.getElementById('methodFilter').value = preset.method || '';
     document.getElementById('statusFilter').value = preset.httpStatus || '';
@@ -160,7 +472,9 @@ presetSelect.addEventListener('change', () => {
     document.getElementById('hostFilter').value = preset.host || '';
     document.getElementById('minTtfb').value = preset.minTtfb || '';
     document.getElementById('maxTtfb').value = preset.maxTtfb || '';
-    
+
+    scheduleErrorFilterRefresh();
+    applyRawEventFilters();
     showToast(`Preset "${presetSelect.value}" loaded`, 'success');
   }
 });
@@ -169,16 +483,9 @@ savePresetBtn.addEventListener('click', () => {
   const name = prompt('Enter preset name:');
   if (!name) return;
   const presets = safeJsonParse(localStorage.getItem('filterPresets'));
-  const rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
+  const errorPresetState = getCurrentErrorPresetState();
   presets[name] = {
-    logger: loggerFilter.value,
-    thread: threadFilter.value,
-    package: packageFilter.value,
-    exception: exceptionFilter.value,
-    category: categoryFilter.value,
-    startDate: startDate.value,
-    endDate: endDate.value,
-    level: rawEventsLevel,
+    ...errorPresetState,
     method: document.getElementById('methodFilter')?.value || '',
     httpStatus: document.getElementById('statusFilter')?.value || '',
     pod: document.getElementById('podFilter')?.value || '',
@@ -213,6 +520,67 @@ analyzeBtn.addEventListener('click', async () => {
     return;
   }
 });
+
+analyzeBatchBtn.addEventListener('click', async () => {
+  const input = getBatchInputPayload();
+
+  if (!input.length) {
+    showToast('Please add at least one file path', 'warning');
+    return;
+  }
+
+  localStorage.setItem('aem_batchPaths', JSON.stringify(input));
+  await analyzeBatchInput(input);
+});
+
+if (batchFeatureIcon) {
+  batchFeatureIcon.addEventListener('click', () => {
+    showToast('Batch analysis is hidden in the dashboard for now.', 'info');
+  });
+}
+
+addBatchPathBtn.addEventListener('click', () => {
+  addBatchPathRow();
+});
+
+clearBatchPathsBtn.addEventListener('click', () => {
+  if (!batchPathList) return;
+  batchPathList.innerHTML = '';
+  localStorage.removeItem('aem_batchPaths');
+  batchPathList.appendChild(createBatchPathRow());
+});
+
+async function analyzeBatchInput(input) {
+  analyzeBtn.textContent = 'Analyzing...';
+  analyzeBatchBtn.disabled = true;
+  analyzeBtn.disabled = true;
+  progressText.classList.remove('hidden');
+  progressText.textContent = 'Analyzing batch...';
+  document.getElementById('emptyState').classList.add('hidden');
+
+  try {
+    const response = await fetch('/api/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input, filters: { advancedRules: advancedRulesState } })
+    });
+    const data = await response.json();
+
+    if (!data.success) {
+      showError(data.error || 'Batch analysis failed');
+      return;
+    }
+
+    handleBatchAnalysisComplete(data, input);
+  } catch (error) {
+    showError('Batch analysis failed: ' + error.message);
+  } finally {
+    analyzeBtn.textContent = 'Analyze';
+    analyzeBtn.disabled = false;
+    analyzeBatchBtn.disabled = false;
+    progressText.classList.add('hidden');
+  }
+}
 
 async function analyzeFilePath(filePath) {
   analyzeBtn.textContent = 'Analyzing...';
@@ -273,8 +641,19 @@ async function analyzeFilePath(filePath) {
 }
 
 function handleAnalysisComplete(data) {
+  correlationPanel.classList.add('hidden');
+  correlationData = null;
+  currentBatchInput = null;
+  currentBatchSummary = null;
+  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
+  chartsToggleBtn.disabled = false;
+
   // Store the log type
   currentLogType = data.logType || 'error';
+
+  if (currentLogType === 'error') {
+    resetErrorFilterState({ preserveDates: true });
+  }
 
   // Constrain date range inputs to actual log file dates
   if (data.timeline) setDateRangeBounds(data.timeline, currentLogType);
@@ -284,10 +663,10 @@ function handleAnalysisComplete(data) {
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
   if (filterPanel) filterPanel.classList.remove('hidden');
   
-  exportCsvBtn.disabled = false;
-  exportJsonBtn.disabled = false;
-  exportPdfBtn.disabled = false;
-  document.getElementById('exportAllBtn').disabled = false;
+  exportCsvBtn.disabled = true;
+  exportJsonBtn.disabled = true;
+  exportPdfBtn.disabled = true;
+  document.getElementById('exportAllBtn').disabled = true;
 
   // Update level counts for error logs
   if (data.levelCounts) {
@@ -312,7 +691,15 @@ function handleAnalysisComplete(data) {
     }
 
     if (data.loggers || data.threads || data.packages || data.exceptions) {
-      populateFilterDropdowns(data.loggers, data.threads, data.packages, data.exceptions);
+      populateFilterDropdowns(
+        data.loggers,
+        data.threads,
+        data.packages,
+        data.exceptions,
+        data.packageThreads || {},
+        data.packageExceptions || {},
+        categories
+      );
     }
   } else if (currentLogType === 'request') {
     // Request log filters
@@ -332,6 +719,25 @@ function handleAnalysisComplete(data) {
   }
 
   fetchRawEvents(1);
+}
+
+function handleBatchAnalysisComplete(data, input) {
+  currentLogType = 'batch';
+  currentBatchInput = input;
+  currentBatchSummary = data.summary || null;
+  correlationData = data.correlation || null;
+  rawEventsData = [];
+  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
+  chartsToggleBtn.disabled = true;
+  exportCsvBtn.disabled = true;
+  exportJsonBtn.disabled = true;
+  exportPdfBtn.disabled = true;
+  document.getElementById('exportAllBtn').disabled = true;
+
+  document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
+  correlationPanel.classList.remove('hidden');
+  chartsTab.classList.add('hidden');
+  renderBatchCorrelation(data);
 }
 
 function populateSelect(selectId, options, defaultLabel) {
@@ -366,7 +772,10 @@ async function fetchChartsData() {
 
   if (!filePath) return;
 
-  const body = { filePath, filters: {} };
+  const body = {
+    filePath,
+    filters: getCurrentLogFilterPayload()
+  };
 
   try {
     const response = await fetch('/api/filter', {
@@ -444,7 +853,10 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       onClick: (e, elements) => {
         if (elements.length > 0) {
           const loggerName = sortedLoggers[elements[0].index][0];
-          loggerFilter.value = loggerName;
+          selectMultiValues(Object.keys(allLoggers), selectedLoggers, [loggerName]);
+          renderLoggerTags();
+          renderLoggerPicker();
+          scheduleErrorFilterRefresh();
           applyRawEventFilters();
           showToast(`Filtered to logger: ${loggerName.substring(0, 40)}`, 'info');
         }
@@ -505,54 +917,406 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
   });
 }
 
+function renderBatchCorrelation(data) {
+  const correlation = data.correlation || {};
+  const summary = data.summary || {};
+  const incidents = correlation.incidents || [];
+  const hourOfDaySeverity = correlation.hourOfDaySeverity || {};
+
+  const summaryHtml = [
+    `<div class="summary-card"><strong>${summary.totalFiles || 0}</strong><span>Files</span></div>`,
+    `<div class="summary-card"><strong>${summary.totalEvents || 0}</strong><span>Events</span></div>`,
+    `<div class="summary-card"><strong>${summary.totalErrors || 0}</strong><span>Errors</span></div>`,
+    `<div class="summary-card"><strong>${summary.totalWarnings || 0}</strong><span>Warnings</span></div>`,
+    `<div class="summary-card"><strong>${summary.totalRequests || 0}</strong><span>Requests</span></div>`
+  ].join('');
+  correlationSummary.innerHTML = summaryHtml;
+
+  const incidentsHtml = incidents.slice(0, 8).map((incident, index) => {
+    const sourceText = (incident.sources || []).slice(0, 3).map(s => `${s.name} (${s.count})`).join(', ');
+    const severityText = (incident.severities || []).map(s => `${s.name} (${s.count})`).join(', ');
+    return `
+      <div class="incident-card" data-index="${index}" data-hour="${escapeHtml(getHourFromTimestamp(incident.startTimestamp || ''))}" data-source="${escapeHtml((incident.sources || [])[0]?.name || '')}">
+        <div class="incident-card-header">
+          <strong>${escapeHtml(incident.startTimestamp || '')}</strong>
+          <span>${escapeHtml(incident.lastTimestamp || '')}</span>
+          <span>${incident.total || 0} events</span>
+        </div>
+        <div class="incident-card-meta">
+          <span>${escapeHtml(sourceText || 'No source data')}</span>
+          <span>${escapeHtml(severityText || '')}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  correlationFilters.innerHTML = `
+    <div class="correlation-events-header">
+      <h3>Incidents</h3>
+      <p>Click a bar to drill into an hour and severity bucket.</p>
+    </div>
+    <div class="incident-list">${incidentsHtml || '<div class="empty-correlation">No incidents found.</div>'}</div>
+  `;
+
+  correlationFilters.querySelectorAll('.incident-card').forEach(card => {
+    card.addEventListener('click', () => {
+      correlationState.hourOfDay = card.dataset.hour || '';
+      correlationState.severity = '';
+      correlationState.sourceFile = '';
+      renderBatchDrilldown();
+    });
+  });
+
+  const chartCtx = document.getElementById('correlationChart').getContext('2d');
+  const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+  const severityKeys = ['ERROR', 'WARN', 'INFO', 'DEBUG', '2XX', '3XX', '4XX', '5XX'];
+  const datasets = severityKeys.map((severity, index) => {
+    const colorMap = {
+      ERROR: '#DC2626',
+      WARN: '#F59E0B',
+      INFO: '#0EA5E9',
+      DEBUG: '#6B7280',
+      '2XX': '#10B981',
+      '3XX': '#2563EB',
+      '4XX': '#D97706',
+      '5XX': '#991B1B'
+    };
+    return {
+      label: severity,
+      data: labels.map((_, hour) => {
+        const bucket = hourOfDaySeverity[hour];
+        if (!bucket) return 0;
+        return bucket.severityCounts?.[severity] || 0;
+      }),
+      backgroundColor: colorMap[severity],
+      stack: 'severity'
+    };
+  });
+
+  if (correlationChart) correlationChart.destroy();
+  correlationChart = new Chart(chartCtx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      scales: { x: { stacked: true }, y: { stacked: true } },
+      onClick: (e, elements, chart) => {
+        if (!elements.length) return;
+        const element = elements[0];
+        const hour = String(element.index);
+        const severity = chart.data.datasets[element.datasetIndex].label;
+        correlationState = { hourOfDay: hour, severity, logType: '', sourceFile: '' };
+        renderBatchDrilldown();
+      },
+      plugins: { title: { display: true, text: 'Merged incidents by hour and severity' } }
+    }
+  });
+
+  renderBatchDrilldown();
+}
+
+function renderCorrelationEvents(events, total = events.length, page = 1, perPage = events.length || 1) {
+  if (!correlationEvents) return;
+  const header = correlationState.hourOfDay || correlationState.severity
+    ? `<div class="correlation-active-filter">Filtered by ${escapeHtml([correlationState.hourOfDay !== '' ? `${correlationState.hourOfDay}:00` : '', correlationState.severity].filter(Boolean).join(' / '))}</div>`
+    : '';
+  const pageStart = total ? (page - 1) * perPage + 1 : 0;
+  const pageEnd = total ? Math.min(page * perPage, total) : 0;
+
+  correlationEvents.innerHTML = `
+    <div class="correlation-events-header">
+      <h3>Correlation Events</h3>
+      ${header}
+      <p>Showing ${pageStart}-${pageEnd} of ${total}</p>
+    </div>
+    <div class="incident-list">
+      ${events.map((event, index) => renderCorrelationEvent(event, index)).join('')}
+      ${!events.length ? '<div class="empty-correlation">No events match the current drill-down.</div>' : ''}
+    </div>
+  `;
+
+  correlationEvents.querySelectorAll('.correlation-event').forEach(item => {
+    item.addEventListener('click', () => item.classList.toggle('expanded'));
+  });
+}
+
+function renderBatchDrilldown() {
+  if (!correlationEvents) return;
+  correlationEvents.innerHTML = `
+    <div class="correlation-events-header">
+      <h3>Correlation Events</h3>
+      <p>Loading batch drill-down...</p>
+    </div>
+  `;
+  fetchRawEvents(1);
+}
+
+function renderCorrelationEvent(event, index) {
+  const jsonHtml = `<pre class="json-view">${escapeHtml(JSON.stringify(event, null, 2))}</pre>`;
+  return `
+    <div class="correlation-event" data-index="${index}">
+      <div class="correlation-event-header">
+        <span class="level-badge ${getSeverityClass(event.severity)}">${escapeHtml(event.severity)}</span>
+        <span class="event-time">${escapeHtml(event.timestamp || '')}</span>
+        <span class="event-source">${escapeHtml(event.sourceName || event.sourceFile || '')}</span>
+        <span class="event-message">${escapeHtml(event.title || event.message || '')}</span>
+        <span class="expand-arrow">&#9654;</span>
+      </div>
+      <div class="event-details">
+        <div class="event-details-tabs">
+          <button class="detail-tab active" data-tab="json">JSON</button>
+        </div>
+        <div class="tab-content json-tab active">${jsonHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
 /* ============================================================
    Filter Dropdowns
    ============================================================ */
 
-function populateFilterDropdowns(loggers, threads, packages, exceptions) {
+function getScopedCountsByPackage(scopeMap, fallbackCounts = {}) {
+  const result = {};
+  if (!scopeMap || typeof scopeMap !== 'object') return result;
+
+  const packageNames = Object.keys(scopeMap);
+  if (!packageNames.length) {
+    return { ...(fallbackCounts || {}) };
+  }
+
+  const activePackages = selectedPackages.length > 0
+    ? selectedPackages
+    : packageNames;
+
+  activePackages.forEach((pkgName) => {
+    const scoped = scopeMap[pkgName];
+    if (!scoped || typeof scoped !== 'object') return;
+    Object.entries(scoped).forEach(([name, count]) => {
+      result[name] = (result[name] || 0) + count;
+    });
+  });
+
+  return result;
+}
+
+function populateSingleSelectOptions(select, searchInput, counts, placeholder) {
+  if (!select) return;
+
+  const currentValue = select.value || '';
+  const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
+  select.innerHTML = `<option value="">${placeholder}</option>`;
+
+  entries.forEach(([name, count]) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = `${name} (${count})`;
+    select.appendChild(opt);
+  });
+
+  const visibleValues = new Set(entries.map(([name]) => name));
+  if (currentValue && visibleValues.has(currentValue)) {
+    select.value = currentValue;
+    if (searchInput) searchInput.value = currentValue;
+  } else {
+    select.value = '';
+    if (searchInput) searchInput.value = '';
+  }
+}
+
+function pluralize(label, count) {
+  return count === 1 ? label : `${label}s`;
+}
+
+function updateFilterCountBadge(element, visible, total, label, mode = 'visible') {
+  if (!element) return;
+  if (!total) {
+    element.textContent = '';
+    return;
+  }
+  if (mode === 'selected') {
+    element.textContent = `${visible} selected`;
+    return;
+  }
+  element.textContent = `${visible} ${pluralize(label, visible)}`;
+}
+
+function updateCascadeCountBadges() {
+  const loggerVisible = visibleLoggerOptionCount;
+  const loggerTotal = Object.keys(allLoggers || {}).length;
+  const threadVisible = threadSelect ? Math.max(0, threadSelect.options.length - 1) : 0;
+  const threadTotal = Object.keys(allThreads || {}).length;
+  const exceptionVisible = exceptionSelect ? Math.max(0, exceptionSelect.options.length - 1) : 0;
+  const exceptionTotal = Object.keys(allExceptions || {}).length;
+  const packageTotal = Object.keys(allPackages || {}).length;
+
+  updateFilterCountBadge(loggerVisibleCount, loggerVisible, loggerTotal, 'logger');
+  updateFilterCountBadge(threadVisibleCount, threadVisible, threadTotal, 'pod');
+  updateFilterCountBadge(exceptionVisibleCount, exceptionVisible, exceptionTotal, 'exception');
+  updateFilterCountBadge(packageVisibleCount, selectedPackages.length, packageTotal, 'package', 'selected');
+}
+
+function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
+  for (let i = selectedArray.length - 1; i >= 0; i--) {
+    if (!visibleValues.has(selectedArray[i])) {
+      selectedArray.splice(i, 1);
+    }
+  }
+}
+
+function refreshPackageScopedDropdowns() {
+  const scopedThreads = getScopedCountsByPackage(packageThreadsByPackage, allThreads);
+  const scopedExceptions = getScopedCountsByPackage(packageExceptionsByPackage, allExceptions);
+  populateSingleSelectOptions(threadSelect, document.getElementById('threadFilter'), scopedThreads, 'All Pods');
+  populateSingleSelectOptions(exceptionSelect, document.getElementById('exceptionFilter'), scopedExceptions, 'All Exceptions');
+  updateCascadeCountBadges();
+}
+
+function populateSelectWithSelection(select, options, defaultLabel, currentValue = '') {
+  if (!select) return;
+  const entries = Array.isArray(options)
+    ? options.map(name => [name, null])
+    : Object.entries(options || {});
+  const values = new Set();
+  select.innerHTML = `<option value="">${defaultLabel}</option>`;
+  entries.sort((a, b) => String(a[0]).localeCompare(String(b[0]))).forEach(([name, count]) => {
+    values.add(name);
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = count ? `${name} (${count})` : name;
+    select.appendChild(opt);
+  });
+  if (currentValue && values.has(currentValue)) {
+    select.value = currentValue;
+  } else {
+    select.value = '';
+  }
+}
+
+function populateFilterDropdowns(loggers, threads, packages, exceptions, packageThreads = {}, packageExceptions = {}, categories = []) {
   // Store all loggers for cascading filter
   allLoggers = loggers || {};
+  allPackages = packages || {};
+  allThreads = threads || {};
+  allExceptions = exceptions || {};
+  packageThreadsByPackage = packageThreads || {};
+  packageExceptionsByPackage = packageExceptions || {};
 
-  // Multi-select for packages
-  if (packages && packageSelect) {
-    const sorted = Object.entries(packages).sort((a, b) => b[1] - a[1]);
-    packageSelect.innerHTML = '';
-    sorted.forEach(([name, count]) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = `${name} (${count})`;
-      opt.selected = selectedPackages.includes(name);
-      packageSelect.appendChild(opt);
-    });
-    renderPackageTags();
-  }
+  const visiblePackageValues = new Set(Object.keys(allPackages));
+  syncSelectedMultiSelectValues(selectedPackages, visiblePackageValues);
+  renderPackagePicker();
+  renderPackageTags();
 
   // Multi-select for loggers (filtered by selected packages)
   filterAndPopulateLoggers();
 
-  // Single-select for threads (AEMaaCs Pods)
-  if (threads && threadSelect) {
-    const sorted = Object.entries(threads).sort((a, b) => b[1] - a[1]);
-    threadSelect.innerHTML = '<option value="">All Pods</option>';
-    sorted.forEach(([name, count]) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = `${name} (${count})`;
-      threadSelect.appendChild(opt);
-    });
-  }
+  // Threads and exceptions should stay aligned to the active package scope.
+  refreshPackageScopedDropdowns();
 
-  // Single-select for exceptions
-  if (exceptions && exceptionSelect) {
-    const sorted = Object.entries(exceptions).sort((a, b) => b[1] - a[1]);
-    exceptionSelect.innerHTML = '<option value="">All Exceptions</option>';
-    sorted.forEach(([name, count]) => {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = `${name} (${count})`;
-      exceptionSelect.appendChild(opt);
+  // Category options should track the active error subset
+  populateSelectWithSelection(categoryFilter, categories || [], 'All Categories', categoryFilter?.value || '');
+
+  updateCascadeCountBadges();
+}
+
+function getCurrentErrorFilterPayload() {
+  const filters = {};
+
+  if (startDate.value) filters.startDate = startDate.value;
+  if (endDate.value) filters.endDate = endDate.value;
+  if (rawEventsLevel && rawEventsLevel !== 'ALL') filters.level = rawEventsLevel;
+  if (selectedLoggers.length > 0) filters.logger = [...selectedLoggers];
+  if (threadSelect?.value) filters.thread = threadSelect.value;
+  if (selectedPackages.length > 0) filters.package = [...selectedPackages];
+  if (exceptionSelect?.value) filters.exception = exceptionSelect.value;
+  if (categoryFilter?.value) filters.category = categoryFilter.value;
+
+  return filters;
+}
+
+function getCurrentRequestFilterPayload() {
+  const filters = {};
+
+  if (document.getElementById('methodFilter')?.value) filters.method = document.getElementById('methodFilter').value;
+  if (document.getElementById('statusFilter')?.value) filters.status = document.getElementById('statusFilter').value;
+  if (document.getElementById('podFilter')?.value) filters.pod = document.getElementById('podFilter').value;
+  if (document.getElementById('minResponseTime')?.value) filters.minTime = document.getElementById('minResponseTime').value;
+  if (document.getElementById('maxResponseTime')?.value) filters.maxTime = document.getElementById('maxResponseTime').value;
+
+  return filters;
+}
+
+function getCurrentCDNFilterPayload() {
+  const filters = {};
+
+  if (document.getElementById('cdnMethodFilter')?.value) filters.method = document.getElementById('cdnMethodFilter').value;
+  if (document.getElementById('cdnStatusFilter')?.value) filters.status = document.getElementById('cdnStatusFilter').value;
+  if (document.getElementById('cacheStatusFilter')?.value) filters.cache = document.getElementById('cacheStatusFilter').value;
+  if (document.getElementById('countryFilter')?.value) filters.country = document.getElementById('countryFilter').value;
+  if (document.getElementById('popFilter')?.value) filters.pop = document.getElementById('popFilter').value;
+  if (document.getElementById('hostFilter')?.value) filters.host = document.getElementById('hostFilter').value;
+  if (document.getElementById('minTtfb')?.value) filters.minTtfb = document.getElementById('minTtfb').value;
+  if (document.getElementById('maxTtfb')?.value) filters.maxTtfb = document.getElementById('maxTtfb').value;
+
+  return filters;
+}
+
+function getCurrentLogFilterPayload() {
+  if (currentLogType === 'request') return getCurrentRequestFilterPayload();
+  if (currentLogType === 'cdn') return getCurrentCDNFilterPayload();
+  return getCurrentErrorFilterPayload();
+}
+
+function applyErrorFilterSidebarResponse(data) {
+  if (!data || !data.success) return;
+
+  const categories = data.categories || [];
+  populateFilterDropdowns(
+    data.loggers || data.loggerDist || {},
+    data.threads || data.threadDist || {},
+    data.packages || {},
+    data.exceptions || {},
+    data.packageThreads || {},
+    data.packageExceptions || {},
+    categories
+  );
+}
+
+let errorFilterRefreshTimer = null;
+let errorFilterRefreshSeq = 0;
+
+async function refreshErrorFilterOptions() {
+  if (currentLogType !== 'error') return;
+
+  const filePath = filePathInput.value.trim();
+  if (!filePath) return;
+
+  const seq = ++errorFilterRefreshSeq;
+  const payload = {
+    filePath,
+    filters: getCurrentErrorFilterPayload()
+  };
+
+  try {
+    const response = await fetch('/api/filter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
     });
+    const data = await response.json();
+    if (seq !== errorFilterRefreshSeq) return;
+    if (!data.success) return;
+    applyErrorFilterSidebarResponse(data);
+  } catch {
+    // Sidebar refresh is best-effort; keep the current selections on failure.
   }
+}
+
+function scheduleErrorFilterRefresh() {
+  if (currentLogType !== 'error') return;
+  clearTimeout(errorFilterRefreshTimer);
+  errorFilterRefreshTimer = setTimeout(() => {
+    refreshErrorFilterOptions();
+  }, 120);
 }
 
 function escapeHtml(text) {
@@ -592,79 +1356,93 @@ function renderPackageTags() {
   ).join('');
 }
 
+function getFilteredPackageEntries() {
+  const query = packageFilter.value.trim().toLowerCase();
+  return Object.entries(allPackages || {})
+    .sort((a, b) => b[1] - a[1])
+    .filter(([name]) => !query || name.toLowerCase().includes(query));
+}
+
+function renderTokenPickerResults(container, entries, selectedArray) {
+  if (!container) return;
+
+  if (!entries.length) {
+    container.innerHTML = '<div class="token-picker-empty">No matches</div>';
+    return;
+  }
+
+  container.innerHTML = entries.map(([name, count]) => `
+    <button type="button" class="token-picker-option ${selectedArray.includes(name) ? 'selected' : ''}" data-value="${escapeHtml(name)}">
+      <span class="token-picker-option-label" title="${escapeHtml(name)}">${escapeHtml(name)}${count ? ` (${count})` : ''}</span>
+      <span class="token-picker-option-check">${selectedArray.includes(name) ? 'Selected' : 'Add'}</span>
+    </button>
+  `).join('');
+}
+
+function renderPackagePicker() {
+  const entries = getFilteredPackageEntries();
+  visiblePackageOptionCount = entries.length;
+  renderTokenPickerResults(packageResults, entries, selectedPackages);
+  updateCascadeCountBadges();
+}
+
 window.removeLogger = (val) => {
   const idx = selectedLoggers.indexOf(val);
   if (idx !== -1) selectedLoggers.splice(idx, 1);
-  const opt = loggerSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
-  if (opt) opt.selected = false;
   renderLoggerTags();
+  renderLoggerPicker();
+  scheduleErrorFilterRefresh();
 };
 
 window.removePackage = (val) => {
   const idx = selectedPackages.indexOf(val);
   if (idx !== -1) selectedPackages.splice(idx, 1);
-  const opt = packageSelect.querySelector(`option[value="${CSS.escape(val)}"]`);
-  if (opt) opt.selected = false;
   renderPackageTags();
+  renderPackagePicker();
   filterAndPopulateLoggers();
+  refreshPackageScopedDropdowns();
+  scheduleErrorFilterRefresh();
 };
 
 /* ============================================================
    Smart Package Grouping & Cascading Filter
    ============================================================ */
 
-function getLoggerPackageGroup(logger) {
-  const GENERIC_WORDS = new Set([
-    'impl', 'internal', 'core', 'service', 'util', 'common',
-    'scheduler', 'consumer', 'provider', 'factory', 'manager',
-    'handler', 'adapter', 'transformer', 'mapper', 'helper'
-  ]);
-  const KNOWN_VENDORS = new Set([
-    'com.adobe', 'com.day', 'com.mandg', 'com.google', 'com.sun',
-    'org.apache', 'org.eclipse', 'org.springframework', 'org.slf4j', 'org.junit',
-    'io.prometheus', 'io.netty',
-    'javax.servlet', 'javax.persistence',
-    'net.sf'
-  ]);
-  const parts = logger.split('.');
-  if (parts.length < 2) return logger;
-  if (parts[0] === 'Events' && parts[1] === 'Service') {
-    return parts.length >= 4 ? parts.slice(0, 4).join('.') : parts.join('.');
-  }
-  const vendorKey = parts.slice(0, 2).join('.');
-  if (KNOWN_VENDORS.has(vendorKey)) return vendorKey;
-  let depth = Math.min(2, parts.length);
-  for (let i = 2; i < parts.length && i < 6; i++) {
-    if (GENERIC_WORDS.has(parts[i].toLowerCase())) break;
-    depth = i + 1;
-  }
-  return parts.slice(0, depth).join('.');
+function loggerMatchesSelectedPackages(loggerName) {
+  if (!selectedPackages.length) return true;
+  return selectedPackages.some((pkg) => loggerName === pkg || loggerName.startsWith(`${pkg}.`));
+}
+
+function getAvailableLoggerEntries() {
+  return Object.entries(allLoggers || {})
+    .sort((a, b) => b[1] - a[1])
+    .filter(([name]) => loggerMatchesSelectedPackages(name));
+}
+
+function getFilteredLoggerEntries() {
+  const query = loggerFilter.value.trim().toLowerCase();
+  return getAvailableLoggerEntries()
+    .filter(([name]) => !query || name.toLowerCase().includes(query));
+}
+
+function renderLoggerPicker() {
+  const entries = getFilteredLoggerEntries();
+  visibleLoggerOptionCount = entries.length;
+  renderTokenPickerResults(loggerResults, entries, selectedLoggers);
+  updateCascadeCountBadges();
 }
 
 function filterAndPopulateLoggers() {
-  if (!loggerSelect || !allLoggers) return;
-  const sorted = Object.entries(allLoggers).sort((a, b) => b[1] - a[1]);
-  loggerSelect.innerHTML = '';
-  sorted.forEach(([name, count]) => {
-    const pkg = getLoggerPackageGroup(name);
-    if (selectedPackages.length > 0 && !selectedPackages.includes(pkg)) {
-      return;
-    }
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = `${name} (${count})`;
-    opt.title = name;
-    opt.selected = selectedLoggers.includes(name);
-    loggerSelect.appendChild(opt);
-  });
-  const visibleValues = new Set(Array.from(loggerSelect.options).map(o => o.value));
+  if (!allLoggers) return;
+  const availableValues = new Set(getAvailableLoggerEntries().map(([name]) => name));
   // Mutate array in-place instead of reassigning to preserve reference
   for (let i = selectedLoggers.length - 1; i >= 0; i--) {
-    if (!visibleValues.has(selectedLoggers[i])) {
+    if (!availableValues.has(selectedLoggers[i])) {
       selectedLoggers.splice(i, 1);
     }
   }
   renderLoggerTags();
+  renderLoggerPicker();
 }
 
 /* ============================================================
@@ -674,7 +1452,14 @@ function filterAndPopulateLoggers() {
 function applyRawEventFilters() {
   rawEventsSearch = rawSearchInput.value;
   rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
+
+  if (currentLogType === 'batch' && correlationData) {
+    fetchRawEvents(1);
+    return;
+  }
+
   fetchRawEvents(1);
+  if (chartsVisible) fetchChartsData();
 }
 
 applyFiltersBtn.addEventListener('click', applyRawEventFilters);
@@ -682,71 +1467,125 @@ applyFiltersBtn.addEventListener('click', applyRawEventFilters);
 clearFiltersBtn.addEventListener('click', () => {
   rawSearchInput.value = '';
   rawEventsSearch = '';
-  loggerFilter.value = '';
-  threadFilter.value = '';
-  packageFilter.value = '';
-  exceptionFilter.value = '';
-  startDate.value = '';
-  endDate.value = '';
-  
-  // Clear multi-select loggers and packages (mutate in place to preserve references)
-  selectedLoggers.splice(0, selectedLoggers.length);
-  selectedPackages.splice(0, selectedPackages.length);
-  if (packageSelect) {
-    Array.from(packageSelect.options).forEach(o => {
-      o.style.display = '';
-      o.selected = false;
-    });
-  }
-  if (threadSelect) Array.from(threadSelect.options).forEach(o => o.style.display = '');
-  if (exceptionSelect) Array.from(exceptionSelect.options).forEach(o => o.style.display = '');
+  resetErrorFilterState();
+  const requestFilterIds = ['methodFilter', 'statusFilter', 'podFilter', 'minResponseTime', 'maxResponseTime'];
+  const cdnFilterIds = ['cdnMethodFilter', 'cdnStatusFilter', 'cacheStatusFilter', 'countryFilter', 'popFilter', 'hostFilter', 'minTtfb', 'maxTtfb'];
+
+  [...requestFilterIds, ...cdnFilterIds].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element) element.value = '';
+  });
   renderLoggerTags();
   renderPackageTags();
+  renderPackagePicker();
   filterAndPopulateLoggers(); // Refresh logger list to show all
+  refreshPackageScopedDropdowns();
+  scheduleErrorFilterRefresh();
+  advancedSearchRules.innerHTML = '';
+  renderAdvancedRuleBuilder();
+  advancedRulesState = [];
+  correlationState = { hourOfDay: '', severity: '', logType: '', sourceFile: '' };
   applyRawEventFilters();
 });
 
-categoryFilter.addEventListener('change', applyRawEventFilters);
+categoryFilter.addEventListener('change', () => {
+  scheduleErrorFilterRefresh();
+  applyRawEventFilters();
+});
+
+startDate.addEventListener('change', () => {
+  scheduleErrorFilterRefresh();
+});
+
+endDate.addEventListener('change', () => {
+  scheduleErrorFilterRefresh();
+});
+
+addSearchRuleBtn.addEventListener('click', () => {
+  advancedSearchRules.appendChild(createAdvancedRuleRow());
+  syncAdvancedRulesFromUI();
+});
+
+clearSearchRulesBtn.addEventListener('click', () => {
+  advancedSearchRules.innerHTML = '';
+  advancedRulesState = [];
+  renderAdvancedRuleBuilder();
+  applyRawEventFilters();
+});
+
+runSearchBuilderBtn.addEventListener('click', () => {
+  syncAdvancedRulesFromUI();
+  applyRawEventFilters();
+});
 
 /* ============================================================
    Exports
    ============================================================ */
 
 exportCsvBtn.addEventListener('click', async () => {
+  const body = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
   const response = await fetch('/api/export/csv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ events: rawEventsData })
+    body: JSON.stringify(body)
   });
   downloadFile(await response.blob(), 'aem-log-errors.csv', 'text/csv');
 });
 
 exportJsonBtn.addEventListener('click', async () => {
+  const body = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
   const response = await fetch('/api/export/json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ events: rawEventsData })
+    body: JSON.stringify(body)
   });
   downloadFile(await response.blob(), 'aem-log-errors.json', 'application/json');
 });
 
 exportPdfBtn.addEventListener('click', async () => {
   const summary = getSummaryFromDOM();
+  const body = currentLogType === 'batch'
+    ? { ...getBatchExportPayload(), summary }
+    : { summary, events: rawEventsData };
 
   const response = await fetch('/api/export/pdf', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ summary, events: rawEventsData })
+    body: JSON.stringify(body)
   });
   downloadFile(await response.blob(), 'aem-log-summary.pdf', 'application/pdf');
 });
 
-function getSummaryFromDOM() {
+function getBatchExportPayload() {
   return {
-    totalErrors: document.getElementById('totalErrors').textContent,
-    totalWarnings: document.getElementById('totalWarnings').textContent,
-    uniqueErrors: document.getElementById('uniqueErrors').textContent,
-    uniqueWarnings: document.getElementById('uniqueWarnings').textContent
+    input: currentBatchInput,
+    advancedRules: advancedRulesState,
+    search: rawEventsSearch,
+    hourOfDay: correlationState.hourOfDay,
+    severity: correlationState.severity,
+    logType: correlationState.logType,
+    sourceFile: correlationState.sourceFile
+  };
+}
+
+function getSummaryFromDOM() {
+  if (currentLogType === 'batch' && currentBatchSummary) {
+    return {
+      totalErrors: currentBatchSummary.totalErrors || 0,
+      totalWarnings: currentBatchSummary.totalWarnings || 0,
+      uniqueErrors: currentBatchSummary.uniqueErrors || 0,
+      uniqueWarnings: currentBatchSummary.uniqueWarnings || 0,
+      totalFiles: currentBatchSummary.totalFiles || 0,
+      totalEvents: currentBatchSummary.totalEvents || 0
+    };
+  }
+
+  const getText = (id) => document.getElementById(id)?.textContent || '(0)';
+  return {
+    totalErrors: getText('totalErrors'),
+    totalWarnings: getText('totalWarnings'),
+    uniqueErrors: getText('uniqueErrors'),
+    uniqueWarnings: getText('uniqueWarnings')
   };
 }
 
@@ -754,10 +1593,13 @@ document.getElementById('exportAllBtn').addEventListener('click', async () => {
   showToast('Generating all exports...', 'info');
   const summary = getSummaryFromDOM();
   try {
+    const csvBody = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
+    const jsonBody = currentLogType === 'batch' ? getBatchExportPayload() : { events: rawEventsData };
+    const pdfBody = currentLogType === 'batch' ? { ...getBatchExportPayload(), summary } : { summary, events: rawEventsData };
     const [csvRes, jsonRes, pdfRes] = await Promise.all([
-      fetch('/api/export/csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: rawEventsData }) }),
-      fetch('/api/export/json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: rawEventsData }) }),
-      fetch('/api/export/pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ summary, events: rawEventsData }) })
+      fetch('/api/export/csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(csvBody) }),
+      fetch('/api/export/json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody) }),
+      fetch('/api/export/pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pdfBody) })
     ]);
     downloadFile(await csvRes.blob(), 'aem-log-errors.csv', 'text/csv');
     downloadFile(await jsonRes.blob(), 'aem-log-errors.json', 'application/json');
@@ -857,6 +1699,43 @@ const rawEventsSection = document.getElementById('rawEvents');
 
 async function fetchRawEvents(page = 1) {
   rawEventsPage = page;
+
+  if (currentLogType === 'batch' && currentBatchInput) {
+    const body = {
+      input: currentBatchInput,
+      page,
+      perPage: 50,
+      search: rawEventsSearch,
+      advancedRules: advancedRulesState,
+      hourOfDay: correlationState.hourOfDay,
+      severity: correlationState.severity,
+      logType: correlationState.logType,
+      sourceFile: correlationState.sourceFile
+    };
+
+    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading batch events...</div>';
+
+    try {
+      const response = await fetch('/api/raw-events/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await response.json();
+      if (!data.success) {
+        showToast(data.error, 'error');
+        return;
+      }
+
+      rawEventsData = data.events;
+      renderCorrelationEvents(data.events, data.total, data.page, data.perPage);
+      renderRawEvents(data.events, data.total, data.page, data.perPage, 'batch');
+    } catch (e) {
+      showToast('Failed to load batch events: ' + e.message, 'error');
+    }
+    return;
+  }
+
   const filePath = filePathInput.value.trim();
 
   if (!filePath) {
@@ -879,9 +1758,9 @@ async function fetchRawEvents(page = 1) {
   if (currentLogType === 'error') {
     body.level = rawEventsLevel;
     if (selectedLoggers.length > 0) body.logger = selectedLoggers;
-    if (threadFilter.value) body.thread = threadFilter.value;
+    if (threadSelect?.value) body.thread = threadSelect.value;
     if (selectedPackages.length > 0) body.package = selectedPackages;
-    if (exceptionFilter.value) body.exception = exceptionFilter.value;
+    if (exceptionSelect?.value) body.exception = exceptionSelect.value;
     if (rawSearchInput.value) body.search = rawSearchInput.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
   } else if (currentLogType === 'request') {
@@ -971,6 +1850,8 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
       html += renderRequestEvent(evt, i);
     } else if (logType === 'cdn') {
       html += renderCDNEvent(evt, i);
+    } else if (logType === 'batch') {
+      html += renderBatchEvent(evt, i);
     } else {
       html += renderErrorEvent(evt, i);
     }
@@ -1143,6 +2024,29 @@ function renderCDNEvent(evt, i) {
   `;
 }
 
+function renderBatchEvent(evt, i) {
+  const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(evt, null, 2), rawEventsSearch)}</pre>`;
+
+  return `
+    <div class="raw-event ${getSeverityClass(evt.severity)}" data-index="${i}" style="animation-delay:${i * 30}ms">
+      <div class="raw-event-header">
+        <span class="level-badge ${getSeverityClass(evt.severity)}">${escapeHtml(evt.severity)}</span>
+        <span class="event-time">${escapeHtml(evt.timestamp || '')}</span>
+        <span class="event-logger" title="${escapeHtml(evt.sourceName || evt.sourceFile || '')}">${escapeHtml(evt.sourceName || evt.sourceFile || '')}</span>
+        <span class="event-message" title="${escapeHtml(evt.title || evt.message || '')}">${highlightText(evt.title || evt.message || '', rawEventsSearch)}</span>
+        <span class="expand-arrow">&#9654;</span>
+      </div>
+      <div class="event-details">
+        <div class="event-details-tabs">
+          <button class="detail-tab active" data-tab="json">JSON</button>
+          <button class="copy-stack-btn" onclick="event.stopPropagation(); copyEventJson(this, ${i})">Copy JSON</button>
+        </div>
+        <div class="tab-content json-tab active">${jsonHtml}</div>
+      </div>
+    </div>
+  `;
+}
+
 window.copyEventJson = (btn, index) => {
   const event = btn.closest('.raw-event');
   const jsonView = event.querySelector('.json-view');
@@ -1162,7 +2066,13 @@ document.querySelectorAll('.level-chip').forEach(chip => {
     });
     chip.classList.add('active');
     rawEventsLevel = chip.dataset.level;
-    fetchRawEvents(1);
+    if (currentLogType === 'batch' && correlationData) {
+      correlationState.severity = chip.dataset.level === 'ALL' ? '' : chip.dataset.level;
+      fetchRawEvents(1);
+    } else {
+      scheduleErrorFilterRefresh();
+      fetchRawEvents(1);
+    }
   });
 });
 
@@ -1170,19 +2080,27 @@ const rawSearchInput = document.getElementById('rawSearchInput');
 const rawSearchBtn = document.getElementById('rawSearchBtn');
 rawSearchBtn.addEventListener('click', () => {
   rawEventsSearch = rawSearchInput.value;
-  fetchRawEvents(1);
+  if (currentLogType === 'batch' && correlationData) {
+    applyRawEventFilters();
+  } else {
+    fetchRawEvents(1);
+  }
 });
 rawSearchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     rawEventsSearch = rawSearchInput.value;
-    fetchRawEvents(1);
+    if (currentLogType === 'batch' && correlationData) {
+      applyRawEventFilters();
+    } else {
+      fetchRawEvents(1);
+    }
   }
 });
 
 window.fetchRawEvents = fetchRawEvents;
 
 // Single-select searchable dropdown behavior
-function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId) {
+function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId, onChangeCallback = null) {
   const dropdown = document.getElementById(dropdownId);
   const searchInput = document.getElementById(searchInputId);
   const select = document.getElementById(selectId);
@@ -1212,6 +2130,7 @@ function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInput
     const val = select.value;
     searchInput.value = val;
     dropdown.classList.remove('open');
+    if (onChangeCallback) onChangeCallback();
     applyRawEventFilters();
   });
 
@@ -1222,62 +2141,129 @@ function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInput
   });
 }
 
-// Multi-select searchable dropdown behavior
-function initMultiSelectDropdown(dropdownId, searchInputId, selectId, selectedArray, renderTagsFn, onChangeCallback) {
+// Token-picker behavior for package/logger multi-select filters.
+function initMultiSelectDropdown(dropdownId, searchInputId, resultsId, selectedArray, renderTagsFn, onSelectionChange, onSelectionCommit, renderResultsFn) {
   const dropdown = document.getElementById(dropdownId);
   const searchInput = document.getElementById(searchInputId);
-  const select = document.getElementById(selectId);
+  const results = document.getElementById(resultsId);
 
-  if (!dropdown || !searchInput || !select) return;
+  if (!dropdown || !searchInput || !results) return;
+
+  let hasPendingSelectionChange = false;
+
+  function commitSelectionChanges() {
+    if (!hasPendingSelectionChange) return;
+    hasPendingSelectionChange = false;
+    if (onSelectionCommit) onSelectionCommit();
+  }
 
   searchInput.addEventListener('focus', () => {
     dropdown.classList.add('open');
+    renderResultsFn();
   });
 
   searchInput.addEventListener('input', () => {
-    const query = searchInput.value.toLowerCase();
     dropdown.classList.add('open');
-
-    Array.from(select.options).forEach(opt => {
-      const text = (opt.value + ' ' + opt.textContent).toLowerCase();
-      opt.style.display = text.includes(query) ? '' : 'none';
-    });
+    renderResultsFn();
   });
 
-  select.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    const opt = e.target.closest('option');
-    if (!opt || opt.value === '') return;
-
-    // Toggle selection
-    if (selectedArray.includes(opt.value)) {
-      opt.selected = false;
-      const idx = selectedArray.indexOf(opt.value);
-      if (idx !== -1) selectedArray.splice(idx, 1);
-    } else {
-      opt.selected = true;
-      selectedArray.push(opt.value);
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && !searchInput.value.trim() && selectedArray.length > 0) {
+      selectedArray.pop();
+      renderTagsFn();
+      renderResultsFn();
+      hasPendingSelectionChange = true;
+      if (onSelectionChange) onSelectionChange();
     }
 
-    // Update tags
-    renderTagsFn();
+    if (e.key === 'Escape') {
+      dropdown.classList.remove('open');
+      commitSelectionChanges();
+    }
+  });
 
-    // Trigger onChange callback if provided
-    if (onChangeCallback) onChangeCallback();
+  results.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.token-picker-option')) {
+      e.preventDefault();
+    }
+  });
+
+  results.addEventListener('click', (e) => {
+    const button = e.target.closest('.token-picker-option');
+    if (!button) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const optionValue = button.dataset.value || '';
+    if (!optionValue) return;
+
+    if (selectedArray.includes(optionValue)) {
+      const idx = selectedArray.indexOf(optionValue);
+      if (idx !== -1) selectedArray.splice(idx, 1);
+    } else {
+      selectedArray.push(optionValue);
+    }
+
+    renderTagsFn();
+    renderResultsFn();
+    dropdown.classList.add('open');
+    searchInput.focus();
+    hasPendingSelectionChange = true;
+    if (onSelectionChange) onSelectionChange();
   });
 
   document.addEventListener('click', (e) => {
     if (!dropdown.contains(e.target)) {
       dropdown.classList.remove('open');
+      commitSelectionChanges();
     }
   });
 }
 
 // Initialize dropdowns
-initMultiSelectDropdown('loggerDropdown', 'loggerFilter', 'loggerSelect', selectedLoggers, renderLoggerTags);
-initSearchableDropdown('threadDropdown', 'threadFilter', 'threadSelect');
-initMultiSelectDropdown('packageDropdown', 'packageFilter', 'packageSelect', selectedPackages, renderPackageTags, filterAndPopulateLoggers);
-initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect');
+initMultiSelectDropdown(
+  'loggerDropdown',
+  'loggerFilter',
+  'loggerResults',
+  selectedLoggers,
+  renderLoggerTags,
+  renderLoggerPicker,
+  scheduleErrorFilterRefresh,
+  renderLoggerPicker
+);
+initSearchableDropdown('threadDropdown', 'threadFilter', 'threadSelect', null, scheduleErrorFilterRefresh);
+initMultiSelectDropdown(
+  'packageDropdown',
+  'packageFilter',
+  'packageResults',
+  selectedPackages,
+  renderPackageTags,
+  () => {
+    renderPackagePicker();
+    filterAndPopulateLoggers();
+    refreshPackageScopedDropdowns();
+  },
+  scheduleErrorFilterRefresh,
+  renderPackagePicker
+);
+initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect', null, scheduleErrorFilterRefresh);
+
+['methodFilter', 'statusFilter', 'podFilter', 'cdnMethodFilter', 'cdnStatusFilter', 'cacheStatusFilter', 'countryFilter', 'popFilter', 'hostFilter'].forEach((id) => {
+  const select = document.getElementById(id);
+  if (select) select.addEventListener('change', applyRawEventFilters);
+});
+
+['minResponseTime', 'maxResponseTime', 'minTtfb', 'maxTtfb'].forEach((id) => {
+  const input = document.getElementById(id);
+  if (!input) return;
+  input.addEventListener('change', applyRawEventFilters);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') applyRawEventFilters();
+  });
+});
+
+renderAdvancedRuleBuilder();
+loadBatchPaths();
+updateCascadeCountBadges();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');

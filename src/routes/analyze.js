@@ -4,6 +4,7 @@ const { detectLogType } = require('../parser');
 const { analyzeAllInOnePass } = require('../services/errorLogService');
 const { analyzeRequestLog } = require('../services/requestLogService');
 const { analyzeCDNLog } = require('../services/cdnLogService');
+const { analyzeBatch } = require('../services/batchAnalysisService');
 const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('../utils/files');
 
 /**
@@ -77,6 +78,9 @@ function createAnalyzeRouter() {
           threads: result.threads,
           packages: result.packages,
           exceptions: result.exceptions,
+          httpMethods: result.httpMethods,
+          packageThreads: result.packageThreads,
+          packageExceptions: result.packageExceptions,
           timeline: result.timeline,
           levelCounts: result.levelCounts
         });
@@ -140,6 +144,29 @@ function createAnalyzeRouter() {
       /* Send error through SSE stream and close connection */
       res.write(`data: ${JSON.stringify({ type: 'error', error: sanitizeErrorMessage(error.message) })}\n\n`);
       res.end();
+    }
+  });
+
+  /* === POST /api/analyze/batch === */
+  /* Analyze multiple files or a directory and build a merged incident timeline */
+  router.post('/analyze/batch', async (req, res) => {
+    const { input, filters } = req.body;
+
+    try {
+      if (!input) {
+        throw new Error('Please provide a file path, file list, or directory.');
+      }
+
+      const result = await analyzeBatch(input, filters || {});
+      res.json({
+        success: true,
+        logType: 'batch',
+        summary: result.summary,
+        sources: result.sources,
+        correlation: result.correlation
+      });
+    } catch (error) {
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }
   });
 

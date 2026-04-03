@@ -4,8 +4,7 @@ const { detectLogType, createLogStream, createRequestLogStream, createCDNLogStre
 const { buildEntryFilter, buildRequestFilter, buildCDNFilter } = require('../services/errorLogService');
 const { buildRequestFilter: buildRequestFilterSvc } = require('../services/requestLogService');
 const { buildCDNFilter: buildCDNFilterSvc } = require('../services/cdnLogService');
-const { analyzeEntries, getSummaryFromEntries, getTimelineData, getLoggerDistribution, getHourlyHeatmap, getThreadDistribution, filterAndAnalyzeStream, getTimelineDataStream, getLoggerDistributionStream, getTrendComparison } = require('../analyzer');
-const { filterByDateRange, filterByLogger, filterByThread, filterByRegex, filterByPackage } = require('../analyzer');
+const { analyzeEntries, getSummaryFromEntries, getTimelineData, filterAndAnalyzeStream, buildErrorFilterStats, getTrendComparison } = require('../analyzer');
 const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('../utils/files');
 const { MAX_FILE_SIZE } = require('../utils/constants');
 
@@ -131,10 +130,6 @@ function createFilterRouter() {
       /* AEM Error Log Filtering */
       /* Complex filtering with date range, logger, thread, package, and regex support */
       
-      let results, summary, timeline, loggerDist, filterError = null;
-      let hourlyHeatmap = {};
-      let threadDist = {};
-      
       /* Choose streaming or in-memory approach based on file size */
       /* Streaming required for files > 50MB to avoid memory issues */
       const useStream = shouldUseStream(targetPath);
@@ -143,17 +138,26 @@ function createFilterRouter() {
         /* For large files: stream through data and apply filters incrementally */
         const stream = createLogStream(targetPath);
         const filtered = await filterAndAnalyzeStream(stream, filters);
-        results = filtered.results;
-        summary = filtered.summary;
-        filterError = filtered.filterError;
-
-        /* Run timeline and logger distribution queries in parallel for performance */
-        const [tlResult, ldResult] = await Promise.all([
-          (async () => { const s = createLogStream(targetPath); return getTimelineDataStream(s); })(),
-          (async () => { const s = createLogStream(targetPath); return getLoggerDistributionStream(s); })()
-        ]);
-        timeline = tlResult;
-        loggerDist = ldResult;
+        const httpMethods = filtered.httpMethods || {};
+        return res.json({
+          success: true,
+          summary: filtered.summary,
+          results: filtered.results,
+          timeline: filtered.timeline,
+          loggerDist: filtered.loggers,
+          filterError: filtered.filterError,
+          hourlyHeatmap: filtered.hourlyHeatmap || {},
+          threadDist: filtered.threads,
+          logType: 'error',
+          loggers: filtered.loggers,
+          threads: filtered.threads,
+          packages: filtered.packages,
+          exceptions: filtered.exceptions,
+          httpMethods,
+          packageThreads: filtered.packageThreads,
+          packageExceptions: filtered.packageExceptions,
+          categories: Object.keys(filtered.categories || {}).sort()
+        });
       } else {
         /* For smaller files: load all entries into memory for faster filtering */
         let entries = parseLogFile(targetPath);
@@ -165,45 +169,46 @@ function createFilterRouter() {
             const end = filters.endDate ? new Date(filters.endDate) : null;
             if (start && isNaN(start.getTime())) throw new Error('Invalid start date');
             if (end && isNaN(end.getTime())) throw new Error('Invalid end date');
-            entries = filterByDateRange(entries, start, end);
           }
-          /* Logger filter - filters entries by the logger that generated them */
-          if (filters.logger) {
-            const result = filterByLogger(entries, filters.logger);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          /* Thread filter - filters by AEM thread name */
-          if (filters.thread) {
-            const result = filterByThread(entries, filters.thread);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          /* Package filter - supports filtering by Java package (can be array) */
-          if (filters.package) {
-            const packages = Array.isArray(filters.package) ? filters.package : [filters.package];
-            const result = filterByPackage(entries, packages);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
-          /* Regex filter - most flexible but slowest; validate for safety first */
-          if (filters.regex) {
-            const result = filterByRegex(entries, filters.regex);
-            if (result.error) filterError = result.error;
-            entries = result.entries;
-          }
+
+          const filter = buildEntryFilter(filters);
+          entries = entries.filter(filter);
         }
 
+        const stats = buildErrorFilterStats(entries);
         /* Aggregate filtered entries into grouped results */
-        results = analyzeEntries(entries);
-        summary = getSummaryFromEntries(entries);
-        timeline = getTimelineData(entries);
-        loggerDist = getLoggerDistribution(entries);
-        hourlyHeatmap = getHourlyHeatmap(entries);
-        threadDist = getThreadDistribution(entries);
+        const results = analyzeEntries(entries);
+        const summary = getSummaryFromEntries(entries);
+        const timeline = getTimelineData(entries);
+        const loggerDist = stats.loggers;
+        const threadDist = stats.threads;
+        const packageDist = stats.packages;
+        const exceptionDist = stats.exceptions;
+        const httpMethods = stats.httpMethods || {};
+        const packageThreads = stats.packageThreads;
+        const packageExceptions = stats.packageExceptions;
+        const categories = Object.keys(stats.categories).sort();
+        const hourlyHeatmap = stats.hourlyHeatmap;
+        return res.json({
+          success: true,
+          summary,
+          results,
+          timeline,
+          loggerDist,
+          filterError,
+          hourlyHeatmap,
+          threadDist,
+          logType: 'error',
+          loggers: loggerDist,
+          threads: threadDist,
+          packages: packageDist,
+          exceptions: exceptionDist,
+          httpMethods,
+          packageThreads,
+          packageExceptions,
+          categories
+        });
       }
-
-      res.json({ success: true, summary, results, timeline, loggerDist, filterError, hourlyHeatmap, threadDist, logType: 'error' });
     } catch (error) {
       /* Sanitize error message to prevent XSS in client response */
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
