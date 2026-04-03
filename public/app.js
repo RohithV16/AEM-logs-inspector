@@ -1235,7 +1235,7 @@ function getFilteredPackageEntries() {
     .filter(([name]) => !query || name.toLowerCase().includes(query));
 }
 
-function renderTokenPickerResults(container, entries, selectedArray) {
+function renderTokenPickerResults(container, entries, selectedArray, { showActionLabel = true } = {}) {
   if (!container) return;
 
   if (!entries.length) {
@@ -1244,9 +1244,9 @@ function renderTokenPickerResults(container, entries, selectedArray) {
   }
 
   container.innerHTML = entries.map(([name, count]) => `
-    <button type="button" class="token-picker-option ${selectedArray.includes(name) ? 'selected' : ''}" data-value="${escapeHtml(name)}">
+    <button type="button" class="token-picker-option ${selectedArray.includes(name) ? 'selected' : ''}" data-value="${escapeHtml(name)}" title="${escapeHtml(name)}">
       <span class="token-picker-option-label" title="${escapeHtml(name)}">${escapeHtml(name)}${count ? ` (${count})` : ''}</span>
-      <span class="token-picker-option-check">${selectedArray.includes(name) ? 'Selected' : 'Add'}</span>
+      ${showActionLabel ? `<span class="token-picker-option-check">${selectedArray.includes(name) ? 'Selected' : 'Add'}</span>` : ''}
     </button>
   `).join('');
 }
@@ -1303,7 +1303,7 @@ function getFilteredLoggerEntries() {
 function renderLoggerPicker() {
   const entries = getFilteredLoggerEntries();
   visibleLoggerOptionCount = entries.length;
-  renderTokenPickerResults(loggerResults, entries, selectedLoggers);
+  renderTokenPickerResults(loggerResults, entries, selectedLoggers, { showActionLabel: false });
   updateCascadeCountBadges();
   renderSelectionHints();
 }
