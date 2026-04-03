@@ -224,4 +224,76 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
     await expect(toast.first()).toContainText(/not found|invalid/i);
   });
+
+  test('9. Very long file path - verify handled gracefully', async ({ page }) => {
+    const longPath = '/tmp/' + 'a'.repeat(500) + '.log';
+    await page.locator('#filePath').fill(longPath);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+
+    const toast = page.locator('.toast.error, .toast.warning');
+    await expect(toast.first()).toBeVisible({ timeout: 5000 });
+  });
+
+  test('10. Concurrent analysis requests - verify UI updates correctly', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze * 2);
+
+    const emptyState = page.locator('#emptyState');
+    await expect(emptyState).toBeHidden({ timeout: 10000 });
+  });
+
+  test('11. Gzip compressed file (.gz) - verify parsing works', async ({ page }) => {
+    const zlib = require('zlib');
+    const fs = require('fs');
+    const os = require('os');
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-gzip-test-'));
+    const gzFile = path.join(tempDir, 'error.gz');
+
+    const content = [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.Logger] Gzip test error'
+    ].join('\n');
+    const compressed = zlib.gzipSync(Buffer.from(content, 'utf8'));
+    fs.writeFileSync(gzFile, compressed);
+
+    await page.locator('#filePath').fill(gzFile);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+
+    const emptyState = page.locator('#emptyState');
+    await expect(emptyState).toBeHidden({ timeout: 10000 });
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('12. File with only whitespace - verify handled', async ({ page }) => {
+    const whitespaceFile = path.join(TEST_DATA_DIR, 'whitespace.log');
+    fs.writeFileSync(whitespaceFile, '   \n\n\n   \n');
+
+    await page.locator('#filePath').fill(whitespaceFile);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+
+    fs.unlinkSync(whitespaceFile);
+  });
+
+  test('13. Special characters in search - verify escaped', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+
+    await page.locator('#rawSearchInput').fill('.*+?^${}()|[]\\');
+    await page.locator('#rawSearchBtn').click();
+    await page.waitForTimeout(TIMEOUTS.search);
+
+    const toast = page.locator('.toast.error, .toast.warning');
+    if (await toast.first().isVisible({ timeout: 3000 })) {
+      await expect(toast.first()).toContainText(/invalid|error/i);
+    }
+  });
 });

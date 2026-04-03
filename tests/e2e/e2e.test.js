@@ -117,4 +117,40 @@ test.describe('AEM Log Inspector E2E Tests', () => {
     await page.locator('#rawSearchBtn').click();
     await page.waitForTimeout(TIMEOUTS.search);
   });
+
+  test('should display error stats after analysis', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+    
+    const errorStats = page.locator('#errorStats');
+    await expect(errorStats).toBeVisible();
+  });
+
+  test('should toggle log level visibility', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+    
+    await page.locator('button[data-level="ERROR"]').click();
+    await page.waitForTimeout(TIMEOUTS.filter);
+    
+    const warnChip = page.locator('button[data-level="WARN"]');
+    await warnChip.click();
+    await page.waitForTimeout(TIMEOUTS.filter);
+    
+    await expect(warnChip).toHaveClass(/active/);
+  });
+
+  test('should display timeline with hourly buckets', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+    
+    await page.locator('#chartsToggleBtn').click();
+    await page.waitForTimeout(TIMEOUTS.filter);
+    
+    const timelineChart = page.locator('canvas#timelineChart');
+    await expect(timelineChart).toBeVisible();
+  });
 });
