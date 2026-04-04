@@ -1,0 +1,27 @@
+# AEM Log Inspector E2E Test Configuration
+# Override values here for different environments
+
+logs:
+  # Path to test data directory (relative to project root)
+  directory: "tests/e2e/test-data"
+  
+  # Log file paths (relative to directory above)
+  error: "author_aemerror_2026-03-29.log"
+  request: "author_aemrequest_2026-03-29.log"
+  cdn: "author_cdn_2026-03-29.log.gz"
+
+# Test timeouts (in milliseconds)
+timeouts:
+  analyze: 3000
+  request_analyze: 20000
+  cdn_analyze: 8000
+  filter: 1000
+  search: 500
+
+# Test filter values
+filters:
+  logger_pattern: "com.adobe"
+  date:
+    start: "2026-03-28T00:00"
+    end: "2026-03-30T23:59"
+  regex_search: "NullPointer"

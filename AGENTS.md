@@ -1,209 +1,123 @@
 # Agent Guidelines for AEM Log Inspector
 
-This document provides guidelines for AI agents working on this codebase.
-
-## Project Overview
-
-AEM Log Inspector is a Node.js tool for analyzing Adobe Experience Manager (AEM) error and warning logs. It provides both a CLI interface and an Express-based web dashboard for log analysis.
+A Node.js tool for analyzing Adobe Experience Manager (AEM) logs with CLI and Express web dashboard.
 
 ## Project Structure
 
 ```
 logs-inspector/
 ├── src/
-│   ├── index.js      # CLI entry point
-│   ├── parser.js     # Log file parsing
-│   ├── analyzer.js   # Log analysis and aggregation
-│   └── server.js     # Express web dashboard
-├── public/            # Frontend assets (HTML, JS, CSS)
+│   ├── index.js              # CLI entry point
+│   ├── parser.js             # Log parsing (error, request, CDN logs)
+│   ├── analyzer.js           # Core analysis functions
+│   ├── categorizer.js        # Error categorization
+│   ├── tailer.js             # Real-time file watching
+│   ├── alerts.js             # Configurable alerting
+│   ├── grouper.js            # Error grouping utilities
+│   ├── exporter.js           # Export to CSV, JSON, PDF
+│   ├── server.js             # Express API + WebSocket server
+│   ├── routes/               # API route handlers
+│   │   ├── analyze.js        # /api/analyze endpoints
+│   │   ├── filter.js         # /api/filter, /api/trend endpoints
+│   │   ├── events.js         # /api/raw-events endpoint
+│   │   └── export.js         # /api/export/*, /api/alerts/check
+│   ├── services/             # Log analysis services
+│   │   ├── errorLogService.js    # AEM error log analysis
+│   │   ├── requestLogService.js  # Request log analysis
+│   │   └── cdnLogService.js      # CDN log analysis
+│   └── utils/                # Utility functions
+│       ├── constants.js      # App constants
+│       ├── files.js          # File validation helpers
+│       ├── response.js       # API response helpers
+│       └── regex.js          # Regex validation
+├── public/                   # Frontend assets
 ├── package.json
 └── README.md
 ```
 
 ## Build, Lint, and Test Commands
 
-### Running the Application
-
 ```bash
-# CLI mode - analyze a log file
+# Run the CLI
 npm start <path-to-log-file>
 
-# Example:
-npm start /path/to/author_aemerror.log
-
-# Start the web dashboard
+# Start web dashboard
 npm run dashboard
 # Opens at http://localhost:3000
-```
 
-### Testing
+# Testing
+npm test                           # Run all tests
+npx jest src/parser.test.js       # Run a single test file
 
-This project currently has **no test suite**. When adding tests:
-
-```bash
-# Run tests with Jest (recommended)
-npx jest
-
-# Run a single test file
-npx jest src/parser.test.js
-
-# Run tests matching a pattern
-npx jest --testNamePattern="parseLine"
-```
-
-### Linting
-
-No ESLint configuration exists. Install and configure if needed:
-
-```bash
-npm install --save-dev eslint
-npx eslint src/**/*.js
+# Linting
+npm run lint                      # Lint all JS files
 ```
 
 ## Code Style Guidelines
 
-### General Conventions
+### Language & Formatting
 
-- **Language**: Plain JavaScript (ES6+) - no TypeScript
-- **Module System**: CommonJS (`require`/`module.exports`)
+- **Language**: JavaScript (ES6+), CommonJS modules (`require`/`module.exports`)
 - **Indentation**: 2 spaces
 - **Line Endings**: Unix (LF)
 
 ### Naming Conventions
 
-```javascript
-// Variables and functions: camelCase
-const filePath = '/path/to/log';
-function parseLogFile(filePath) { }
-
-// Constants: SCREAMING_SNAKE_CASE
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} ...)$/;
-
-// Classes: PascalCase (if used)
-// function names should be verbs: parseX, getY, analyzeZ
-```
+- `camelCase` for variables and functions: `const filePath`, `function parseLogFile()`
+- `SCREAMING_SNAKE_CASE` for constants: `const MAX_FILE_SIZE = 500 * 1024 * 1024`
+- Use verbs for function names: `parseX`, `getY`, `analyzeZ`, `createX`
 
 ### Import/Require Order
 
-1. Node.js built-in modules (`fs`, `path`, `crypto`)
+1. Node.js built-in modules (`fs`, `path`)
 2. External packages (`express`, `chart.js`)
-3. Local modules (`./parser`, `./analyzer`)
-
-```javascript
-const fs = require('fs');
-const path = require('path');
-const express = require('express');
-const { analyzeLogFile } = require('./analyzer');
-```
+3. Local modules (`./analyzer`, `./tailer`)
 
 ### File Organization
 
-- One export per file (or related exports)
-- `module.exports` at end of file
-- Private functions prefixed with `_` or defined as module-local
 - Group related functions together
+- Use section comments: `/* === Section Name === */`
+- `module.exports` at end of file
+- Private functions prefixed with `_` or kept module-local
 
-### Error Handling
-
-- Use `try/catch` for synchronous operations
-- Use `.catch()` or try/catch with async/await for async operations
-- Provide meaningful error messages
-- Sanitize error messages before exposing to users (see `sanitizeErrorMessage` in server.js)
-- Use `process.exit(1)` for fatal CLI errors
-
-```javascript
-// Good error handling examples
-if (!filePath) {
-  console.error('Usage: npm start <path-to-log-file>');
-  process.exit(1);
-}
-
-try {
-  const data = fs.readFileSync(filePath, 'utf-8');
-} catch (error) {
-  res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-}
-```
-
-### Async/Await Patterns
-
-- Use `async/await` for asynchronous operations
-- Use generators for streaming large files
-- Handle errors in async routes with try/catch
-
-```javascript
-async function analyzeLogFileStream(stream) {
-  const grouped = {};
-  for await (const entry of stream) {
-    // process entry
-  }
-  return Object.values(grouped).sort((a, b) => b.count - a.count);
-}
-```
-
-### Security Considerations
-
-- Validate file paths to prevent directory traversal
-- Sanitize user inputs in regex patterns
-- Limit file sizes (max 500MB for uploads)
-- Only allow `.log` and `.txt` file extensions
-- Use `isSafeRegex` for filtering with user-provided patterns
-
-```javascript
-function isSafeRegex(pattern) {
-  if (!pattern || typeof pattern !== 'string') return null;
-  if (pattern.length > MAX_REGEX_LENGTH) {
-    return { error: 'Pattern too long (max 100 characters)' };
-  }
-  // Check for dangerous patterns
-  // ...
-}
-```
-
-### Express Routes
-
-- Return JSON responses with `{ success, data, error }` structure
-- Clean up temporary files in `finally` blocks
-- Validate and sanitize all inputs
-
-```javascript
-app.post('/api/analyze', (req, res) => {
-  let tempFile = null;
-  try {
-    // process request
-    res.json({ success: true, summary, results });
-  } catch (error) {
-    res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-  } finally {
-    cleanupTempFile(tempFile);
-  }
-});
-```
 
 ## Adding New Features
 
-1. **Parser functions** go in `src/parser.js`
-2. **Analyzer functions** go in `src/analyzer.js`
-3. **Express routes** go in `src/server.js`
-4. **CLI commands** go in `src/index.js`
+| Feature Type | Location |
+|--------------|----------|
+| Parser functions | `src/parser.js` |
+| Analyzer functions | `src/analyzer.js` |
+| Express routes | `src/routes/*.js` |
+| Log services | `src/services/*.js` |
+| CLI commands | `src/index.js` |
+| Error categories | `src/categorizer.js` |
+| Real-time features | `src/tailer.js` |
+| Alert rules | `src/alerts.js` |
+| Utilities | `src/utils/*.js` |
 
-## Common Tasks
+### Adding a New Filter
 
-### Adding a new filter
+1. Add filter builder function in `src/analyzer.js`
+2. Add API endpoint in `src/routes/filter.js`
+3. Add frontend controls in `public/app.js`
 
-1. Add filter function to `src/analyzer.js`
-2. Add API endpoint in `src/server.js` under `/api/filter`
-3. Add frontend control in `public/app.js`
+### Adding a New Log Type
 
-### Adding export format
+1. Add parser functions in `src/parser.js`
+2. Add analyzer functions in `src/analyzer.js`
+3. Add service in `src/services/` (e.g., `errorLogService.js`)
+4. Add detection logic in `src/parser.js` (`detectLogType`)
+5. Add route handler in `src/routes/analyze.js`
 
-1. Add export function to `src/analyzer.js`
-2. Add endpoint in `src/server.js` under `/api/export/:format`
-3. Add download button in frontend
+## Key Constants
 
-## References
+```javascript
+const ALLOWED_LOG_EXTENSIONS = ['.log', '.txt', '.gz'];
+const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;     // 5GB for file path mode
+const MAX_UPLOAD_SIZE = 500 * 1024 * 1024;        // 500MB for browser upload
+const STREAM_THRESHOLD = 50 * 1024 * 1024;        // 50MB - use streaming above
+const MAX_REGEX_LENGTH = 100;
+const REGEX_TIMEOUT_MS = 100;
+const PORT = 3000;
+```
 
-- Express.js: https://expressjs.com/
-- Chart.js: https://www.chartjs.org/
-- jsPDF: https://github.com/parallax/jsPDF
