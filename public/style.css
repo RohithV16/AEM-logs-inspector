@@ -17,10 +17,10 @@
   --color-text-secondary: #5d6d7f;
   --color-text-tertiary: #7d8a98;
 
-  /* Accent Colors */
-  --color-primary: #0f766e;
-  --color-primary-hover: #115e59;
-  --color-primary-soft: rgba(15, 118, 110, 0.12);
+  /* Accent Colors - More vibrant Emerald */
+  --color-primary: #10b981;
+  --color-primary-hover: #059669;
+  --color-primary-soft: rgba(16, 185, 129, 0.12);
   --color-error: #EF4444;
   --color-error-bg: rgba(239, 68, 68, 0.1);
   --color-warning: #F59E0B;
