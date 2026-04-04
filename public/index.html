@@ -290,59 +290,144 @@
         </div>
 
         <div id="cloudManagerPanel" class="source-panel hidden">
-          <div id="cmStatusBanner" class="cloudmanager-status hidden" aria-live="polite"></div>
-          <div id="cmCacheStatus" class="cloudmanager-cache-status">Cache missing. Refresh Cloud Manager cache to load programs and environments.</div>
-          <div class="cloudmanager-grid">
-            <label class="cloudmanager-field">
-              <span>Program</span>
-              <select id="cmProgramSelect" class="filter-select">
-                <option value="">Select program</option>
-              </select>
-              <small id="cmProgramHint" class="cloudmanager-hint">Refresh the cache first, then choose a program.</small>
-            </label>
-            <label class="cloudmanager-field">
-              <span>Environment</span>
-              <select id="cmEnvironmentSelect" class="filter-select" disabled>
-                <option value="">Select environment</option>
-              </select>
-              <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a cached program to load environments.</small>
-            </label>
-            <div class="cloudmanager-field cloudmanager-field-wide">
-              <span>Tier / Logs</span>
-              <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
-              <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
-              <small id="cmLogHint" class="cloudmanager-hint">Choose an environment to load downloadable logs.</small>
+          <!-- Tab Navigation -->
+          <div class="cloudmanager-tabs">
+            <button class="cloudmanager-tab active" data-tab="download" type="button">Download & Analyze</button>
+            <button class="cloudmanager-tab" data-tab="setup" type="button">Setup</button>
+            <button class="cloudmanager-tab" data-tab="history" type="button">History</button>
+          </div>
+
+          <!-- Download & Analyze Tab -->
+          <div class="cloudmanager-tab-pane active" id="cmTab-download">
+            <div id="cmStatusBanner" class="cloudmanager-status hidden" aria-live="polite"></div>
+            <div id="cmCacheStatus" class="cloudmanager-cache-status">Cache missing. Refresh Cloud Manager cache to load programs and environments.</div>
+            
+            <!-- Main Selection Grid -->
+            <div class="cloudmanager-grid">
+              <label class="cloudmanager-field">
+                <span>Program</span>
+                <select id="cmProgramSelect" class="filter-select">
+                  <option value="">Select program</option>
+                </select>
+                <small id="cmProgramHint" class="cloudmanager-hint">Refresh the cache first, then choose a program.</small>
+              </label>
+              <label class="cloudmanager-field">
+                <span>Environment</span>
+                <select id="cmEnvironmentSelect" class="filter-select" disabled>
+                  <option value="">Select environment</option>
+                </select>
+                <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a cached program to load environments.</small>
+              </label>
+              <div class="cloudmanager-field cloudmanager-field-wide">
+                <span>Tier / Logs</span>
+                <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
+                <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
+                <small id="cmLogHint" class="cloudmanager-hint">Choose an environment to load downloadable logs.</small>
+              </div>
             </div>
-            <label class="cloudmanager-field">
-              <span>Days</span>
-              <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
-              <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
-            </label>
-            <label class="cloudmanager-field cloudmanager-field-wide">
-              <span>Download folder</span>
-              <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="/path/to/local/folder">
-              <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Provide a writable local folder for Cloud Manager downloads.</small>
-            </label>
+
+            <!-- Advanced Settings Accordion -->
+            <div class="cloudmanager-advanced-settings">
+              <div class="cloudmanager-advanced-settings-toggle">
+                <span>Advanced Settings</span>
+                <span class="cloudmanager-advanced-settings-chevron">▼</span>
+              </div>
+              <div class="cloudmanager-advanced-settings-content">
+                <div class="cloudmanager-grid">
+                  <label class="cloudmanager-field">
+                    <span>Days</span>
+                    <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
+                    <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
+                  </label>
+                  <label class="cloudmanager-field cloudmanager-field-wide">
+                    <span>Download folder</span>
+                    <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="/path/to/local/folder">
+                    <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Provide a writable local folder for Cloud Manager downloads.</small>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div id="cmCommandPreview" class="cloudmanager-command-preview hidden" aria-live="polite"></div>
+            <div class="upload-row">
+              <button id="cmSetupBtn" class="upload-btn" type="button">Open Setup</button>
+              <button id="cmCheckBtn" class="upload-btn secondary" type="button">Check Prerequisites</button>
+              <button id="cmRefreshCacheBtn" class="upload-btn secondary" type="button">Refresh Cache</button>
+              <button id="cmTestConnectionBtn" class="upload-btn secondary" type="button">Test Connection</button>
+              <button id="cmAnalyzeBtn" class="upload-btn">Download & Analyze</button>
+              <span id="cmProgressText" class="hidden"></span>
+            </div>
+            <div id="cmResultBadges" class="cloudmanager-result-badges hidden" aria-live="polite"></div>
+            <div id="cmDownloadSummary" class="cloudmanager-summary hidden" aria-live="polite"></div>
+            <p class="upload-hint">Requires `aio` plus `@adobe/aio-cli-plugin-cloudmanager` already installed and authenticated.</p>
           </div>
-          <div id="cmCommandPreview" class="cloudmanager-command-preview hidden" aria-live="polite"></div>
-          <div class="upload-row">
-            <button id="cmSetupBtn" class="upload-btn" type="button">Open Setup</button>
-            <button id="cmCheckBtn" class="upload-btn secondary" type="button">Check Prerequisites</button>
-            <button id="cmRefreshCacheBtn" class="upload-btn secondary" type="button">Refresh Cache</button>
-            <button id="cmTestConnectionBtn" class="upload-btn secondary" type="button">Test Connection</button>
-            <button id="cmAnalyzeBtn" class="upload-btn">Download & Analyze</button>
-            <span id="cmProgressText" class="hidden"></span>
-          </div>
-          <div id="cmResultBadges" class="cloudmanager-result-badges hidden" aria-live="polite"></div>
-          <div id="cmDownloadSummary" class="cloudmanager-summary hidden" aria-live="polite"></div>
-          <div class="cloudmanager-history-header">
-            <div>
-              <p class="filter-section-label">Cloud Manager History</p>
-              <h3>Recent runs</h3>
+
+          <!-- Setup Tab -->
+          <div class="cloudmanager-tab-pane" id="cmTab-setup">
+            <div class="cloudmanager-setup-header">
+              <div>
+                <p class="filter-section-label">Cloud Manager Setup</p>
+                <h3>Configure `aio` before building the cache</h3>
+              </div>
+            </div>
+            <div class="cloudmanager-setup-intro">
+              <strong>Setup runs globally in the user profile.</strong>
+              <span>The app writes Cloud Manager config under your user profile, never inside this repo.</span>
+            </div>
+            <div class="cloudmanager-setup-mode-switch" role="tablist" aria-label="Cloud Manager auth mode">
+              <button id="cmSetupModeBrowser" class="cloudmanager-setup-mode active" type="button" data-setup-mode="browser" aria-selected="true">Browser Login</button>
+              <button id="cmSetupModeOauth" class="cloudmanager-setup-mode" type="button" data-setup-mode="oauth" aria-selected="false">OAuth Service Account</button>
+            </div>
+            <div id="cmSetupStatus" class="cloudmanager-status hidden" aria-live="polite"></div>
+            <div id="cmSetupBrowserPanel" class="cloudmanager-setup-panel">
+              <div class="cloudmanager-grid">
+                <label class="cloudmanager-field">
+                  <span>Cloud Manager Org ID</span>
+                  <input type="text" id="cmSetupOrgId" class="upload-input compact" placeholder="myorg@AdobeOrg">
+                  <small class="cloudmanager-hint">The app will run `aio auth:login`, then store `cloudmanager_orgid` globally.</small>
+                </label>
+                <label class="cloudmanager-field">
+                  <span>Default Program ID</span>
+                  <input type="text" id="cmSetupBrowserProgramId" class="upload-input compact" placeholder="Optional">
+                  <small class="cloudmanager-hint">Optional, but useful to avoid reselecting a program in CLI contexts.</small>
+                </label>
+              </div>
+            </div>
+            <div id="cmSetupOauthPanel" class="cloudmanager-setup-panel hidden">
+              <div class="cloudmanager-grid">
+                <label class="cloudmanager-field">
+                  <span>Default Program ID</span>
+                  <input type="text" id="cmSetupOauthProgramId" class="upload-input compact" placeholder="Optional">
+                </label>
+                <label class="cloudmanager-field cloudmanager-field-wide">
+                  <span>OAuth JSON File</span>
+                  <input type="file" id="cmSetupOauthFile" class="upload-input compact" accept=".json,application/json">
+                  <small class="cloudmanager-hint">Load the Adobe Cloud Manager OAuth JSON export if you already have it saved locally.</small>
+                </label>
+                <label class="cloudmanager-field cloudmanager-field-wide">
+                  <span>OAuth JSON</span>
+                  <textarea id="cmSetupOauthJson" class="upload-input compact cloudmanager-setup-textarea" placeholder='{"ORG_ID":"...","CLIENT_SECRETS":["..."],"CLIENT_ID":"...","SCOPES":["openid"],"TECHNICAL_ACCOUNT_ID":"...","TECHNICAL_ACCOUNT_EMAIL":"..."}'></textarea>
+                  <small class="cloudmanager-hint">Paste the full Adobe JSON payload. The app will extract org, client, technical account, and scopes automatically.</small>
+                </label>
+              </div>
+            </div>
+            <div id="cmSetupPreview" class="cloudmanager-command-preview" aria-live="polite"></div>
+            <div id="cmSetupResult" class="cloudmanager-summary hidden" aria-live="polite"></div>
+            <div class="upload-row">
+              <button id="cmSetupRunBtn" class="upload-btn" type="button">Run Setup & Create Cache</button>
             </div>
           </div>
-          <div id="cmHistoryList" class="cloudmanager-history-list"></div>
-          <p class="upload-hint">Requires `aio` plus `@adobe/aio-cli-plugin-cloudmanager` already installed and authenticated.</p>
+
+          <!-- History Tab -->
+          <div class="cloudmanager-tab-pane" id="cmTab-history">
+            <div class="cloudmanager-history-header">
+              <div>
+                <p class="filter-section-label">Cloud Manager History</p>
+                <h3>Recent runs</h3>
+              </div>
+            </div>
+            <div id="cmHistoryList" class="cloudmanager-history-list"></div>
+          </div>
         </div>
       </div>
 
@@ -407,65 +492,6 @@
 
       <!-- Toast Container -->
       <div id="toastContainer" class="toast-container"></div>
-
-      <div id="cmSetupPopover" class="cloudmanager-setup-popover hidden" aria-hidden="true">
-        <div id="cmSetupBackdrop" class="cloudmanager-setup-backdrop"></div>
-        <div class="cloudmanager-setup-dialog" role="dialog" aria-modal="true" aria-labelledby="cmSetupTitle">
-          <div class="cloudmanager-setup-header">
-            <div>
-              <p class="filter-section-label">Cloud Manager Setup</p>
-              <h3 id="cmSetupTitle">Configure `aio` before building the cache</h3>
-            </div>
-            <button id="cmSetupCloseBtn" class="upload-btn secondary" type="button">Close</button>
-          </div>
-          <div class="cloudmanager-setup-intro">
-            <strong>Setup runs globally in the user profile.</strong>
-            <span>The app writes Cloud Manager config under your user profile, never inside this repo.</span>
-          </div>
-          <div class="cloudmanager-setup-mode-switch" role="tablist" aria-label="Cloud Manager auth mode">
-            <button id="cmSetupModeBrowser" class="cloudmanager-setup-mode active" type="button" data-setup-mode="browser" aria-selected="true">Browser Login</button>
-            <button id="cmSetupModeOauth" class="cloudmanager-setup-mode" type="button" data-setup-mode="oauth" aria-selected="false">OAuth Service Account</button>
-          </div>
-          <div id="cmSetupStatus" class="cloudmanager-status hidden" aria-live="polite"></div>
-          <div id="cmSetupBrowserPanel" class="cloudmanager-setup-panel">
-            <div class="cloudmanager-grid">
-              <label class="cloudmanager-field">
-                <span>Cloud Manager Org ID</span>
-                <input type="text" id="cmSetupOrgId" class="upload-input compact" placeholder="myorg@AdobeOrg">
-                <small class="cloudmanager-hint">The app will run `aio auth:login`, then store `cloudmanager_orgid` globally.</small>
-              </label>
-              <label class="cloudmanager-field">
-                <span>Default Program ID</span>
-                <input type="text" id="cmSetupBrowserProgramId" class="upload-input compact" placeholder="Optional">
-                <small class="cloudmanager-hint">Optional, but useful to avoid reselecting a program in CLI contexts.</small>
-              </label>
-            </div>
-          </div>
-          <div id="cmSetupOauthPanel" class="cloudmanager-setup-panel hidden">
-            <div class="cloudmanager-grid">
-              <label class="cloudmanager-field">
-                <span>Default Program ID</span>
-                <input type="text" id="cmSetupOauthProgramId" class="upload-input compact" placeholder="Optional">
-              </label>
-              <label class="cloudmanager-field cloudmanager-field-wide">
-                <span>OAuth JSON File</span>
-                <input type="file" id="cmSetupOauthFile" class="upload-input compact" accept=".json,application/json">
-                <small class="cloudmanager-hint">Load the Adobe Cloud Manager OAuth JSON export if you already have it saved locally.</small>
-              </label>
-              <label class="cloudmanager-field cloudmanager-field-wide">
-                <span>OAuth JSON</span>
-                <textarea id="cmSetupOauthJson" class="upload-input compact cloudmanager-setup-textarea" placeholder='{"ORG_ID":"...","CLIENT_SECRETS":["..."],"CLIENT_ID":"...","SCOPES":["openid"],"TECHNICAL_ACCOUNT_ID":"...","TECHNICAL_ACCOUNT_EMAIL":"..."}'></textarea>
-                <small class="cloudmanager-hint">Paste the full Adobe JSON payload. The app will extract org, client, technical account, and scopes automatically.</small>
-              </label>
-            </div>
-          </div>
-          <div id="cmSetupPreview" class="cloudmanager-command-preview" aria-live="polite"></div>
-          <div id="cmSetupResult" class="cloudmanager-summary hidden" aria-live="polite"></div>
-          <div class="upload-row">
-            <button id="cmSetupRunBtn" class="upload-btn" type="button">Run Setup & Create Cache</button>
-          </div>
-        </div>
-      </div>
 
     </main>
   </div>

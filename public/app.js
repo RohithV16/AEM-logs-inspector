@@ -26,9 +26,6 @@ const cmCommandPreview = document.getElementById('cmCommandPreview');
 const cmResultBadges = document.getElementById('cmResultBadges');
 const cmHistoryList = document.getElementById('cmHistoryList');
 const cmSetupBtn = document.getElementById('cmSetupBtn');
-const cmSetupPopover = document.getElementById('cmSetupPopover');
-const cmSetupBackdrop = document.getElementById('cmSetupBackdrop');
-const cmSetupCloseBtn = document.getElementById('cmSetupCloseBtn');
 const cmSetupModeButtons = Array.from(document.querySelectorAll('[data-setup-mode]'));
 const cmSetupStatus = document.getElementById('cmSetupStatus');
 const cmSetupBrowserPanel = document.getElementById('cmSetupBrowserPanel');
@@ -498,20 +495,63 @@ function renderCloudManagerSetupResult(result = {}, errorMessage = '') {
 }
 
 function openCloudManagerSetupPopover() {
-  if (!cmSetupPopover) return;
-  cmSetupPopover.classList.remove('hidden');
-  cmSetupPopover.setAttribute('aria-hidden', 'false');
-  renderCloudManagerSetupMode();
-  renderCloudManagerSetupPreview();
-  resetCloudManagerSetupResult();
-  setCloudManagerSetupStatus('Complete the aio setup, then the app will create the first Cloud Manager cache for you.');
+  if (!cloudManagerPanel) return;
+  // Switch to Setup tab
+  switchCloudManagerTab('setup');
 }
 
 function closeCloudManagerSetupPopover() {
-  if (!cmSetupPopover) return;
-  cmSetupPopover.classList.add('hidden');
-  cmSetupPopover.setAttribute('aria-hidden', 'true');
-  setCloudManagerSetupStatus('');
+  if (!cloudManagerPanel) return;
+  // Switch back to Download & Analyze tab
+  switchCloudManagerTab('download');
+}
+
+function switchCloudManagerTab(tabName) {
+  // Hide all tab panes
+  document.querySelectorAll('.cloudmanager-tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  
+  // Show selected pane
+  const selectedPane = document.getElementById(`cmTab-${tabName}`);
+  if (selectedPane) {
+    selectedPane.classList.add('active');
+  }
+  
+  // Update active tab button
+  document.querySelectorAll('.cloudmanager-tab').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  // Save preference to localStorage
+  localStorage.setItem('aem_cmActiveTab', tabName);
+}
+
+function toggleCloudManagerAdvancedSettings() {
+  const accordion = document.querySelector('.cloudmanager-advanced-settings');
+  if (accordion) {
+    accordion.classList.toggle('expanded');
+    // Save preference to localStorage
+    const isExpanded = accordion.classList.contains('expanded');
+    localStorage.setItem('aem_cmAdvancedExpanded', isExpanded ? 'true' : 'false');
+  }
+}
+
+function restoreCloudManagerTabState() {
+  const savedTab = localStorage.getItem('aem_cmActiveTab') || 'download';
+  switchCloudManagerTab(savedTab);
+  
+  const expandedState = localStorage.getItem('aem_cmAdvancedExpanded');
+  if (expandedState === 'true') {
+    const accordion = document.querySelector('.cloudmanager-advanced-settings');
+    if (accordion) {
+      accordion.classList.add('expanded');
+    }
+  }
 }
 
 function maybeOpenCloudManagerSetupPopover() {
@@ -1195,18 +1235,6 @@ if (cmSetupBtn) {
   });
 }
 
-if (cmSetupCloseBtn) {
-  cmSetupCloseBtn.addEventListener('click', () => {
-    closeCloudManagerSetupPopover();
-  });
-}
-
-if (cmSetupBackdrop) {
-  cmSetupBackdrop.addEventListener('click', () => {
-    closeCloudManagerSetupPopover();
-  });
-}
-
 cmSetupModeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     currentCloudManagerSetupMode = button.dataset.setupMode === 'oauth' ? 'oauth' : 'browser';
@@ -1300,10 +1328,22 @@ if (cmSetupRunBtn) {
   });
 }
 
+/* === Cloud Manager Tab Navigation === */
+document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
+  tabBtn.addEventListener('click', () => {
+    const tabName = tabBtn.dataset.tab;
+    switchCloudManagerTab(tabName);
+  });
+});
+
+/* === Cloud Manager Advanced Settings Accordion === */
+const advancedSettingsToggle = document.querySelector('.cloudmanager-advanced-settings-toggle');
+if (advancedSettingsToggle) {
+  advancedSettingsToggle.addEventListener('click', toggleCloudManagerAdvancedSettings);
+}
+
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && cmSetupPopover && !cmSetupPopover.classList.contains('hidden')) {
-    closeCloudManagerSetupPopover();
-  }
+  // Escape key can close setup tab in future if needed
 });
 
 function isSidebarCollapseSupported() {
@@ -3836,6 +3876,7 @@ renderSelectionHints();
 applyThemePreference();
 applySidebarState();
 restoreCloudManagerSelections();
+restoreCloudManagerTabState();
 renderCloudManagerHistory();
 updateCloudManagerHintState();
 renderCloudManagerLogOptions();

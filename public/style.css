@@ -853,6 +853,106 @@ body.sidebar-collapsed .main-grid {
   gap: 0.75rem;
 }
 
+/* ============================================================
+   Cloud Manager Tabs
+   ============================================================ */
+
+.cloudmanager-tabs {
+  display: inline-flex;
+  gap: 0.35rem;
+  margin-bottom: 0.95rem;
+  flex-wrap: wrap;
+}
+
+.cloudmanager-tab {
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-tertiary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  transition: all 0.18s ease;
+  font-family: var(--font-sans);
+}
+
+.cloudmanager-tab:hover {
+  transform: translateY(-1px);
+  color: var(--color-text-primary);
+}
+
+.cloudmanager-tab.active {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+  color: var(--color-background-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 12px -2px var(--color-primary-glow);
+}
+
+[data-theme="light"] .cloudmanager-tab.active {
+  color: white;
+}
+
+.cloudmanager-tab-pane {
+  display: none;
+}
+
+.cloudmanager-tab-pane.active {
+  display: block;
+}
+
+/* ============================================================
+   Cloud Manager Advanced Settings Accordion
+   ============================================================ */
+
+.cloudmanager-advanced-settings {
+  border: 1px solid var(--color-border-tertiary);
+  border-radius: 12px;
+  margin-bottom: 0.75rem;
+  background: var(--color-background-tertiary);
+  overflow: hidden;
+}
+
+.cloudmanager-advanced-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  transition: background 0.18s ease;
+}
+
+.cloudmanager-advanced-settings-toggle:hover {
+  background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary-soft));
+}
+
+.cloudmanager-advanced-settings-chevron {
+  transition: transform 0.3s ease;
+  font-size: 12px;
+  margin-left: auto;
+  color: var(--color-text-secondary);
+}
+
+.cloudmanager-advanced-settings.expanded .cloudmanager-advanced-settings-chevron {
+  transform: rotate(180deg);
+}
+
+.cloudmanager-advanced-settings-content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+
+.cloudmanager-advanced-settings.expanded .cloudmanager-advanced-settings-content {
+  max-height: 250px;
+  padding: 0 0.75rem 0.75rem;
+}
+
 .cloudmanager-command-preview,
 .cloudmanager-history-list,
 .cloudmanager-result-badges,

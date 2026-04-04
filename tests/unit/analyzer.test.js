@@ -3,8 +3,9 @@ const {
   filterByLogger,
   filterByThread,
   filterByRegex,
-  derivePackageGroup,
-  createEmptyErrorFilterStats,
+  filterByPackage,
+  getTimelineData,
+  getLoggerDistribution,
   buildErrorFilterStats
 } = require('../../src/analyzer');
 
@@ -177,5 +178,176 @@ describe('analyzer - filter functions', () => {
     const entries = [{ message: 'Error message', level: 'ERROR' }];
     const result = filterByRegex(entries, '');
     expect(result.entries.length).toBe(1);
+  });
+});
+
+describe('analyzer - filterByPackage', () => {
+  const sampleEntries = [
+    { logger: 'com.adobe.example.ClassA', message: 'Error 1' },
+    { logger: 'com.adobe.example.ClassB', message: 'Error 2' },
+    { logger: 'org.apache.sling.ClassC', message: 'Error 3' },
+    { logger: 'com.other.ClassD', message: 'Error 4' }
+  ];
+
+  test('filters entries matching package pattern', () => {
+    const result = filterByPackage(sampleEntries, ['com.adobe']);
+    expect(result.entries.length).toBe(2);
+    expect(result.error).toBeNull();
+  });
+
+  test('returns all entries when no package patterns', () => {
+    const result = filterByPackage(sampleEntries, []);
+    expect(result.entries.length).toBe(4);
+  });
+
+  test('returns all entries when package patterns is null', () => {
+    const result = filterByPackage(sampleEntries, null);
+    expect(result.entries.length).toBe(4);
+  });
+
+  test('filters with multiple package patterns', () => {
+    const result = filterByPackage(sampleEntries, ['com.adobe', 'org.apache']);
+    expect(result.entries.length).toBe(3);
+  });
+
+  test('handles entries without logger', () => {
+    const entriesWithNull = [
+      { message: 'Error 1' },
+      { logger: 'com.adobe.test', message: 'Error 2' }
+    ];
+    const result = filterByPackage(entriesWithNull, ['com.adobe']);
+    expect(result.entries.length).toBe(1);
+  });
+
+  test('handles subpackage matching', () => {
+    const entries = [
+      { logger: 'com.adobe.aem.core.Service', message: 'Error' }
+    ];
+    const result = filterByPackage(entries, ['com.adobe.aem']);
+    expect(result.entries.length).toBe(1);
+  });
+});
+
+describe('analyzer - getTimelineData', () => {
+  const sampleEntries = [
+    { timestamp: '2026-03-16T14:30:00.000Z', level: 'ERROR', message: 'Error 1' },
+    { timestamp: '2026-03-16T14:45:00.000Z', level: 'ERROR', message: 'Error 2' },
+    { timestamp: '2026-03-16T15:00:00.000Z', level: 'WARN', message: 'Warning 1' },
+    { timestamp: '2026-03-16T15:30:00.000Z', level: 'INFO', message: 'Info 1' }
+  ];
+
+  test('builds timeline from entries', () => {
+    const result = getTimelineData(sampleEntries);
+    expect(result['2026-03-16 14']).toBeDefined();
+    expect(result['2026-03-16 14'].ERROR).toBe(2);
+    expect(result['2026-03-16 14'].total).toBe(2);
+  });
+
+  test('counts WARN entries', () => {
+    const result = getTimelineData(sampleEntries);
+    expect(result['2026-03-16 15'].WARN).toBe(1);
+  });
+
+  test('handles entries without timestamp', () => {
+    const entries = [
+      { level: 'ERROR', message: 'Error' },
+      { timestamp: '2026-03-16T14:00:00.000Z', level: 'ERROR', message: 'Error 2' }
+    ];
+    const result = getTimelineData(entries);
+    expect(Object.keys(result).length).toBe(1);
+  });
+
+  test('handles empty entries array', () => {
+    const result = getTimelineData([]);
+    expect(result).toEqual({});
+  });
+});
+
+describe('analyzer - getLoggerDistribution', () => {
+  const sampleEntries = [
+    { logger: 'com.adobe.example.ClassA', message: 'Error 1' },
+    { logger: 'com.adobe.example.ClassA', message: 'Error 2' },
+    { logger: 'com.adobe.example.ClassB', message: 'Error 3' },
+    { logger: 'org.apache.sling.ClassC', message: 'Error 4' }
+  ];
+
+  test('distributes loggers by count', () => {
+    const result = getLoggerDistribution(sampleEntries);
+    expect(result.length).toBe(3);
+  });
+
+  test('sorts by count descending', () => {
+    const result = getLoggerDistribution(sampleEntries);
+    expect(result[0].count).toBe(2);
+    expect(result[0].logger).toBe('com.adobe.example.ClassA');
+  });
+
+  test('handles entries without logger', () => {
+    const entries = [
+      { message: 'Error 1' },
+      { logger: 'com.test.Logger', message: 'Error 2' }
+    ];
+    const result = getLoggerDistribution(entries);
+    expect(result.length).toBe(1);
+  });
+
+  test('handles empty entries array', () => {
+    const result = getLoggerDistribution([]);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('analyzer - derivePackageGroup', () => {
+  test('derives package from logger name', () => {
+    const logger = 'com.adobe.example.ServiceImpl';
+    expect(derivePackageGroup(logger)).toBe('com.adobe');
+  });
+
+  test('returns null for empty logger', () => {
+    expect(derivePackageGroup(null)).toBeNull();
+    expect(derivePackageGroup('')).toBeNull();
+  });
+
+  test('returns null for logger without package', () => {
+    expect(derivePackageGroup('ServiceName')).toBeNull();
+  });
+});
+
+describe('analyzer - createEmptyErrorFilterStats', () => {
+  test('creates empty stats structure', () => {
+    const stats = createEmptyErrorFilterStats();
+    expect(stats).toHaveProperty('totalErrors');
+    expect(stats).toHaveProperty('totalWarnings');
+    expect(stats).toHaveProperty('uniqueErrors');
+    expect(stats).toHaveProperty('uniqueWarnings');
+    expect(stats).toHaveProperty('byLevel');
+    expect(stats).toHaveProperty('byCategory');
+    expect(stats).toHaveProperty('byPackage');
+    expect(stats).toHaveProperty('byThread');
+    expect(stats).toHaveProperty('hourlyHeatmap');
+  });
+
+  test('initializes all counts to zero', () => {
+    const stats = createEmptyErrorFilterStats();
+    expect(stats.totalErrors).toBe(0);
+    expect(stats.totalWarnings).toBe(0);
+    expect(stats.uniqueErrors).toBe(0);
+    expect(stats.uniqueWarnings).toBe(0);
+  });
+});
+
+describe('analyzer - buildErrorFilterStats', () => {
+  test('builds stats from entries', () => {
+    const entries = [
+      { level: 'ERROR', message: 'Error 1', logger: 'com.adobe.test', thread: 'qtp-1' }
+    ];
+    const stats = buildErrorFilterStats(entries);
+    expect(stats.totalErrors).toBe(1);
+    expect(stats.byLevel.ERROR).toBe(1);
+  });
+
+  test('handles empty entries array', () => {
+    const stats = buildErrorFilterStats([]);
+    expect(stats.totalErrors).toBe(0);
   });
 });
