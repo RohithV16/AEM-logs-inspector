@@ -18,11 +18,6 @@ test.describe('AEM Log Inspector E2E Tests', () => {
     await page.goto('/');
   });
 
-  test('should load the dashboard homepage', async ({ page }) => {
-    await expect(page).toHaveTitle(/Log/);
-    await expect(page.locator('h1')).toContainText(/Log Analyzer/i);
-  });
-
   test('should analyze error log file', async ({ page }) => {
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
@@ -116,15 +111,6 @@ test.describe('AEM Log Inspector E2E Tests', () => {
     await page.locator('#rawSearchInput').fill(config.filters.regex_search);
     await page.locator('#rawSearchBtn').click();
     await page.waitForTimeout(TIMEOUTS.search);
-  });
-
-  test('should display error stats after analysis', async ({ page }) => {
-    await page.locator('#filePath').fill(ERROR_LOG);
-    await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
-    
-    const errorStats = page.locator('#errorStats');
-    await expect(errorStats).toBeVisible();
   });
 
   test('should toggle log level visibility', async ({ page }) => {

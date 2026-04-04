@@ -1,7 +1,8 @@
 const { categorizeError } = require('../../src/categorizer');
-const { extractExceptionNames } = require('../../src/services/errorLogService');
+const { analyzeAllInOnePass, buildEntryFilter, extractExceptionNames } = require('../../src/services/errorLogService');
 const requestLogService = require('../../src/services/requestLogService');
 const cdnLogService = require('../../src/services/cdnLogService');
+const { clearCache } = require('../../src/utils/analysisCache');
 
 describe('categorizer - categorizeError', () => {
   test('categorizes JCR errors', () => {
@@ -106,6 +107,10 @@ describe('requestLogService', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-request-'));
   });
 
+  beforeEach(() => {
+    clearCache();
+  });
+
   afterAll(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -148,6 +153,20 @@ describe('requestLogService', () => {
     expect(result.summary.p95ResponseTime).toBeGreaterThanOrEqual(result.summary.p50ResponseTime);
     expect(result.summary.p99ResponseTime).toBeGreaterThanOrEqual(result.summary.p95ResponseTime);
   });
+
+  test('analyzeRequestLog reuses cached results for unchanged files', async () => {
+    tempRequestLog = path.join(tempDir, 'request-cache.log');
+    const content = [
+      '29/Mar/2026:14:30:15 +0000 [12345] -> GET /content/site.html HTTP/1.1 [author-pod]',
+      '29/Mar/2026:14:30:16 +0000 [12346] <- 200 text/html 150ms [author-pod]'
+    ].join('\n');
+    fs.writeFileSync(tempRequestLog, content, 'utf8');
+
+    const first = await requestLogService.analyzeRequestLog(tempRequestLog);
+    const second = await requestLogService.analyzeRequestLog(tempRequestLog);
+
+    expect(second).toBe(first);
+  });
 });
 
 describe('cdnLogService', () => {
@@ -160,6 +179,10 @@ describe('cdnLogService', () => {
 
   beforeAll(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-cdn-'));
+  });
+
+  beforeEach(() => {
+    clearCache();
   });
 
   afterAll(() => {
@@ -221,5 +244,69 @@ describe('cdnLogService', () => {
     expect(result.pops).toBeDefined();
     expect(result.pops.sfo).toBe(2);
     expect(result.pops.lax).toBe(1);
+  });
+
+  test('analyzeCDNLog reuses cached results for unchanged files', async () => {
+    tempCDNLog = path.join(tempDir, 'cdn-cache.log');
+    const content = JSON.stringify({
+      timestamp: '2026-03-29T14:30:15.000Z',
+      status: 200,
+      method: 'GET',
+      url: '/1',
+      cache: 'HIT',
+      host: 'ex.com',
+      pop: 'sfo',
+      ttfb: 50,
+      ttlb: 100
+    });
+    fs.writeFileSync(tempCDNLog, `${content}\n`, 'utf8');
+
+    const first = await cdnLogService.analyzeCDNLog(tempCDNLog);
+    const second = await cdnLogService.analyzeCDNLog(tempCDNLog);
+
+    expect(second).toBe(first);
+  });
+});
+
+describe('errorLogService', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  let tempDir;
+
+  beforeAll(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-error-service-'));
+  });
+
+  beforeEach(() => {
+    clearCache();
+  });
+
+  afterAll(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('analyzeAllInOnePass reuses cached results for unchanged files', async () => {
+    const errorFile = path.join(tempDir, 'error-cache.log');
+    fs.writeFileSync(errorFile, '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Failed request\n', 'utf8');
+
+    const first = await analyzeAllInOnePass(errorFile);
+    const second = await analyzeAllInOnePass(errorFile);
+
+    expect(second).toBe(first);
+  });
+
+  test('buildEntryFilter supports combined from/to filtering with one matching timestamp', () => {
+    const filter = buildEntryFilter({
+      from: '2026-03-16T14:00:00',
+      to: '2026-03-16T15:00:00'
+    });
+
+    expect(filter({
+      level: 'ERROR',
+      message: 'Failed request',
+      timestamp: '16.03.2026 14:30:15.123'
+    })).toBe(true);
   });
 });

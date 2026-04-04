@@ -1,12 +1,13 @@
 /* === Imports === */
 const express = require('express');
-const { detectLogType, createLogStream, createRequestLogStream, createCDNLogStream, parseLogFile } = require('../parser');
+const { detectLogTypeAndCreateStream, parseLogFile, createLogStream, createRequestLogStream, createCDNLogStream } = require('../parser');
 const { buildEntryFilter, buildRequestFilter, buildCDNFilter } = require('../services/errorLogService');
 const { buildRequestFilter: buildRequestFilterSvc } = require('../services/requestLogService');
 const { buildCDNFilter: buildCDNFilterSvc } = require('../services/cdnLogService');
 const { analyzeEntries, getSummaryFromEntries, getTimelineData, filterAndAnalyzeStream, buildErrorFilterStats, getTrendComparison } = require('../analyzer');
 const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('../utils/files');
 const { MAX_FILE_SIZE } = require('../utils/constants');
+const { isSafeRegex } = require('../utils/regex');
 
 /**
  * Creates the filter router with endpoints for filtered log analysis
@@ -14,6 +15,23 @@ const { MAX_FILE_SIZE } = require('../utils/constants');
  */
 function createFilterRouter() {
   const router = express.Router();
+
+  function validateRegexFilters(filters = {}) {
+    const regexFields = ['search', 'logger', 'thread'];
+
+    for (const field of regexFields) {
+      const rawValue = filters[field];
+      const candidates = Array.isArray(rawValue) ? rawValue : [rawValue];
+
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+        const regexValidation = isSafeRegex(String(candidate));
+        if (regexValidation && regexValidation.error) {
+          throw new Error(regexValidation.error);
+        }
+      }
+    }
+  }
 
   /* === POST /api/filter === */
   /* Apply filters to log entries and return aggregated statistics */
@@ -28,15 +46,17 @@ function createFilterRouter() {
       } else {
         throw new Error('No file path provided');
       }
+
+      validateRegexFilters(filters || {});
       
       /* Detect log type to apply appropriate filtering logic */
-      const logType = await detectLogType(targetPath);
+      const { logType, stream } = await detectLogTypeAndCreateStream(targetPath);
       
       /* Request log filtering - aggregates by method, status, pod, and time */
       if (logType === 'request') {
         const requestFilters = filters || {};
         const filter = buildRequestFilterSvc(requestFilters);
-        const stream = createRequestLogStream(targetPath);
+        const requestStream = stream || createRequestLogStream(targetPath);
         
         const methods = {};
         const statuses = {};
@@ -46,7 +66,7 @@ function createFilterRouter() {
         const responseTimes = [];
         const timeline = {};
         
-        for await (const entry of stream) {
+        for await (const entry of requestStream) {
           if (!filter(entry)) continue;
           
           totalRequests++;
@@ -83,7 +103,7 @@ function createFilterRouter() {
       if (logType === 'cdn') {
         const cdnFilters = filters || {};
         const filter = buildCDNFilterSvc(cdnFilters);
-        const stream = createCDNLogStream(targetPath);
+        const cdnStream = stream || createCDNLogStream(targetPath);
         
         const methods = {};
         const statuses = {};
@@ -94,7 +114,7 @@ function createFilterRouter() {
         let totalRequests = 0;
         const timeline = {};
         
-        for await (const entry of stream) {
+        for await (const entry of cdnStream) {
           if (!filter(entry)) continue;
           
           totalRequests++;
@@ -136,8 +156,7 @@ function createFilterRouter() {
       
       if (useStream) {
         /* For large files: stream through data and apply filters incrementally */
-        const stream = createLogStream(targetPath);
-        const filtered = await filterAndAnalyzeStream(stream, filters);
+        const filtered = await filterAndAnalyzeStream(stream || createLogStream(targetPath), filters);
         const httpMethods = filtered.httpMethods || {};
         return res.json({
           success: true,
@@ -160,7 +179,16 @@ function createFilterRouter() {
         });
       } else {
         /* For smaller files: load all entries into memory for faster filtering */
-        let entries = parseLogFile(targetPath);
+        let entries;
+
+        if (stream) {
+          entries = [];
+          for await (const entry of stream) {
+            entries.push(entry);
+          }
+        } else {
+          entries = parseLogFile(targetPath);
+        }
 
         if (filters) {
           /* Date range filter - must be applied first as it's most restrictive */
@@ -195,7 +223,7 @@ function createFilterRouter() {
           results,
           timeline,
           loggerDist,
-          filterError,
+          filterError: null,
           hourlyHeatmap,
           threadDist,
           logType: 'error',
@@ -222,9 +250,14 @@ function createFilterRouter() {
     try {
       if (!filePath) throw new Error('No file path provided');
       const targetPath = validateFilePath(filePath);
+      const parsedDays = Number(days);
+
+      if (!Number.isInteger(parsedDays) || parsedDays <= 0) {
+        throw new Error('Days must be a positive integer.');
+      }
 
       /* Compare error patterns across specified number of days */
-      const trend = await getTrendComparison(targetPath, days);
+      const trend = await getTrendComparison(targetPath, parsedDays);
       res.json({ success: true, trend });
     } catch (error) {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });

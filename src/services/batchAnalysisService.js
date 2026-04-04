@@ -7,6 +7,17 @@ const { normalizeMessage } = require('../grouper');
 const { extractExceptionNames } = require('./errorLogService');
 const { categorizeError } = require('../categorizer');
 
+function normalizeBatchTargets(input) {
+  if (Array.isArray(input) && input.every(item => item && typeof item === 'object' && item.filePath)) {
+    return input.map(item => ({
+      filePath: item.filePath,
+      logType: item.logType || null
+    }));
+  }
+
+  return resolveAnalysisTargets(input).map(filePath => ({ filePath, logType: null }));
+}
+
 const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
 
 function createEntryStream(filePath, logType) {
@@ -434,9 +445,11 @@ async function* createNormalizedEventIterator(filePath, logType, options = {}) {
 
 async function createMergedContexts(filePaths, options = {}) {
   const contexts = [];
+  const targets = normalizeBatchTargets(filePaths);
 
-  for (const filePath of filePaths) {
-    const logType = await detectLogType(filePath);
+  for (const target of targets) {
+    const filePath = target.filePath;
+    const logType = target.logType || await detectLogType(filePath);
     const tracker = options.includeTrackers ? createSourceTracker(filePath, logType) : null;
     const iterator = createNormalizedEventIterator(filePath, logType, {
       matcher: options.matcher,
@@ -482,7 +495,7 @@ async function* mergeNormalizedEvents(filePaths, options = {}) {
 }
 
 async function collectBatchEvents(input, filters = {}, options = {}) {
-  const filePaths = resolveAnalysisTargets(input);
+  const filePaths = normalizeBatchTargets(input);
   const matcher = buildBatchEventMatcher(filters);
   const events = [];
 
@@ -498,7 +511,7 @@ async function collectBatchEvents(input, filters = {}, options = {}) {
 }
 
 async function countAndExtractBatchEntries(input, filters = {}, page = 1, pageSize = 50) {
-  const filePaths = resolveAnalysisTargets(input);
+  const filePaths = normalizeBatchTargets(input);
   const matcher = buildBatchEventMatcher(filters);
   const entries = [];
   const stats = createEmptyMergedErrorStats();
@@ -529,23 +542,49 @@ async function countAndExtractBatchEntries(input, filters = {}, page = 1, pageSi
 }
 
 async function analyzeMergedErrorFilters(input, filters = {}) {
-  const filePaths = resolveAnalysisTargets(input);
+  const filePaths = normalizeBatchTargets(input);
   const matcher = buildBatchEventMatcher(filters);
   const stats = createEmptyMergedErrorStats();
-  const matchedEvents = [];
+  const grouped = {};
 
   for await (const event of mergeNormalizedEvents(filePaths, {
     matcher,
-    compact: false,
+    compact: true,
     includeTrackers: false
   })) {
-    matchedEvents.push(event);
     collectMergedErrorStats(stats, event);
+
+    const level = String(event.level || event.severity || '').toUpperCase();
+    const message = event.message || event.title || '';
+    const normalized = normalizeMessage(message);
+    const key = `${level}:${normalized}`;
+
+    if (!grouped[key]) {
+      grouped[key] = {
+        level,
+        message: normalized,
+        count: 0,
+        firstOccurrence: event.timestamp,
+        examples: [],
+        category: categorizeError(message, event.logger || '')
+      };
+    }
+
+    grouped[key].count++;
+    if (grouped[key].examples.length < 3) {
+      grouped[key].examples.push({
+        timestamp: event.timestamp,
+        logger: event.logger || '',
+        thread: event.thread || '',
+        sourceFile: event.sourceFile || '',
+        stackTrace: event.stackTrace || ''
+      });
+    }
   }
 
   const levelCounts = { ...stats.levelCounts };
   const summary = finalizeMergedErrorStats(stats).summary;
-  const results = matchedEvents.length ? matchedEvents : [];
+  const results = Object.values(grouped).sort((a, b) => b.count - a.count);
 
   return {
     summary,
@@ -556,7 +595,7 @@ async function analyzeMergedErrorFilters(input, filters = {}) {
 }
 
 async function analyzeBatch(input, filters = {}, onProgress) {
-  const filePaths = resolveAnalysisTargets(input);
+  const filePaths = normalizeBatchTargets(input);
   const totalFiles = filePaths.length;
   const matcher = buildBatchEventMatcher({ advancedRules: filters.advancedRules || [] });
   const contexts = await createMergedContexts(filePaths, {

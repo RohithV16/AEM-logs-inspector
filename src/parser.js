@@ -21,7 +21,10 @@ const REQUEST_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\
  * Used to capture response status and timing from AEM instances
  */
 const RESPONSE_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\d+)\] <- (\d{3}) (.+?) (\d+)ms \[([^\]]+)\]$/;
+const APACHE_ACCESS_PATTERN = /^(\S+) \S+ \S+ \[([^\]]+)\] "(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) (\S+)(?: HTTP\/([\d.]+))?" (\d{3}) (\S+)(?: "([^"]*)" "([^"]*)")?(?: (\d+))?$/;
 const ERROR_LOG_REQUEST_CONTEXT_PATTERN = /(?:^|]\s)(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+(\S+)\s+HTTP\/[\d.]+$/;
+const STREAM_HIGH_WATER_MARK = 512 * 1024;
+const MAX_SIGNATURE_SAMPLE_LINES = 3;
 
 function isLikelyLoggerToken(token) {
   const value = String(token || '').trim();
@@ -103,6 +106,124 @@ function parseErrorRequestContext(context) {
   };
 }
 
+function getLogTypeFromFileName(filePath) {
+  const fileName = String(filePath || '').toLowerCase();
+
+  if (fileName.includes('aemerror') || fileName.includes('error') || fileName.includes('_error')) {
+    return 'error';
+  }
+  if (
+    fileName.includes('aemrequest') ||
+    fileName.includes('request') ||
+    fileName.includes('_request') ||
+    fileName.includes('aemaccess') ||
+    fileName.includes('access') ||
+    fileName.includes('dispatcher')
+  ) {
+    return 'request';
+  }
+  if (fileName.includes('cdn')) {
+    return 'cdn';
+  }
+
+  return null;
+}
+
+function detectLogTypeFromLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{')) return 'cdn';
+  if (/^\d{2}\/\w{3}\/\d{4}:/.test(trimmed)) return 'request';
+  if (APACHE_ACCESS_PATTERN.test(trimmed)) return 'request';
+  if (/^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'error';
+  return null;
+}
+
+function detectLogFamilyFromLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{')) return 'cdn-json';
+  if (REQUEST_PATTERN.test(trimmed) || RESPONSE_PATTERN.test(trimmed)) return 'aem-request';
+  if (APACHE_ACCESS_PATTERN.test(trimmed)) return 'apache-access';
+  if (LOG_PATTERN.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'aem-error';
+  return null;
+}
+
+function buildUnsupportedSignature(filePath, sampleLines = [], detectedBy = 'content') {
+  return {
+    logType: 'unknown',
+    logFamily: 'unknown',
+    supported: false,
+    unsupportedReason: 'Unknown log format. The file does not match any supported parser yet.',
+    detectedBy,
+    sampleLines: sampleLines.slice(0, MAX_SIGNATURE_SAMPLE_LINES),
+    fileName: String(filePath || '').split('/').pop() || String(filePath || '')
+  };
+}
+
+function buildSignatureFromLogType(logType, detectedBy = 'filename', sampleLines = []) {
+  if (logType === 'error') {
+    return { logType, logFamily: 'aem-error', supported: true, unsupportedReason: '', detectedBy, sampleLines };
+  }
+  if (logType === 'request') {
+    const logFamily = sampleLines.some((line) => APACHE_ACCESS_PATTERN.test(String(line || '').trim()))
+      ? 'apache-access'
+      : 'aem-request';
+    return { logType, logFamily, supported: true, unsupportedReason: '', detectedBy, sampleLines };
+  }
+  if (logType === 'cdn') {
+    return { logType, logFamily: 'cdn-json', supported: true, unsupportedReason: '', detectedBy, sampleLines };
+  }
+
+  return buildUnsupportedSignature('', sampleLines, detectedBy);
+}
+
+function detectLogSignature(filePath) {
+  const filenameType = getLogTypeFromFileName(filePath);
+  if (filenameType) {
+    return Promise.resolve(buildSignatureFromLogType(filenameType, 'filename', []));
+  }
+
+  return new Promise((resolve) => {
+    const readStream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: STREAM_HIGH_WATER_MARK });
+    let linesRead = 0;
+    const sampleLines = [];
+    let resolved = false;
+
+    const finish = (signature) => {
+      if (resolved) return;
+      resolved = true;
+      readStream.destroy();
+      resolve(signature);
+    };
+
+    readStream.on('data', (chunk) => {
+      const lines = chunk.split('\n');
+      for (const line of lines) {
+        const trimmed = String(line || '').trim();
+        if (!trimmed) continue;
+        if (sampleLines.length < MAX_SIGNATURE_SAMPLE_LINES) {
+          sampleLines.push(trimmed.slice(0, 240));
+        }
+        linesRead++;
+        const family = detectLogFamilyFromLine(trimmed);
+        if (family === 'aem-error') return finish({ logType: 'error', logFamily: family, supported: true, unsupportedReason: '', detectedBy: 'content', sampleLines });
+        if (family === 'aem-request' || family === 'apache-access') {
+          return finish({ logType: 'request', logFamily: family, supported: true, unsupportedReason: '', detectedBy: 'content', sampleLines });
+        }
+        if (family === 'cdn-json') return finish({ logType: 'cdn', logFamily: family, supported: true, unsupportedReason: '', detectedBy: 'content', sampleLines });
+        if (linesRead >= 5) break;
+      }
+      if (linesRead >= 5) {
+        finish(buildUnsupportedSignature(filePath, sampleLines, 'content'));
+      }
+    });
+
+    readStream.on('end', () => finish(buildUnsupportedSignature(filePath, sampleLines, linesRead ? 'content' : 'empty-file')));
+    readStream.on('error', () => finish(buildUnsupportedSignature(filePath, [], 'content')));
+  });
+}
+
 /**
  * Filters entries to focus on actionable issues - errors and warnings
  * @param {Object} entry - Log entry with level field
@@ -178,16 +299,30 @@ function parseAllLevels(filePath) {
  * @yields {Object} Log entries with stack traces
  */
 async function* createLogStream(filePath, options = {}) {
-  const stream = fs.createReadStream(filePath, {
-    encoding: 'utf-8',
-    highWaterMark: 64 * 1024  // 64KB chunks balance memory and throughput
-  });
-  
+  const isGz = filePath.endsWith('.gz');
+  let stream;
+
+  if (isGz) {
+    const gzip = zlib.createGunzip();
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(gzip);
+    stream = gzip;
+  } else {
+    stream = fs.createReadStream(filePath, {
+      encoding: 'utf-8',
+      highWaterMark: STREAM_HIGH_WATER_MARK
+    });
+  }
+
   const rl = readline.createInterface({ input: stream });
+  yield* createLogStreamFromLines(rl, options);
+}
+
+async function* createLogStreamFromLines(lines, options = {}) {
   const allLevels = options.levels === 'all';
   let current = null;
-  
-  for await (const line of rl) {
+
+  for await (const line of lines) {
     const parsed = parseLine(line);
     if (parsed) {
       // Yield previous entry when new one starts (handles multi-line stack traces)
@@ -257,6 +392,27 @@ function parseRequestLine(line) {
     };
   }
 
+  match = line.match(APACHE_ACCESS_PATTERN);
+  if (match) {
+    const [, clientIp, timestamp, method, url, httpVersion, status, , referrer, userAgent, responseTimeToken] = match;
+    const parsedTimestamp = parseRequestTimestamp(timestamp);
+    return {
+      type: 'access',
+      timestamp: parsedTimestamp ? parsedTimestamp.toISOString().slice(0, 19) : timestamp,
+      threadId: '',
+      method,
+      url,
+      httpVersion: httpVersion ? `HTTP/${httpVersion}` : '',
+      status: parseInt(status, 10),
+      responseTime: responseTimeToken ? parseInt(responseTimeToken, 10) : 0,
+      pod: '',
+      direction: 'access',
+      clientIp,
+      referrer: referrer || '',
+      userAgent: userAgent || ''
+    };
+  }
+
   return null;
 }
 
@@ -277,12 +433,15 @@ async function* createRequestLogStream(filePath) {
     fileStream.pipe(gzip);
     stream = gzip;
   } else {
-    stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 64 * 1024 });
+    stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: STREAM_HIGH_WATER_MARK });
   }
-  
+
   const rl = readline.createInterface({ input: stream });
-  
-  for await (const line of rl) {
+  yield* createRequestLogStreamFromLines(rl);
+}
+
+async function* createRequestLogStreamFromLines(lines) {
+  for await (const line of lines) {
     const parsed = parseRequestLine(line);
     if (parsed) {
       yield parsed;
@@ -353,12 +512,15 @@ async function* createCDNLogStream(filePath) {
     fileStream.pipe(gzip);
     stream = gzip;
   } else {
-    stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 64 * 1024 });
+    stream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: STREAM_HIGH_WATER_MARK });
   }
-  
+
   const rl = readline.createInterface({ input: stream });
-  
-  for await (const line of rl) {
+  yield* createCDNLogStreamFromLines(rl);
+}
+
+async function* createCDNLogStreamFromLines(lines) {
+  for await (const line of lines) {
     const parsed = parseCDNLine(line);
     if (parsed) {
       yield parsed;
@@ -377,62 +539,80 @@ async function* createCDNLogStream(filePath) {
  * @returns {Promise<string>} 'error', 'request', or 'cdn'
  */
 function detectLogType(filePath) {
-  const isGz = filePath.endsWith('.gz');
-  const fileName = filePath.toLowerCase();
-  
-  // Priority 1: Check filename patterns - fastest detection method
-  if (fileName.includes('aemerror') || fileName.includes('error') || fileName.includes('_error')) {
-    return 'error';
+  return detectLogSignature(filePath).then(signature => signature.logType);
+}
+
+async function detectLogTypeAndCreateStream(filePath, options = {}) {
+  const signature = await detectLogSignature(filePath);
+  const parserOptions = options.logOptions || {};
+
+  if (!signature.supported) {
+    const error = new Error(signature.unsupportedReason);
+    error.logSignature = signature;
+    throw error;
   }
-  if (fileName.includes('aemrequest') || fileName.includes('request') || fileName.includes('_request')) {
-    return 'request';
+
+  if (signature.detectedBy === 'filename') {
+    const isGz = String(filePath || '').toLowerCase().endsWith('.gz');
+    if (!isGz) {
+      return { logType: signature.logType, logFamily: signature.logFamily, stream: null };
+    }
+
+    if (signature.logType === 'request') {
+      return { logType: signature.logType, logFamily: signature.logFamily, stream: createRequestLogStream(filePath) };
+    }
+    if (signature.logType === 'cdn') {
+      return { logType: signature.logType, logFamily: signature.logFamily, stream: createCDNLogStream(filePath) };
+    }
+    return { logType: signature.logType, logFamily: signature.logFamily, stream: createLogStream(filePath, parserOptions) };
   }
-  // .gz files are often CDN logs but not exclusively
-  if (fileName.includes('cdn') || isGz) {
-    return 'cdn';
-  }
-  
-  // Priority 2: Content-based detection for ambiguous filenames
-  // Inspect first few lines to identify format
-  return new Promise((resolve) => {
-    const readStream = fs.createReadStream(filePath, { encoding: 'utf-8', highWaterMark: 64 * 1024 });
-    let linesRead = 0;
-    const maxLines = 5;
-    
-    const checkLine = (line) => {
-      linesRead++;
-      // JSON Lines format indicates CDN logs
-      if (line.trim().startsWith('{')) {
-        readStream.destroy();
-        resolve('cdn');
-      // Common Log Format with named month: 29/Mar/2026:00:00:00
-      } else if (line.match(/^\d{2}\/\w{3}\/\d{4}:/)) {
-        readStream.destroy();
-        resolve('request');
-      // AEM error format: 29.03.2026 00:00:00.000
-      } else if (line.match(/^\d{2}\.\d{2}\.\d{4}/)) {
-        readStream.destroy();
-        resolve('error');
-      }
-    };
-    
-    readStream.on('data', (chunk) => {
-      const lines = chunk.split('\n');
-      for (const line of lines) {
-        if (line.trim()) {
-          checkLine(line);
-          if (linesRead >= maxLines) break;
-        }
-      }
-    });
-    
-    readStream.on('end', () => {
-      // Default to error log type if file is empty or unrecognized
-      if (linesRead < maxLines) {
-        resolve('error');
-      }
-    });
+
+  const readStream = fs.createReadStream(filePath, {
+    encoding: 'utf-8',
+    highWaterMark: STREAM_HIGH_WATER_MARK
   });
+  const rl = readline.createInterface({ input: readStream });
+  const iterator = rl[Symbol.asyncIterator]();
+  const bufferedLines = [];
+  let linesRead = 0;
+  let logType = signature.logType;
+  let logFamily = signature.logFamily;
+
+  while (linesRead < 5) {
+    const { value, done } = await iterator.next();
+    if (done) break;
+    bufferedLines.push(value);
+    if (String(value || '').trim()) {
+      linesRead++;
+      const detectedType = detectLogTypeFromLine(value);
+      if (detectedType) {
+        logType = detectedType;
+        logFamily = detectLogFamilyFromLine(value) || logFamily;
+        break;
+      }
+    }
+  }
+
+  async function* replayLines() {
+    for (const line of bufferedLines) {
+      yield line;
+    }
+
+    while (true) {
+      const { value, done } = await iterator.next();
+      if (done) break;
+      yield value;
+    }
+  }
+
+  if (logType === 'request') {
+    return { logType, logFamily, stream: createRequestLogStreamFromLines(replayLines()) };
+  }
+  if (logType === 'cdn') {
+    return { logType, logFamily, stream: createCDNLogStreamFromLines(replayLines()) };
+  }
+
+  return { logType: 'error', logFamily, stream: createLogStreamFromLines(replayLines(), parserOptions) };
 }
 
 /**
@@ -450,8 +630,16 @@ module.exports = {
   isErrorOrWarn,
   parseErrorRequestContext,
   parseRequestLine,
+  createRequestLogStreamFromLines,
   createRequestLogStream,
   parseCDNLine,
+  createCDNLogStreamFromLines,
   createCDNLogStream,
-  detectLogType
+  createLogStreamFromLines,
+  detectLogType,
+  detectLogSignature,
+  detectLogTypeAndCreateStream,
+  detectLogTypeFromLine,
+  detectLogFamilyFromLine,
+  getLogTypeFromFileName
 };

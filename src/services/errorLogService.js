@@ -1,7 +1,11 @@
 const fs = require('fs');
+const path = require('path');
+const { Worker } = require('worker_threads');
 const { createLogStream } = require('../parser');
 const { categorizeError } = require('../categorizer');
 const { groupEntries, groupEntriesStream, getSummaryFromEntries, getSummaryStream, normalizeMessage } = require('../grouper');
+const { getCached, setCached } = require('../utils/analysisCache');
+const { STREAM_THRESHOLD } = require('../utils/constants');
 
 /* === Exception Token Regex === */
 
@@ -80,8 +84,43 @@ function matchesFilterText(actualValue, filterValue) {
  * @param {function} onProgress - Optional callback for progress updates
  * @returns {Promise<Object>} Analysis results including summary, grouped errors, loggers, threads, packages, exceptions, and timeline
  */
-async function analyzeAllInOnePass(filePath, onProgress) {
-  const stream = createLogStream(filePath, { levels: 'all' });
+function shouldUseWorkerForAnalysis(filePath, onProgress, options = {}) {
+  if (options.disableWorker) return false;
+  if (!filePath) return false;
+  return fs.statSync(filePath).size > STREAM_THRESHOLD;
+}
+
+function runAnalysisWorker(service, filePath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, '../workers/analyzeWorker.js'), {
+      workerData: { service, filePath }
+    });
+
+    worker.on('message', (message) => {
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'progress' && onProgress) {
+        onProgress(message.payload || {});
+        return;
+      }
+      if (message.type === 'result') {
+        resolve(message.payload);
+      }
+    });
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Analysis worker exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
+  if (!onProgress) {
+    const cached = getCached(filePath);
+    if (cached) return cached;
+  }
+
   const fileSize = fs.statSync(filePath).size;
 
   let totalErrors = 0;
@@ -194,7 +233,7 @@ async function analyzeAllInOnePass(filePath, onProgress) {
     onProgress({ fileSize, totalLines, percent: 100 });
   }
 
-  return {
+  const result = {
     summary: {
       totalErrors,
       totalWarnings,
@@ -213,6 +252,21 @@ async function analyzeAllInOnePass(filePath, onProgress) {
     timeline,
     levelCounts: { ...levelCounts, ALL: levelCounts.ERROR + levelCounts.WARN + levelCounts.INFO + levelCounts.DEBUG }
   };
+
+  if (!onProgress) {
+    setCached(filePath, result);
+  }
+
+  return result;
+}
+
+async function analyzeAllInOnePass(filePath, onProgress, options = {}) {
+  if (shouldUseWorkerForAnalysis(filePath, onProgress, options)) {
+    return runAnalysisWorker('error', filePath, onProgress);
+  }
+
+  const stream = createLogStream(filePath, { levels: 'all' });
+  return analyzeAllInOnePassFromStream(stream, filePath, onProgress);
 }
 
 /* === Filter Functions === */
@@ -235,6 +289,7 @@ async function analyzeAllInOnePass(filePath, onProgress) {
  */
 function buildEntryFilter(filters = {}) {
   const { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath } = filters;
+  const packages = Array.isArray(pkg) ? pkg : (pkg ? [pkg] : []);
   let searchRegex = null;
 
   /* Safely compile user-provided regex - invalid patterns should not crash the service */
@@ -266,22 +321,21 @@ function buildEntryFilter(filters = {}) {
   return (entry) => {
     if (level && level !== 'ALL' && entry.level !== level) return false;
     if (searchRegex && !searchRegex.test(entry.message)) return false;
-    if (fromDate) {
+    if (fromDate || toDate) {
       const entryDate = parseLogTimestamp(entry.timestamp);
-      if (entryDate && entryDate < fromDate) return false;
-    }
-    if (toDate) {
-      const entryDate = parseLogTimestamp(entry.timestamp);
-      if (entryDate && entryDate > toDate) return false;
+      if (entryDate) {
+        if (fromDate && entryDate < fromDate) return false;
+        if (toDate && entryDate > toDate) return false;
+      }
     }
     if (!matchesFilterText(entry.logger, logger)) return false;
     if (!matchesFilterText(entry.thread, thread)) return false;
     if (httpMethod && String(entry.httpMethod || '').toUpperCase() !== String(httpMethod).toUpperCase()) return false;
     if (requestPath && !String(entry.requestPath || '').toLowerCase().includes(String(requestPath).toLowerCase())) return false;
     /* Package matching supports hierarchical matching - "com.example" matches "com.example.service" */
-    if (pkg && pkg.length > 0) {
+    if (packages.length > 0) {
       const entryPkg = derivePackageGroup(entry.logger);
-      if (!entryPkg || !pkg.some(p => entryPkg === p || entryPkg.startsWith(p + '.'))) {
+      if (!entryPkg || !packages.some(p => entryPkg === p || entryPkg.startsWith(p + '.'))) {
         return false;
       }
     }
@@ -341,6 +395,10 @@ async function countMatchingEntriesWithLevels(filePath, levels = ['ERROR', 'WARN
  */
 async function extractPage(filePath, filters = {}, page = 1, pageSize = 50) {
   const stream = createLogStream(filePath, { levels: 'all' });
+  return extractPageFromStream(stream, filters, page, pageSize);
+}
+
+async function extractPageFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = typeof filters === 'function' ? filters : buildEntryFilter(filters);
   const entries = [];
   const levelCounts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
@@ -364,12 +422,46 @@ async function extractPage(filePath, filters = {}, page = 1, pageSize = 50) {
   return { entries, total: pageCount, levelCounts };
 }
 
+async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1, pageSize = 50) {
+  const stream = createLogStream(filePath, { levels: 'all' });
+  const filtered = typeof activeFilters === 'function' ? activeFilters : buildEntryFilter(activeFilters);
+  const baseFilters = { ...(activeFilters || {}) };
+  delete baseFilters.level;
+  delete baseFilters.severity;
+  const baseFilter = buildEntryFilter(baseFilters);
+  const entries = [];
+  const levelCounts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
+  let skipped = (page - 1) * pageSize;
+  let total = 0;
+
+  for await (const entry of stream) {
+    if (baseFilter(entry)) {
+      levelCounts.ALL++;
+      if (entry.level) levelCounts[entry.level] = (levelCounts[entry.level] || 0) + 1;
+    }
+
+    if (!filtered(entry)) continue;
+
+    total++;
+    if (skipped > 0) {
+      skipped--;
+    } else if (entries.length < pageSize) {
+      entries.push(entry);
+    }
+  }
+
+  return { entries, total, levelCounts };
+}
+
 module.exports = {
   analyzeAllInOnePass,
+  analyzeAllInOnePassFromStream,
   buildEntryFilter,
   countMatchingEntries,
   countMatchingEntriesWithLevels,
   extractPage,
+  extractPageFromStream,
+  extractPageWithBaseCounts,
   groupEntries,
   groupEntriesStream,
   getSummaryFromEntries,

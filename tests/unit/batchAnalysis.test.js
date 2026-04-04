@@ -5,6 +5,7 @@ const path = require('path');
 const { analyzeAllInOnePass } = require('../../src/services/errorLogService');
 const {
   analyzeMultiError,
+  analyzeMergedErrorFilters,
   countAndExtractMultiErrorEntries
 } = require('../../src/services/multiErrorAnalysisService');
 
@@ -85,6 +86,20 @@ describe('multi-error analysis helpers', () => {
     } finally {
       fs.rmSync(mixedDir, { recursive: true, force: true });
     }
+  });
+
+  test('analyzeMergedErrorFilters remains available through multiErrorAnalysisService', async () => {
+    const errorFileA = writeTempFile(tempDir, 'filter_multi_error_a.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] First failure'
+    ].join('\n'));
+    const errorFileB = writeTempFile(tempDir, 'filter_multi_error_b.log', [
+      '16.03.2026 14:31:15.123 [qtp-2] *WARN* [com.example.B] Second warning'
+    ].join('\n'));
+
+    const result = await analyzeMergedErrorFilters([errorFileA, errorFileB], {});
+
+    expect(result.results).toHaveLength(2);
+    expect(result.levelCounts.ALL).toBe(2);
   });
 
   test('analyzeAllInOnePass returns package-scoped pod and exception counts', async () => {

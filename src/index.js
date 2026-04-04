@@ -1,68 +1,192 @@
 #!/usr/bin/env node
 
 /* === CLI Entry Point === */
-/* Supports single-file analysis */
 
 const fs = require('fs');
-const { analyzeLogFile, getSummary } = require('./analyzer');
+const { analyzeResolvedLogFile } = require('./services/logAnalysisService');
+const { downloadLogs } = require('./services/cloudManagerService');
+const { validateFilePath } = require('./utils/files');
 
 function parseArgs(argv) {
-  const options = { inputs: [] };
+  const [firstArg, secondArg, ...rest] = argv;
+
+  if (firstArg === 'cloudmanager' && secondArg === 'analyze') {
+    return {
+      mode: 'cloudmanager',
+      action: 'analyze',
+      flags: parseFlags(rest)
+    };
+  }
+
+  if (firstArg === 'analyze' && secondArg) {
+    return {
+      mode: 'local',
+      filePath: secondArg
+    };
+  }
+
+  return {
+    mode: 'local',
+    filePath: firstArg || ''
+  };
+}
+
+function parseFlags(argv) {
+  const flags = {};
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    options.inputs.push(arg);
+    if (!arg.startsWith('--')) continue;
+
+    const key = arg.slice(2);
+    const next = argv[i + 1];
+    if (!next || next.startsWith('--')) {
+      flags[key] = true;
+      continue;
+    }
+
+    flags[key] = next;
+    i++;
   }
 
-  return options;
+  return flags;
+}
+
+function printUsage() {
+  console.error('Usage:');
+  console.error('  npm start <path-to-log-file>');
+  console.error('  node src/index.js analyze <path-to-log-file>');
+  console.error('  node src/index.js cloudmanager analyze --programId <id> --environmentId <id> --service <name> --logName <name> --days <n> --outputDir <path>');
+}
+
+function ensureLocalFile(filePath) {
+  if (!filePath) {
+    throw new Error('A local file path is required.');
+  }
+
+  return validateFilePath(filePath);
+}
+
+function ensureCloudManagerFlags(flags = {}) {
+  const required = ['programId', 'environmentId', 'service', 'logName', 'outputDir'];
+  const missing = required.filter((key) => !flags[key]);
+
+  if (missing.length) {
+    throw new Error(`Missing required flags: ${missing.map((key) => `--${key}`).join(', ')}`);
+  }
+}
+
+function printAnalysisHeader(label) {
+  console.log('\n=== AEM Log Analyzer ===\n');
+  console.log(`Analyzing: ${label}\n`);
+}
+
+function printAnalysisPayload(payload) {
+  if (payload.logType === 'request') {
+    console.log('--- Summary ---');
+    console.log(`Total Requests:    ${payload.summary.totalRequests}`);
+    console.log(`Avg Response Time: ${payload.summary.avgResponseTime} ms`);
+    console.log(`Slow Requests:     ${payload.summary.slowRequests}`);
+    console.log(`P95 Response Time: ${payload.summary.p95ResponseTime} ms`);
+    console.log('\n--- Top Request URLs ---');
+    payload.results.slice(0, 10).forEach((entry, index) => {
+      console.log(`${index + 1}. [${entry.count}x] ${entry.url}`);
+    });
+    console.log('');
+    return;
+  }
+
+  if (payload.logType === 'cdn') {
+    console.log('--- Summary ---');
+    console.log(`Total Requests: ${payload.summary.totalRequests}`);
+    console.log(`Avg TTFB:       ${payload.summary.avgTtfb} ms`);
+    console.log(`Avg TTLB:       ${payload.summary.avgTtlb} ms`);
+    console.log(`Cache Hit Ratio:${payload.summary.cacheHitRatio}%`);
+    console.log('\n--- Top Status Codes ---');
+    Object.entries(payload.statuses || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .forEach(([status, count], index) => {
+        console.log(`${index + 1}. [${count}x] ${status}`);
+      });
+    console.log('');
+    return;
+  }
+
+  console.log('--- Summary ---');
+  console.log(`Total Errors:    ${payload.summary.totalErrors}`);
+  console.log(`Total Warnings:  ${payload.summary.totalWarnings}`);
+  console.log(`Unique Errors:   ${payload.summary.uniqueErrors}`);
+  console.log(`Unique Warnings: ${payload.summary.uniqueWarnings}`);
+
+  console.log('\n--- Top 10 Repeated Errors ---');
+  payload.results
+    .filter((entry) => entry.level === 'ERROR')
+    .slice(0, 10)
+    .forEach((entry, index) => {
+      console.log(`${index + 1}. [${entry.count}x] ${entry.message.substring(0, 120)}`);
+    });
+
+  console.log('\n--- Top 10 Repeated Warnings ---');
+  payload.results
+    .filter((entry) => entry.level === 'WARN')
+    .slice(0, 10)
+    .forEach((entry, index) => {
+      console.log(`${index + 1}. [${entry.count}x] ${entry.message.substring(0, 120)}`);
+    });
+
+  console.log('');
+}
+
+async function runLocalAnalysis(filePath) {
+  const targetPath = ensureLocalFile(filePath);
+  printAnalysisHeader(targetPath);
+  const { payload } = await analyzeResolvedLogFile(targetPath);
+  printAnalysisPayload(payload);
+}
+
+async function runCloudManagerAnalysis(flags) {
+  ensureCloudManagerFlags(flags);
+
+  const download = await downloadLogs({
+    programId: flags.programId,
+    environmentId: flags.environmentId,
+    service: flags.service,
+    logName: flags.logName,
+    days: flags.days || 1,
+    outputDirectory: flags.outputDir
+  });
+
+  console.log('\n--- Downloaded Files ---');
+  download.downloadedFiles.forEach((filePath, index) => {
+    console.log(`${index + 1}. ${filePath}`);
+  });
+  console.log(`\nSelected for analysis: ${download.analyzedFile}`);
+
+  printAnalysisHeader(download.analyzedFile);
+  const { payload } = await analyzeResolvedLogFile(download.analyzedFile);
+  printAnalysisPayload(payload);
 }
 
 async function run() {
   const options = parseArgs(process.argv.slice(2));
 
-  if (!options.inputs.length) {
-    console.error('Usage: npm start <path-to-log-file>');
-    console.error('Example: npm start /Users/rvenat01/Downloads/author_aemerror_2026-03-16.log');
+  try {
+    if (options.mode === 'cloudmanager') {
+      await runCloudManagerAnalysis(options.flags);
+      return;
+    }
+
+    if (!options.filePath) {
+      printUsage();
+      process.exit(1);
+    }
+
+    await runLocalAnalysis(options.filePath);
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
     process.exit(1);
   }
-
-  if (options.inputs.length > 1 || options.inputs[0].includes(',')) {
-    console.error('Error: Multi-file analysis is available in the dashboard multi-error panel, not the CLI.');
-    process.exit(1);
-  }
-
-  const filePath = options.inputs[0];
-
-  if (!fs.existsSync(filePath)) {
-    console.error(`Error: File not found: ${filePath}`);
-    process.exit(1);
-  }
-
-  console.log('\n=== AEM Log Analyzer ===\n');
-  console.log(`Analyzing: ${filePath}\n`);
-
-  const summary = getSummary(filePath);
-  console.log('--- Summary ---');
-  console.log(`Total Errors:   ${summary.totalErrors}`);
-  console.log(`Total Warnings: ${summary.totalWarnings}`);
-  console.log(`Unique Errors:  ${summary.uniqueErrors}`);
-  console.log(`Unique Warnings: ${summary.uniqueWarnings}`);
-
-  const results = analyzeLogFile(filePath);
-
-  console.log('\n--- Top 10 Repeated Errors ---');
-  const errors = results.filter(r => r.level === 'ERROR').slice(0, 10);
-  errors.forEach((e, i) => {
-    console.log(`\n${i + 1}. [${e.count}x] ${e.message.substring(0, 80)}...`);
-  });
-
-  console.log('\n--- Top 10 Repeated Warnings ---');
-  const warnings = results.filter(r => r.level === 'WARN').slice(0, 10);
-  warnings.forEach((w, i) => {
-    console.log(`\n${i + 1}. [${w.count}x] ${w.message.substring(0, 80)}...`);
-  });
-
-  console.log('\n');
 }
 
 if (require.main === module) {
@@ -71,5 +195,6 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
+  parseFlags,
   run
 };

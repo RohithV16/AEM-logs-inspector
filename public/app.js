@@ -1,5 +1,46 @@
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
+const sourceModeButtons = Array.from(document.querySelectorAll('[data-source-mode]'));
+const localSourcePanel = document.getElementById('localSourcePanel');
+const cloudManagerPanel = document.getElementById('cloudManagerPanel');
+const cmProgramSelect = document.getElementById('cmProgramSelect');
+const cmEnvironmentSelect = document.getElementById('cmEnvironmentSelect');
+const cmTierTabs = document.getElementById('cmTierTabs');
+const cmLogOptionList = document.getElementById('cmLogOptionList');
+const cmDaysInput = document.getElementById('cmDaysInput');
+const cmOutputDirectoryInput = document.getElementById('cmOutputDirectory');
+const cmEstimatedDateRange = document.getElementById('cmEstimatedDateRange');
+const cmProgramHint = document.getElementById('cmProgramHint');
+const cmEnvironmentHint = document.getElementById('cmEnvironmentHint');
+const cmLogHint = document.getElementById('cmLogHint');
+const cmOutputDirectoryHint = document.getElementById('cmOutputDirectoryHint');
+const cmCheckBtn = document.getElementById('cmCheckBtn');
+const cmRefreshCacheBtn = document.getElementById('cmRefreshCacheBtn');
+const cmTestConnectionBtn = document.getElementById('cmTestConnectionBtn');
+const cmAnalyzeBtn = document.getElementById('cmAnalyzeBtn');
+const cmProgressText = document.getElementById('cmProgressText');
+const cmDownloadSummary = document.getElementById('cmDownloadSummary');
+const cmStatusBanner = document.getElementById('cmStatusBanner');
+const cmCacheStatus = document.getElementById('cmCacheStatus');
+const cmCommandPreview = document.getElementById('cmCommandPreview');
+const cmResultBadges = document.getElementById('cmResultBadges');
+const cmHistoryList = document.getElementById('cmHistoryList');
+const cmSetupBtn = document.getElementById('cmSetupBtn');
+const cmSetupPopover = document.getElementById('cmSetupPopover');
+const cmSetupBackdrop = document.getElementById('cmSetupBackdrop');
+const cmSetupCloseBtn = document.getElementById('cmSetupCloseBtn');
+const cmSetupModeButtons = Array.from(document.querySelectorAll('[data-setup-mode]'));
+const cmSetupStatus = document.getElementById('cmSetupStatus');
+const cmSetupBrowserPanel = document.getElementById('cmSetupBrowserPanel');
+const cmSetupOauthPanel = document.getElementById('cmSetupOauthPanel');
+const cmSetupOrgId = document.getElementById('cmSetupOrgId');
+const cmSetupBrowserProgramId = document.getElementById('cmSetupBrowserProgramId');
+const cmSetupOauthProgramId = document.getElementById('cmSetupOauthProgramId');
+const cmSetupOauthFile = document.getElementById('cmSetupOauthFile');
+const cmSetupOauthJson = document.getElementById('cmSetupOauthJson');
+const cmSetupPreview = document.getElementById('cmSetupPreview');
+const cmSetupResult = document.getElementById('cmSetupResult');
+const cmSetupRunBtn = document.getElementById('cmSetupRunBtn');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -12,6 +53,7 @@ const presetSelect = document.getElementById('presetSelect');
 const exportCsvBtn = document.getElementById('exportCsvBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
+const exportRow = document.querySelector('.export-row');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
@@ -37,6 +79,11 @@ const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
 const THEME_STORAGE_KEY = 'aem_themePreference';
 const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
+const CM_OUTPUT_DIRECTORY_STORAGE_KEY = 'aem_cmOutputDirectory';
+const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
+const CM_HISTORY_STORAGE_KEY = 'aem_cmHistory';
+const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
+const CM_ONBOARDING_DISMISSED_KEY = 'aem_cmOnboardingDismissed';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -51,8 +98,20 @@ let heatmapChart = null;
 let rawEventsData = [];
 let currentLogType = 'error';
 let currentAnalysisMode = 'single';
+let currentSourceMode = localStorage.getItem(SOURCE_MODE_STORAGE_KEY) === 'cloudmanager' ? 'cloudmanager' : 'local';
+let currentAnalyzedFilePath = '';
 let currentBatchInput = null;
 let currentBatchSummary = null;
+let cloudManagerProgramsLoaded = false;
+let cloudManagerPrerequisiteState = null;
+let cloudManagerCommandPreviewPending = false;
+let cloudManagerLogOptions = [];
+let selectedCloudManagerLogs = [];
+let currentCloudManagerTier = '';
+let cloudManagerCacheMetadata = { refreshedAt: '', present: false };
+let currentCloudManagerRunContext = null;
+let currentCloudManagerSetupMode = 'browser';
+let cloudManagerSetupAutoPrompted = false;
 let selectedLoggers = [];
 let selectedPackages = [];
 let allLoggers = {};  // Store all loggers for cascading filter
@@ -121,7 +180,7 @@ function syncThemeControls(resolvedTheme = getResolvedTheme()) {
 
 function refreshVisibleChartsForTheme() {
   if (!chartsToggleBtn || chartsToggleBtn.disabled || !chartsVisible) return;
-  if (!currentBatchInput && !filePathInput.value.trim()) return;
+  if (!currentBatchInput && !getActiveAnalysisFilePath()) return;
   fetchChartsData();
 }
 
@@ -138,6 +197,874 @@ function setThemePreference(nextPreference) {
   if (!THEME_OPTIONS.has(nextPreference)) return;
   themePreference = nextPreference;
   applyThemePreference({ persist: true });
+}
+
+function getActiveAnalysisFilePath() {
+  if (currentAnalysisMode === 'multi-error') return '';
+  if (currentAnalyzedFilePath) return currentAnalyzedFilePath;
+  if (currentSourceMode === 'local') return filePathInput.value.trim();
+  return '';
+}
+
+function setCurrentAnalyzedFilePath(filePath) {
+  currentAnalyzedFilePath = filePath ? String(filePath).trim() : '';
+}
+
+function getCloudManagerSelectionState() {
+  return {
+    programId: cmProgramSelect?.value || '',
+    environmentId: cmEnvironmentSelect?.value || '',
+    selections: [...selectedCloudManagerLogs],
+    tier: currentCloudManagerTier,
+    days: cmDaysInput?.value.trim() || '1',
+    outputDirectory: cmOutputDirectoryInput?.value.trim() || ''
+  };
+}
+
+function persistCloudManagerSelectionState() {
+  localStorage.setItem(CM_SELECTIONS_STORAGE_KEY, JSON.stringify(getCloudManagerSelectionState()));
+}
+
+function readCloudManagerHistory() {
+  return safeJsonParse(localStorage.getItem(CM_HISTORY_STORAGE_KEY), []);
+}
+
+function writeCloudManagerHistory(entries) {
+  localStorage.setItem(CM_HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, 12)));
+}
+
+function updateCloudManagerCacheStatus() {
+  if (!cmCacheStatus) return;
+  if (!cloudManagerCacheMetadata.present) {
+    cmCacheStatus.textContent = 'Cache missing. Open Cloud Manager Setup to configure aio and create the first cache.';
+    return;
+  }
+
+  const refreshedAt = cloudManagerCacheMetadata.refreshedAt
+    ? new Date(cloudManagerCacheMetadata.refreshedAt).toLocaleString()
+    : 'unknown';
+  cmCacheStatus.textContent = `Cache ready. Last refreshed: ${refreshedAt}.`;
+}
+
+function resetCloudManagerSummary() {
+  if (!cmDownloadSummary) return;
+  cmDownloadSummary.innerHTML = '';
+  cmDownloadSummary.classList.add('hidden');
+}
+
+function setCloudManagerStatus(message = '') {
+  if (!cmStatusBanner) return;
+  const text = String(message || '').trim();
+  if (!text) {
+    cmStatusBanner.textContent = '';
+    cmStatusBanner.classList.add('hidden');
+    return;
+  }
+
+  cmStatusBanner.textContent = text;
+  cmStatusBanner.classList.remove('hidden');
+}
+
+function setCloudManagerSetupStatus(message = '') {
+  if (!cmSetupStatus) return;
+  const text = String(message || '').trim();
+  if (!text) {
+    cmSetupStatus.textContent = '';
+    cmSetupStatus.classList.add('hidden');
+    return;
+  }
+
+  cmSetupStatus.textContent = text;
+  cmSetupStatus.classList.remove('hidden');
+}
+
+function getCloudManagerSetupPreviewPath() {
+  return '~/.aem-log-analyzer/setup/cloudmanager-oauth-config.json';
+}
+
+function extractCloudManagerOauthJsonText(value = '') {
+  const text = String(value || '').trim().replace(/^\uFEFF/, '');
+  if (!text) return '';
+
+  const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fencedMatch) {
+    return fencedMatch[1].trim();
+  }
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace >= firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  return text;
+}
+
+function parseCloudManagerOauthJsonInput(rawText = '') {
+  const text = extractCloudManagerOauthJsonText(rawText);
+  if (!text) {
+    return { ok: false, error: 'Paste or load the Adobe OAuth JSON first.' };
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    const clientSecrets = Array.isArray(parsed.CLIENT_SECRETS)
+      ? parsed.CLIENT_SECRETS
+      : Array.isArray(parsed.client_secrets)
+        ? parsed.client_secrets
+        : [];
+    const scopes = Array.isArray(parsed.SCOPES)
+      ? parsed.SCOPES
+      : Array.isArray(parsed.scopes)
+        ? parsed.scopes
+        : [];
+
+    const normalized = {
+      orgId: String(parsed.ORG_ID || parsed.ims_org_id || parsed.IMS_ORG_ID || '').trim(),
+      clientId: String(parsed.CLIENT_ID || parsed.client_id || '').trim(),
+      clientSecret: String(clientSecrets[0] || parsed.CLIENT_SECRET || parsed.client_secret || '').trim(),
+      technicalAccountId: String(parsed.TECHNICAL_ACCOUNT_ID || parsed.technical_account_id || '').trim(),
+      technicalAccountEmail: String(parsed.TECHNICAL_ACCOUNT_EMAIL || parsed.technical_account_email || '').trim(),
+      scopes: scopes.map(scope => String(scope || '').trim()).filter(Boolean)
+    };
+
+    return { ok: true, raw: parsed, normalized };
+  } catch (error) {
+    return { ok: false, error: `Invalid OAuth JSON: ${error.message}` };
+  }
+}
+
+function getCloudManagerSetupPayload() {
+  if (currentCloudManagerSetupMode === 'oauth') {
+    return {
+      mode: 'oauth',
+      oauthConfigJson: cmSetupOauthJson?.value || '',
+      programId: cmSetupOauthProgramId?.value.trim() || ''
+    };
+  }
+
+  return {
+    mode: 'browser',
+    orgId: cmSetupOrgId?.value.trim() || '',
+    programId: cmSetupBrowserProgramId?.value.trim() || ''
+  };
+}
+
+function renderCloudManagerSetupMode() {
+  const isOauth = currentCloudManagerSetupMode === 'oauth';
+  cmSetupModeButtons.forEach((button) => {
+    const active = button.dataset.setupMode === currentCloudManagerSetupMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (cmSetupBrowserPanel) cmSetupBrowserPanel.classList.toggle('hidden', isOauth);
+  if (cmSetupOauthPanel) cmSetupOauthPanel.classList.toggle('hidden', !isOauth);
+}
+
+function renderCloudManagerSetupPreview() {
+  if (!cmSetupPreview) return;
+  const payload = getCloudManagerSetupPayload();
+  const blocks = [];
+
+  if (payload.mode === 'browser') {
+    const commands = [
+      {
+        label: 'Authenticate with Adobe',
+        note: 'This opens the Adobe browser login flow using your own identity.',
+        command: 'aio auth:login'
+      },
+      payload.orgId
+        ? {
+            label: 'Set Cloud Manager org globally',
+            note: 'Stores the Cloud Manager org in your global aio config, not in this repo.',
+            command: `aio config:set cloudmanager_orgid ${escapeHtml(payload.orgId)} --global`
+          }
+        : null,
+      payload.programId
+        ? {
+            label: 'Set default program globally',
+            note: 'Optional, but useful for default CLI context.',
+            command: `aio config:set cloudmanager_programid ${escapeHtml(payload.programId)} --global`
+          }
+        : null
+    ].filter(Boolean);
+
+    blocks.push(`
+      <div class="cloudmanager-setup-preview-block">
+        <strong>What the app will run</strong>
+        <div class="cloudmanager-setup-steps">
+          ${commands.map((step) => `
+            <div class="cloudmanager-setup-preview-item">
+              <strong>${step.label}</strong>
+              <span>${step.note}</span>
+              <code>${step.command}</code>
+            </div>
+          `).join('')}
+          <div class="cloudmanager-setup-preview-item">
+            <strong>Create the first Cloud Manager cache</strong>
+            <span>After setup succeeds, the app immediately loads programs and environments into the user-profile cache.</span>
+          </div>
+        </div>
+      </div>
+    `);
+  } else {
+    const parsed = parseCloudManagerOauthJsonInput(payload.oauthConfigJson);
+    if (!parsed.ok) {
+      cmSetupPreview.innerHTML = `
+        <div class="cloudmanager-setup-preview-block">
+          <strong>OAuth JSON required</strong>
+          <div class="cloudmanager-setup-preview-item">
+            <span>${escapeHtml(parsed.error)}</span>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const configPreview = {
+      client_id: parsed.normalized.clientId || 'value from Adobe I/O Console',
+      client_secrets: [parsed.normalized.clientSecret ? '********' : 'client secret'],
+      technical_account_id: parsed.normalized.technicalAccountId || 'technical account id',
+      technical_account_email: parsed.normalized.technicalAccountEmail || 'technical account email',
+      ims_org_id: parsed.normalized.orgId || 'ims org id',
+      scopes: parsed.normalized.scopes.length ? parsed.normalized.scopes : ['openid', 'AdobeID', 'read_organizations', 'additional_info.projectedProductContext', 'read_pc.dma_aem_ams'],
+      oauth_enabled: true
+    };
+    const commands = [
+      `aio config:set ims.contexts.aio-cli-plugin-cloudmanager ${getCloudManagerSetupPreviewPath()} --file --json --global`,
+      parsed.normalized.orgId ? `aio config:set cloudmanager_orgid ${escapeHtml(parsed.normalized.orgId)} --global` : null,
+      payload.programId ? `aio config:set cloudmanager_programid ${escapeHtml(payload.programId)} --global` : null
+    ].filter(Boolean);
+
+    blocks.push(`
+      <div class="cloudmanager-setup-preview-block">
+        <strong>OAuth config written under your profile</strong>
+        <div class="cloudmanager-setup-preview-item">
+          <span>Path</span>
+          <code>${getCloudManagerSetupPreviewPath()}</code>
+        </div>
+        <div class="cloudmanager-setup-preview-item">
+          <span>Config JSON</span>
+          <code>${escapeHtml(JSON.stringify(configPreview, null, 2))}</code>
+        </div>
+      </div>
+    `);
+    blocks.push(`
+      <div class="cloudmanager-setup-preview-block">
+        <strong>What the app will run</strong>
+        <div class="cloudmanager-setup-steps">
+          ${commands.map((command) => `
+            <div class="cloudmanager-setup-preview-item">
+              <strong>Apply global aio config</strong>
+              <code>${command}</code>
+            </div>
+          `).join('')}
+          <div class="cloudmanager-setup-preview-item">
+            <strong>Create the first Cloud Manager cache</strong>
+            <span>After setup succeeds, the app immediately loads programs and environments into the user-profile cache.</span>
+          </div>
+        </div>
+      </div>
+    `);
+  }
+
+  cmSetupPreview.innerHTML = blocks.join('');
+}
+
+function resetCloudManagerSetupResult() {
+  if (!cmSetupResult) return;
+  cmSetupResult.innerHTML = '';
+  cmSetupResult.classList.add('hidden');
+}
+
+function renderCloudManagerSetupResult(result = {}, errorMessage = '') {
+  if (!cmSetupResult) return;
+  const steps = Array.isArray(result.steps) ? result.steps : [];
+  const summary = errorMessage
+    ? `<div><strong>${escapeHtml(errorMessage)}</strong></div>`
+    : `<div><strong>Cloud Manager setup completed.</strong></div>`;
+  const items = steps.length
+    ? `<div class="cloudmanager-setup-steps">${steps.map((step) => `
+        <div class="cloudmanager-setup-step ${step.ok ? 'ok' : 'fail'}">
+          <strong>${escapeHtml(step.label || step.id || 'Step')}</strong>
+          ${step.command ? `<code>${escapeHtml(step.command)}</code>` : ''}
+          <span>${escapeHtml(step.detail || '')}</span>
+        </div>
+      `).join('')}</div>`
+    : '<div>No setup steps were returned.</div>';
+
+  cmSetupResult.innerHTML = `${summary}${items}`;
+  cmSetupResult.classList.remove('hidden');
+}
+
+function openCloudManagerSetupPopover() {
+  if (!cmSetupPopover) return;
+  cmSetupPopover.classList.remove('hidden');
+  cmSetupPopover.setAttribute('aria-hidden', 'false');
+  renderCloudManagerSetupMode();
+  renderCloudManagerSetupPreview();
+  resetCloudManagerSetupResult();
+  setCloudManagerSetupStatus('Complete the aio setup, then the app will create the first Cloud Manager cache for you.');
+}
+
+function closeCloudManagerSetupPopover() {
+  if (!cmSetupPopover) return;
+  cmSetupPopover.classList.add('hidden');
+  cmSetupPopover.setAttribute('aria-hidden', 'true');
+  setCloudManagerSetupStatus('');
+}
+
+function maybeOpenCloudManagerSetupPopover() {
+  if (currentSourceMode !== 'cloudmanager' || cloudManagerCacheMetadata.present || cloudManagerSetupAutoPrompted) {
+    return;
+  }
+
+  cloudManagerSetupAutoPrompted = true;
+  openCloudManagerSetupPopover();
+}
+
+function renderCloudManagerSummary(data) {
+  if (!cmDownloadSummary) return;
+  const files = Array.isArray(data.downloadedFilesDetailed) && data.downloadedFilesDetailed.length
+    ? data.downloadedFilesDetailed
+    : (Array.isArray(data.downloadedFiles) ? data.downloadedFiles.map((filePath) => ({
+        filePath,
+      fileName: filePath.split('/').pop() || filePath,
+      service: '',
+      logName: '',
+      extractedDate: '',
+      modifiedAt: '',
+      supported: true,
+      unsupportedReason: '',
+      logFamily: '',
+      logType: ''
+      })) : []);
+  const dates = Array.isArray(data.fileDates)
+    ? data.fileDates
+        .map((entry) => entry.extractedDate || entry.modifiedAt?.slice(0, 10) || '')
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(', ')
+    : '';
+  const selectedFile = currentCloudManagerRunContext?.analyzedFile || data.analyzedFile || '';
+  const fileItems = files.length
+    ? `<div class="cloudmanager-download-files">${files.map((file) => {
+        const when = file.extractedDate || file.modifiedAt?.slice(0, 10) || '';
+        const label = [file.service, file.logName].filter(Boolean).join(' / ');
+        const isSelected = file.filePath === selectedFile;
+        const supportLabel = file.supported === false
+          ? `Unsupported: ${file.unsupportedReason || 'Unsupported log format'}`
+          : file.logFamily
+            ? `Detected: ${file.logFamily}`
+            : '';
+        return `
+          <div class="cloudmanager-download-file ${isSelected ? 'active' : ''}">
+            <div>
+              <strong>${escapeHtml(file.fileName || file.filePath)}</strong>
+              ${label ? `<span>${escapeHtml(label)}</span>` : ''}
+              ${when ? `<span>${escapeHtml(when)}</span>` : ''}
+              ${supportLabel ? `<span>${escapeHtml(supportLabel)}</span>` : ''}
+              <code>${escapeHtml(file.filePath)}</code>
+            </div>
+            <button class="upload-btn secondary cm-download-analyze" type="button" data-file-path="${escapeHtml(file.filePath)}" ${file.supported === false ? 'disabled' : ''}>Analyze</button>
+          </div>
+        `;
+      }).join('')}</div>`
+    : '<div>No downloaded files were returned.</div>';
+
+  cmDownloadSummary.innerHTML = `
+    <div><strong>Downloaded ${files.length}</strong> Cloud Manager file(s).</div>
+    <div>Analyzed file: <code>${escapeHtml(data.analyzedFile || '')}</code></div>
+    <div>Saved under: <code>${escapeHtml(data.outputDirectory || '')}</code></div>
+    ${dates ? `<div>Extracted dates: <span>${escapeHtml(dates)}</span></div>` : ''}
+    ${fileItems}
+  `;
+  cmDownloadSummary.classList.remove('hidden');
+}
+
+function renderCloudManagerPrerequisiteSummary(data) {
+  if (!cmDownloadSummary) return;
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  const items = checks.map((check) => {
+    const state = check.ok ? 'PASS' : 'FAIL';
+    const remediation = check.remediationCommand
+      ? `<div><code>${escapeHtml(check.remediationCommand)}</code></div>`
+      : '';
+    return `<div><strong>${escapeHtml(check.label)}:</strong> ${state} <span>${escapeHtml(check.detail || '')}</span>${remediation}</div>`;
+  }).join('');
+
+  cmDownloadSummary.innerHTML = `
+    <div><strong>${escapeHtml(data.summary || 'Cloud Manager prerequisite check complete.')}</strong></div>
+    ${items || '<div>No prerequisite details returned.</div>'}
+  `;
+  cmDownloadSummary.classList.remove('hidden');
+}
+
+function renderCloudManagerResultBadges(data = {}, context = {}) {
+  if (!cmResultBadges) return;
+  const badges = [];
+  const source = context.source || data.source;
+  if (source) badges.push(`Source: ${source}`);
+  if (context.programName) badges.push(`Program: ${context.programName}`);
+  if (context.environmentName) badges.push(`Environment: ${context.environmentName}`);
+  if (Array.isArray(context.selections) && context.selections.length) {
+    badges.push(`Logs: ${context.selections.map(entry => `${entry.service}/${entry.logName}`).join(', ')}`);
+  }
+  if (context.days) badges.push(`Days: ${context.days}`);
+  if (context.outputDirectory) badges.push(`Folder: ${context.outputDirectory}`);
+  if (context.analyzedFile || data.analyzedFile) badges.push(`Analyzed: ${context.analyzedFile || data.analyzedFile}`);
+
+  if (!badges.length) {
+    cmResultBadges.innerHTML = '';
+    cmResultBadges.classList.add('hidden');
+    return;
+  }
+
+  cmResultBadges.innerHTML = badges.map((badge) => `<span class="cloudmanager-badge">${escapeHtml(badge)}</span>`).join('');
+  cmResultBadges.classList.remove('hidden');
+}
+
+function renderCloudManagerHistory() {
+  if (!cmHistoryList) return;
+  const entries = readCloudManagerHistory();
+  if (!entries.length) {
+    cmHistoryList.innerHTML = '<div class="cloudmanager-hint">No Cloud Manager runs yet.</div>';
+    return;
+  }
+
+  cmHistoryList.innerHTML = entries.map((entry, index) => `
+    <div class="cloudmanager-history-item" data-history-index="${index}">
+      <div>
+        <strong>${escapeHtml(entry.programName || entry.programId || 'Cloud Manager run')}</strong>
+        <span>${escapeHtml(entry.environmentName || entry.environmentId || '')}</span><br>
+        <span>${escapeHtml((entry.selections || []).map(item => `${item.service}/${item.logName}`).join(', '))}</span><br>
+        <code>${escapeHtml(entry.analyzedFile || '')}</code>
+      </div>
+      <div class="cloudmanager-history-actions">
+        <button class="upload-btn secondary cm-history-reopen" type="button">Reopen</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function pushCloudManagerHistoryEntry(entry) {
+  const history = readCloudManagerHistory();
+  history.unshift(entry);
+  writeCloudManagerHistory(history);
+  renderCloudManagerHistory();
+}
+
+async function analyzeSavedCloudManagerFile(filePath, runContext = {}) {
+  if (!filePath) return;
+
+  setCloudManagerStatus('Rendering analysis results from the selected Cloud Manager file...');
+  resetCloudManagerSummary();
+  document.getElementById('emptyState').classList.add('hidden');
+
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath })
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to analyze the selected Cloud Manager file.');
+    }
+
+    currentCloudManagerRunContext = {
+      ...currentCloudManagerRunContext,
+      ...runContext,
+      source: 'cloudmanager',
+      analyzedFile: filePath
+    };
+    renderCloudManagerSummary({
+      ...runContext,
+      analyzedFile: filePath,
+      downloadedFilesDetailed: runContext.downloadedFilesDetailed || [],
+      downloadedFiles: runContext.downloadedFiles || [],
+      outputDirectory: runContext.outputDirectory || ''
+    });
+    renderCloudManagerResultBadges(data, currentCloudManagerRunContext);
+    handleAnalysisComplete(data, {
+      analyzedFile: filePath,
+      source: 'cloudmanager'
+    });
+    setCloudManagerStatus('');
+  } catch (error) {
+    setCloudManagerStatus('');
+    showError(error.message);
+  }
+}
+
+function buildCloudManagerSelectionLabels() {
+  const programName = cmProgramSelect?.selectedOptions?.[0]?.textContent || '';
+  const environmentName = cmEnvironmentSelect?.selectedOptions?.[0]?.textContent || '';
+  return { programName, environmentName };
+}
+
+function updateCloudManagerHintState() {
+  if (cmProgramHint) {
+    cmProgramHint.textContent = cloudManagerCacheMetadata.present
+      ? 'Choose a program from the cached metadata.'
+      : 'Open setup first, then let the app create the cache.';
+  }
+  if (cmEnvironmentHint) {
+    cmEnvironmentHint.textContent = cmProgramSelect?.value
+      ? 'Choose an environment from the cached program data.'
+      : 'Choose a cached program to load environments.';
+  }
+  if (cmLogHint) {
+    cmLogHint.textContent = cmEnvironmentSelect?.value
+      ? 'Choose a tier tab, then select one or more logs to download.'
+      : 'Choose an environment to load downloadable logs.';
+  }
+}
+
+function normalizeCloudManagerTier(service = '') {
+  const value = String(service || '').toLowerCase();
+  if (value.includes('author')) return 'author';
+  if (value.includes('publish')) return 'publish';
+  if (value.includes('dispatcher')) return 'dispatcher';
+  return value || 'other';
+}
+
+function getCloudManagerTierOrder(tier) {
+  const order = { author: 0, publish: 1, dispatcher: 2 };
+  return order[tier] ?? 99;
+}
+
+function getCloudManagerTierGroups() {
+  const groups = {};
+  cloudManagerLogOptions.forEach((entry) => {
+    const tier = normalizeCloudManagerTier(entry.service);
+    if (!groups[tier]) groups[tier] = [];
+    groups[tier].push(entry);
+  });
+  return Object.entries(groups)
+    .sort((a, b) => getCloudManagerTierOrder(a[0]) - getCloudManagerTierOrder(b[0]) || a[0].localeCompare(b[0]))
+    .map(([tier, entries]) => ({ tier, entries }));
+}
+
+function renderCloudManagerTierTabs() {
+  if (!cmTierTabs) return;
+  const groups = getCloudManagerTierGroups();
+  if (!groups.length) {
+    cmTierTabs.innerHTML = '';
+    currentCloudManagerTier = '';
+    return;
+  }
+
+  const hasCurrentTier = groups.some((group) => group.tier === currentCloudManagerTier);
+  if (!hasCurrentTier) {
+    currentCloudManagerTier = groups[0].tier;
+  }
+
+  cmTierTabs.innerHTML = groups.map((group) => `
+    <button class="cloudmanager-tier-tab ${group.tier === currentCloudManagerTier ? 'active' : ''}" type="button" data-tier="${group.tier}">
+      ${escapeHtml(group.tier)}
+    </button>
+  `).join('');
+}
+
+function renderCloudManagerLogOptions() {
+  if (!cmLogOptionList) return;
+  renderCloudManagerTierTabs();
+  const groups = getCloudManagerTierGroups();
+  const activeGroup = groups.find((group) => group.tier === currentCloudManagerTier);
+
+  if (!activeGroup) {
+    cmLogOptionList.innerHTML = '<div class="cloudmanager-hint">No log options loaded yet.</div>';
+    cmLogOptionList.classList.add('disabled');
+    return;
+  }
+
+  const selectedKeys = new Set(selectedCloudManagerLogs.map((entry) => `${entry.service}::${entry.logName}`));
+  cmLogOptionList.innerHTML = activeGroup.entries.map((entry) => {
+    const key = `${entry.service}::${entry.name}`;
+    const checked = selectedKeys.has(key) ? 'checked' : '';
+    return `
+      <label class="cloudmanager-log-option">
+        <input type="checkbox" data-log-key="${escapeHtml(key)}" ${checked}>
+        <span>
+          <strong>${escapeHtml(entry.service)}</strong>
+          <span>${escapeHtml(entry.name)}</span>
+        </span>
+      </label>
+    `;
+  }).join('');
+  cmLogOptionList.classList.remove('disabled');
+}
+
+function getSelectedCloudManagerLogOptions() {
+  return cloudManagerLogOptions.filter((entry) => {
+    const key = `${entry.service}::${entry.name}`;
+    return selectedCloudManagerLogs.some((selected) => `${selected.service}::${selected.logName}` === key);
+  });
+}
+
+async function refreshCloudManagerCommandPreview() {
+  if (!cmCommandPreview) return;
+  const state = getCloudManagerSelectionState();
+  if (!state.days) state.days = '1';
+  if (cmEstimatedDateRange) {
+    const parsedDays = Math.max(Number(state.days || 1), 1);
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - Math.max(parsedDays - 1, 0));
+    cmEstimatedDateRange.textContent = `Estimated range: ${startDate.toISOString().slice(0, 10)} to ${endDate.toISOString().slice(0, 10)}`;
+  }
+
+  if (!state.programId || !state.environmentId || !state.selections.length) {
+    cmCommandPreview.innerHTML = '';
+    cmCommandPreview.classList.add('hidden');
+    return;
+  }
+
+  cloudManagerCommandPreviewPending = true;
+  try {
+    const response = await fetch('/api/cloudmanager/command-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+    const data = await response.json();
+    if (!data.success) return;
+
+    const commands = (data.commands || []).map((entry) => `<code>${escapeHtml(entry.command)}</code>`).join('');
+    cmCommandPreview.innerHTML = `
+      <div><strong>Command preview</strong></div>
+      <div>${escapeHtml(data.estimatedDateRange?.label || '')}</div>
+      ${commands}
+    `;
+    cmCommandPreview.classList.remove('hidden');
+  } catch {
+    // Best-effort preview.
+  } finally {
+    cloudManagerCommandPreviewPending = false;
+  }
+}
+
+async function validateCloudManagerOutputDirectory() {
+  if (!cmOutputDirectoryInput) return false;
+  const outputDirectory = cmOutputDirectoryInput.value.trim();
+  if (!outputDirectory) {
+    if (cmOutputDirectoryHint) {
+      cmOutputDirectoryHint.textContent = 'Provide a writable local folder for Cloud Manager downloads.';
+    }
+    updateCloudManagerActionState();
+    return false;
+  }
+
+  try {
+    const response = await fetch('/api/cloudmanager/validate-output-directory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outputDirectory })
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Invalid output directory.');
+    }
+
+    if (cmOutputDirectoryHint) {
+      cmOutputDirectoryHint.textContent = `Folder looks valid: ${data.resolved}`;
+    }
+    updateCloudManagerActionState(true);
+    return true;
+  } catch (error) {
+    if (cmOutputDirectoryHint) {
+      cmOutputDirectoryHint.textContent = error.message;
+    }
+    updateCloudManagerActionState(false);
+    return false;
+  }
+}
+
+function updateCloudManagerActionState(outputDirectoryValid) {
+  const hasSelection = Boolean(cloudManagerCacheMetadata.present && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
+  const outputReady = typeof outputDirectoryValid === 'boolean'
+    ? outputDirectoryValid
+    : Boolean(cmOutputDirectoryInput?.value.trim());
+  const prerequisitesPassed = Boolean(cloudManagerPrerequisiteState?.ok);
+  if (cmAnalyzeBtn) {
+    cmAnalyzeBtn.disabled = !(prerequisitesPassed && hasSelection && outputReady);
+  }
+  updateCloudManagerHintState();
+}
+
+function restoreCloudManagerSelections() {
+  const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+  if (cmDaysInput && saved.days) cmDaysInput.value = String(saved.days);
+  if (cmOutputDirectoryInput && saved.outputDirectory) cmOutputDirectoryInput.value = saved.outputDirectory;
+  currentCloudManagerTier = saved.tier || '';
+}
+
+function setSourceMode(mode, { persist = true } = {}) {
+  currentSourceMode = mode === 'cloudmanager' ? 'cloudmanager' : 'local';
+
+  sourceModeButtons.forEach((button) => {
+    const isActive = button.dataset.sourceMode === currentSourceMode;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  if (localSourcePanel) localSourcePanel.classList.toggle('hidden', currentSourceMode !== 'local');
+  if (cloudManagerPanel) cloudManagerPanel.classList.toggle('hidden', currentSourceMode !== 'cloudmanager');
+  if (tailBtn) {
+    tailBtn.disabled = currentSourceMode !== 'local';
+    tailBtn.title = currentSourceMode === 'local'
+      ? 'Watch a log file for new entries in real-time'
+      : 'Tail is only available for local file paths';
+  }
+
+  if (persist) {
+    localStorage.setItem(SOURCE_MODE_STORAGE_KEY, currentSourceMode);
+  }
+
+  if (currentSourceMode === 'local') {
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+  }
+
+  if (currentSourceMode === 'cloudmanager') {
+    resetCloudManagerSummary();
+    setCloudManagerStatus('');
+    restoreCloudManagerSelections();
+    updateCloudManagerCacheStatus();
+    updateCloudManagerActionState();
+    renderCloudManagerHistory();
+    ensureCloudManagerProgramsLoaded();
+    maybeOpenCloudManagerSetupPopover();
+  }
+}
+
+async function ensureCloudManagerProgramsLoaded() {
+  const previousMarkup = cmProgramSelect.innerHTML;
+  const hadExistingOptions = cmProgramSelect.options.length > 1;
+  cmProgramSelect.disabled = true;
+  cmProgramSelect.innerHTML = '<option value="">Loading programs...</option>';
+  setCloudManagerStatus('Loading cached Cloud Manager programs...');
+
+  try {
+    const response = await fetch('/api/cloudmanager/programs');
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load Cloud Manager programs');
+    }
+
+    cloudManagerCacheMetadata = {
+      refreshedAt: data.refreshedAt || '',
+      present: Array.isArray(data.programs) && data.programs.length > 0
+    };
+    updateCloudManagerCacheStatus();
+    cmProgramSelect.innerHTML = '<option value="">Select program</option>';
+    (data.programs || []).forEach((program) => {
+      const option = document.createElement('option');
+      option.value = program.id;
+      option.textContent = program.name;
+      cmProgramSelect.appendChild(option);
+    });
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.programId && Array.from(cmProgramSelect.options).some((option) => option.value === saved.programId)) {
+      cmProgramSelect.value = saved.programId;
+      await loadCloudManagerEnvironments(saved.programId);
+    }
+    cmProgramSelect.disabled = false;
+    cloudManagerProgramsLoaded = true;
+    setCloudManagerStatus((data.programs || []).length ? '' : 'Cloud Manager cache is empty. Refresh cache to load programs.');
+    updateCloudManagerActionState();
+  } catch (error) {
+    cloudManagerCacheMetadata = { refreshedAt: '', present: false };
+    updateCloudManagerCacheStatus();
+    cmProgramSelect.innerHTML = hadExistingOptions
+      ? previousMarkup
+      : '<option value="">Refresh cache to load programs</option>';
+    cmProgramSelect.disabled = false;
+    setCloudManagerStatus(/cache is empty/i.test(error.message) ? error.message : '');
+    if (!/cache is empty/i.test(error.message)) {
+      showError(error.message);
+    }
+    maybeOpenCloudManagerSetupPopover();
+  }
+}
+
+async function loadCloudManagerEnvironments(programId) {
+  cmEnvironmentSelect.disabled = true;
+  cmEnvironmentSelect.innerHTML = '<option value="">Loading environments...</option>';
+  cloudManagerLogOptions = [];
+  selectedCloudManagerLogs = [];
+  renderCloudManagerLogOptions();
+  setCloudManagerStatus('Loading environments for the selected program...');
+
+  try {
+    const response = await fetch(`/api/cloudmanager/programs/${encodeURIComponent(programId)}/environments`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load environments');
+    }
+
+    cloudManagerCacheMetadata.refreshedAt = data.refreshedAt || cloudManagerCacheMetadata.refreshedAt;
+    updateCloudManagerCacheStatus();
+    cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
+    (data.environments || []).forEach((environment) => {
+      const option = document.createElement('option');
+      option.value = environment.id;
+      option.textContent = environment.type
+        ? `${environment.name} (${environment.type})`
+        : environment.name;
+      cmEnvironmentSelect.appendChild(option);
+    });
+    cmEnvironmentSelect.disabled = false;
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.environmentId && Array.from(cmEnvironmentSelect.options).some((option) => option.value === saved.environmentId)) {
+      cmEnvironmentSelect.value = saved.environmentId;
+      await loadCloudManagerLogOptions(programId, saved.environmentId);
+    }
+    setCloudManagerStatus((data.environments || []).length ? '' : 'No environments were returned for the selected program.');
+  } catch (error) {
+    cmEnvironmentSelect.innerHTML = '<option value="">No cached environments available</option>';
+    setCloudManagerStatus(/cache is empty/i.test(error.message) ? error.message : '');
+    if (!/cache is empty/i.test(error.message)) {
+      showError(error.message);
+    }
+  }
+}
+
+async function loadCloudManagerLogOptions(programId, environmentId) {
+  cloudManagerLogOptions = [];
+  selectedCloudManagerLogs = [];
+  currentCloudManagerTier = '';
+  renderCloudManagerLogOptions();
+  setCloudManagerStatus('Loading available service and log options...');
+
+  try {
+    const params = new URLSearchParams({ programId });
+    const response = await fetch(`/api/cloudmanager/environments/${encodeURIComponent(environmentId)}/log-options?${params.toString()}`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load log options');
+    }
+
+    cloudManagerLogOptions = data.logOptions || [];
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    currentCloudManagerTier = saved.tier || currentCloudManagerTier;
+    selectedCloudManagerLogs = Array.isArray(saved.selections)
+      ? saved.selections.filter((entry) =>
+          cloudManagerLogOptions.some((option) => option.service === entry.service && option.name === entry.logName)
+        )
+      : [];
+    renderCloudManagerLogOptions();
+    setCloudManagerStatus((data.logOptions || []).length ? '' : 'No downloadable log options were returned for the selected environment.');
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+  } catch (error) {
+    cloudManagerLogOptions = [];
+    selectedCloudManagerLogs = [];
+    renderCloudManagerLogOptions();
+    setCloudManagerStatus('');
+    showError(error.message);
+  }
 }
 
 if (themeMediaQuery && typeof themeMediaQuery.addEventListener === 'function') {
@@ -158,6 +1085,225 @@ themeButtons.forEach(button => {
   button.addEventListener('click', () => {
     setThemePreference(button.dataset.themeOption);
   });
+});
+
+sourceModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setSourceMode(button.dataset.sourceMode);
+  });
+});
+
+if (cmProgramSelect) {
+  cmProgramSelect.addEventListener('change', async () => {
+    resetCloudManagerSummary();
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+    cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
+    cloudManagerLogOptions = [];
+    selectedCloudManagerLogs = [];
+    renderCloudManagerLogOptions();
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+
+    if (!cmProgramSelect.value) {
+      cmEnvironmentSelect.disabled = true;
+      return;
+    }
+
+    await loadCloudManagerEnvironments(cmProgramSelect.value);
+    persistCloudManagerSelectionState();
+  });
+}
+
+if (cmEnvironmentSelect) {
+  cmEnvironmentSelect.addEventListener('change', async () => {
+    resetCloudManagerSummary();
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+    if (!cmEnvironmentSelect.value || !cmProgramSelect.value) {
+      cloudManagerLogOptions = [];
+      selectedCloudManagerLogs = [];
+      renderCloudManagerLogOptions();
+      persistCloudManagerSelectionState();
+      await refreshCloudManagerCommandPreview();
+      updateCloudManagerActionState();
+      return;
+    }
+
+    await loadCloudManagerLogOptions(cmProgramSelect.value, cmEnvironmentSelect.value);
+    persistCloudManagerSelectionState();
+  });
+}
+
+if (cmLogOptionList) {
+  cmLogOptionList.addEventListener('change', async (event) => {
+    const input = event.target.closest('input[type="checkbox"][data-log-key]');
+    if (!input) return;
+    const selected = cloudManagerLogOptions.find((entry) => `${entry.service}::${entry.name}` === input.dataset.logKey);
+    if (!selected) return;
+
+    const key = `${selected.service}::${selected.name}`;
+    if (input.checked) {
+      if (!selectedCloudManagerLogs.some((entry) => `${entry.service}::${entry.logName}` === key)) {
+        selectedCloudManagerLogs.push({ service: selected.service, logName: selected.name });
+      }
+    } else {
+      selectedCloudManagerLogs = selectedCloudManagerLogs.filter((entry) => `${entry.service}::${entry.logName}` !== key);
+    }
+
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+  });
+}
+
+if (cmTierTabs) {
+  cmTierTabs.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-tier]');
+    if (!button) return;
+    currentCloudManagerTier = button.dataset.tier || '';
+    persistCloudManagerSelectionState();
+    renderCloudManagerLogOptions();
+    await refreshCloudManagerCommandPreview();
+  });
+}
+
+if (cmDaysInput) {
+  cmDaysInput.addEventListener('input', async () => {
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+  });
+}
+
+if (cmOutputDirectoryInput) {
+  cmOutputDirectoryInput.addEventListener('input', async () => {
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+  });
+
+  cmOutputDirectoryInput.addEventListener('blur', async () => {
+    await validateCloudManagerOutputDirectory();
+  });
+}
+
+if (cmSetupBtn) {
+  cmSetupBtn.addEventListener('click', () => {
+    openCloudManagerSetupPopover();
+  });
+}
+
+if (cmSetupCloseBtn) {
+  cmSetupCloseBtn.addEventListener('click', () => {
+    closeCloudManagerSetupPopover();
+  });
+}
+
+if (cmSetupBackdrop) {
+  cmSetupBackdrop.addEventListener('click', () => {
+    closeCloudManagerSetupPopover();
+  });
+}
+
+cmSetupModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    currentCloudManagerSetupMode = button.dataset.setupMode === 'oauth' ? 'oauth' : 'browser';
+    renderCloudManagerSetupMode();
+    renderCloudManagerSetupPreview();
+    resetCloudManagerSetupResult();
+  });
+});
+
+[
+  cmSetupOrgId,
+  cmSetupBrowserProgramId,
+  cmSetupOauthProgramId,
+  cmSetupOauthJson
+].filter(Boolean).forEach((input) => {
+  input.addEventListener('input', () => {
+    renderCloudManagerSetupPreview();
+    resetCloudManagerSetupResult();
+  });
+});
+
+if (cmSetupOauthFile) {
+  cmSetupOauthFile.addEventListener('change', async (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file || !cmSetupOauthJson) return;
+
+    try {
+      const text = await file.text();
+      cmSetupOauthJson.value = text;
+      renderCloudManagerSetupPreview();
+      resetCloudManagerSetupResult();
+      setCloudManagerSetupStatus(`Loaded OAuth JSON from ${file.name}.`);
+    } catch (error) {
+      setCloudManagerSetupStatus(`Failed to read OAuth JSON file: ${error.message}`);
+    }
+  });
+}
+
+if (cmSetupRunBtn) {
+  cmSetupRunBtn.addEventListener('click', async () => {
+    const payload = getCloudManagerSetupPayload();
+    cmSetupRunBtn.disabled = true;
+    cmSetupRunBtn.textContent = 'Running Setup...';
+    setCloudManagerSetupStatus('Applying aio configuration and creating the Cloud Manager cache...');
+    resetCloudManagerSetupResult();
+
+    try {
+      const response = await fetch('/api/cloudmanager/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      if (!data.success) {
+        renderCloudManagerSetupResult(data, data.error || 'Cloud Manager setup failed.');
+        setCloudManagerSetupStatus(data.error || 'Cloud Manager setup failed.');
+        return;
+      }
+
+      renderCloudManagerSetupResult(data, '');
+      cloudManagerPrerequisiteState = data.prerequisites || cloudManagerPrerequisiteState;
+      cloudManagerCacheMetadata = {
+        refreshedAt: data.cache?.refreshedAt || '',
+        present: Boolean(data.cache?.totalPrograms)
+      };
+      cloudManagerProgramsLoaded = false;
+      updateCloudManagerCacheStatus();
+      renderCloudManagerPrerequisiteSummary({
+        summary: data.cache?.environmentErrors?.length
+          ? `Cloud Manager setup completed. Cache created with ${data.cache.totalPrograms || 0} program(s), but some environment lists could not be loaded yet.`
+          : 'Cloud Manager setup completed and the cache was created.',
+        checks: data.steps || []
+      });
+      await ensureCloudManagerProgramsLoaded();
+      setCloudManagerStatus(data.cache?.environmentErrors?.length
+        ? `Cloud Manager setup completed. Cache created with ${data.cache?.totalPrograms || 0} program(s), but ${data.cache.environmentErrors.length} program(s) have no cached environments yet.`
+        : `Cloud Manager setup complete. Cache created with ${data.cache?.totalPrograms || 0} program(s).`);
+      showToast(data.cache?.environmentErrors?.length
+        ? 'Cloud Manager setup completed with cache warnings'
+        : 'Cloud Manager setup completed', data.cache?.environmentErrors?.length ? 'warning' : 'success');
+      closeCloudManagerSetupPopover();
+    } catch (error) {
+      renderCloudManagerSetupResult({}, error.message);
+      setCloudManagerSetupStatus(error.message);
+    } finally {
+      cmSetupRunBtn.disabled = false;
+      cmSetupRunBtn.textContent = 'Run Setup & Create Cache';
+      updateCloudManagerActionState();
+    }
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && cmSetupPopover && !cmSetupPopover.classList.contains('hidden')) {
+    closeCloudManagerSetupPopover();
+  }
 });
 
 function isSidebarCollapseSupported() {
@@ -616,6 +1762,144 @@ analyzeBtn.addEventListener('click', async () => {
   }
 });
 
+if (cmAnalyzeBtn) {
+  cmAnalyzeBtn.addEventListener('click', async () => {
+    const programId = cmProgramSelect.value;
+    const environmentId = cmEnvironmentSelect.value;
+    const outputDirectory = cmOutputDirectoryInput.value.trim();
+    const days = cmDaysInput.value.trim() || '1';
+
+    if (!programId || !environmentId || !selectedCloudManagerLogs.length) {
+      showToast('Select a program, environment, and at least one log option', 'warning');
+      return;
+    }
+
+    if (!outputDirectory || !(await validateCloudManagerOutputDirectory())) {
+      showToast('Enter a local download folder', 'warning');
+      return;
+    }
+
+    localStorage.setItem(CM_OUTPUT_DIRECTORY_STORAGE_KEY, outputDirectory);
+    await analyzeCloudManagerSelection({
+      programId,
+      environmentId,
+      selections: [...selectedCloudManagerLogs],
+      days,
+      outputDirectory
+    });
+  });
+}
+
+if (cmCheckBtn) {
+  cmCheckBtn.addEventListener('click', async () => {
+    cmCheckBtn.disabled = true;
+    cmCheckBtn.textContent = 'Checking...';
+    setCloudManagerStatus('Checking aio, Cloud Manager plugin, and access...');
+    resetCloudManagerSummary();
+
+    try {
+      const response = await fetch('/api/cloudmanager/check-prerequisites');
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to check Cloud Manager prerequisites');
+      }
+
+      cloudManagerPrerequisiteState = data;
+      renderCloudManagerPrerequisiteSummary(data);
+      setCloudManagerStatus(data.ok
+        ? 'Cloud Manager prerequisites look good.'
+        : 'Cloud Manager prerequisite check found issues.');
+      if (!data.ok) {
+        maybeOpenCloudManagerSetupPopover();
+      }
+      updateCloudManagerActionState();
+    } catch (error) {
+      setCloudManagerStatus('');
+      showError(error.message);
+    } finally {
+      cmCheckBtn.disabled = false;
+      cmCheckBtn.textContent = 'Check Prerequisites';
+    }
+  });
+}
+
+if (cmRefreshCacheBtn) {
+  cmRefreshCacheBtn.addEventListener('click', async () => {
+    cmRefreshCacheBtn.disabled = true;
+    cmRefreshCacheBtn.textContent = 'Refreshing...';
+    setCloudManagerStatus('Refreshing Cloud Manager cache from aio...');
+
+    try {
+      const response = await fetch('/api/cloudmanager/refresh-cache', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to refresh Cloud Manager cache');
+      }
+
+      cloudManagerCacheMetadata = {
+        refreshedAt: data.refreshedAt || '',
+        present: Boolean(data.totalPrograms)
+      };
+      cloudManagerProgramsLoaded = false;
+      updateCloudManagerCacheStatus();
+      await ensureCloudManagerProgramsLoaded();
+      setCloudManagerStatus(data.environmentErrors?.length
+        ? `Cloud Manager cache refreshed. Loaded ${data.totalPrograms || 0} program(s), but ${data.environmentErrors.length} program(s) could not load environments.`
+        : `Cloud Manager cache refreshed. Loaded ${data.totalPrograms || 0} program(s).`);
+    } catch (error) {
+      showError(error.message);
+      setCloudManagerStatus('');
+    } finally {
+      cmRefreshCacheBtn.disabled = false;
+      cmRefreshCacheBtn.textContent = 'Refresh Cache';
+    }
+  });
+}
+
+if (cmTestConnectionBtn) {
+  cmTestConnectionBtn.addEventListener('click', async () => {
+    cmTestConnectionBtn.disabled = true;
+    cmTestConnectionBtn.textContent = 'Testing...';
+    setCloudManagerStatus('Testing Cloud Manager connectivity...');
+
+    try {
+      const response = await fetch('/api/cloudmanager/check-prerequisites');
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to test Cloud Manager connection');
+      }
+
+      cloudManagerPrerequisiteState = data;
+      const accessCheck = (data.checks || []).find((check) => check.id === 'auth');
+      renderCloudManagerPrerequisiteSummary({
+        summary: accessCheck?.ok
+          ? 'Cloud Manager connection test passed.'
+          : 'Cloud Manager connection test failed.',
+        checks: accessCheck ? [accessCheck] : []
+      });
+      setCloudManagerStatus(accessCheck?.ok
+        ? 'Cloud Manager connection looks healthy.'
+        : 'Cloud Manager connection test found issues.');
+      updateCloudManagerActionState();
+    } catch (error) {
+      setCloudManagerStatus('');
+      showError(error.message);
+    } finally {
+      cmTestConnectionBtn.disabled = false;
+      cmTestConnectionBtn.textContent = 'Test Connection';
+    }
+  });
+}
+
+filePathInput.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  analyzeBtn.click();
+});
+
 async function analyzeBatchInput(input) {
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
@@ -647,6 +1931,11 @@ async function analyzeBatchInput(input) {
 }
 
 async function analyzeFilePath(filePath) {
+  resetCloudManagerSummary();
+  if (currentSourceMode === 'local') {
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+  }
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
   progressText.classList.remove('hidden');
@@ -670,7 +1959,7 @@ async function analyzeFilePath(filePath) {
 
     if (data.type === 'complete') {
       ws.close();
-      handleAnalysisComplete(data);
+      handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
       analyzeBtn.textContent = 'Analyze';
       analyzeBtn.disabled = false;
       progressText.classList.add('hidden');
@@ -704,10 +1993,85 @@ async function analyzeFilePath(filePath) {
 
 }
 
-function handleAnalysisComplete(data) {
+async function analyzeCloudManagerSelection(options) {
+  cmAnalyzeBtn.textContent = 'Downloading...';
+  cmAnalyzeBtn.disabled = true;
+  cmProgressText.classList.remove('hidden');
+  cmProgressText.textContent = 'Downloading log files from Cloud Manager...';
+  setCloudManagerStatus('Downloading logs and waiting for analysis results...');
+  document.getElementById('emptyState').classList.add('hidden');
+  resetCloudManagerSummary();
+
+  try {
+    const response = await fetch('/api/cloudmanager/download-analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options)
+    });
+    const data = await response.json();
+
+    if (!data.success) {
+      setCloudManagerStatus('');
+      showError(data.error || 'Cloud Manager analysis failed');
+      return;
+    }
+
+    cmProgressText.textContent = 'Downloaded. Rendering analysis...';
+    setCloudManagerStatus('Rendering analysis results from the downloaded log...');
+    const labels = buildCloudManagerSelectionLabels();
+    currentCloudManagerRunContext = {
+      source: 'cloudmanager',
+      programId: options.programId,
+      environmentId: options.environmentId,
+      programName: labels.programName,
+      environmentName: labels.environmentName,
+      selections: options.selections || [],
+      days: options.days,
+      outputDirectory: data.outputDirectory,
+      analyzedFile: data.analyzedFile,
+      commandPreview: data.commandPreview,
+      fileDates: data.fileDates || [],
+      downloadedFiles: data.downloadedFiles || [],
+      downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+      downloads: data.downloads || []
+    };
+    renderCloudManagerSummary(data);
+    renderCloudManagerResultBadges(data, currentCloudManagerRunContext);
+    pushCloudManagerHistoryEntry({
+      timestamp: new Date().toISOString(),
+      ...currentCloudManagerRunContext,
+      downloadedFiles: data.downloadedFiles || [],
+      downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+      downloads: data.downloads || []
+    });
+    if (data.supported === false || !data.analyzedFile) {
+      setCloudManagerStatus(data.unsupportedReason || 'Downloaded files are not supported for structured analysis yet.');
+      showToast(data.unsupportedReason || 'Downloaded files are not supported yet', 'warning');
+      persistCloudManagerSelectionState();
+      return;
+    }
+
+    handleAnalysisComplete(data, {
+      analyzedFile: data.analyzedFile,
+      source: 'cloudmanager'
+    });
+    setCloudManagerStatus('');
+    persistCloudManagerSelectionState();
+  } catch (error) {
+    setCloudManagerStatus('');
+    showError('Cloud Manager analysis failed: ' + error.message);
+  } finally {
+    cmAnalyzeBtn.textContent = 'Download & Analyze';
+    cmAnalyzeBtn.disabled = false;
+    cmProgressText.classList.add('hidden');
+  }
+}
+
+function handleAnalysisComplete(data, context = {}) {
   currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
+  setCurrentAnalyzedFilePath(context.analyzedFile || data.analyzedFile || '');
   chartsToggleBtn.disabled = false;
 
   // Store the log type
@@ -715,6 +2079,10 @@ function handleAnalysisComplete(data) {
 
   if (currentLogType === 'error') {
     resetErrorFilterState({ preserveDates: true });
+  }
+
+  if (context.source === 'cloudmanager' || currentCloudManagerRunContext) {
+    renderCloudManagerResultBadges(data, currentCloudManagerRunContext || context);
   }
 
   // Constrain date range inputs to actual log file dates
@@ -729,6 +2097,10 @@ function handleAnalysisComplete(data) {
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
   document.getElementById('exportAllBtn').disabled = true;
+  if (exportRow) {
+    exportRow.classList.add('export-row-hidden');
+    exportRow.setAttribute('aria-hidden', 'true');
+  }
 
   // Update level counts for error logs
   if (data.levelCounts) {
@@ -786,6 +2158,7 @@ function handleAnalysisComplete(data) {
 function handleMultiErrorAnalysisComplete(data, input) {
   currentAnalysisMode = 'multi-error';
   currentLogType = 'error';
+  setCurrentAnalyzedFilePath('');
   currentBatchInput = input;
   currentBatchSummary = data.summary || null;
   chartsToggleBtn.disabled = true;
@@ -793,6 +2166,10 @@ function handleMultiErrorAnalysisComplete(data, input) {
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
   document.getElementById('exportAllBtn').disabled = true;
+  if (exportRow) {
+    exportRow.classList.add('export-row-hidden');
+    exportRow.setAttribute('aria-hidden', 'true');
+  }
 
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
   const filterPanel = document.getElementById('errorFilters');
@@ -840,7 +2217,7 @@ chartsToggleBtn.addEventListener('click', () => {
 
 async function fetchChartsData() {
   const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
   if (!isMultiError && !filePath) return;
 
   const body = isMultiError
@@ -1314,7 +2691,7 @@ async function refreshErrorFilterOptions() {
   if (currentLogType !== 'error') return;
 
   const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
   if (!isMultiError && !filePath) return;
 
   const seq = ++errorFilterRefreshSeq;
@@ -1702,6 +3079,11 @@ document.addEventListener('keydown', (e) => {
 let ws = null;
 
 tailBtn.addEventListener('click', () => {
+  if (currentSourceMode !== 'local') {
+    showToast('Tail is only available for local file paths', 'warning');
+    return;
+  }
+
   const tailPathInput = document.getElementById('tailPath');
   const filePath = tailPathInput ? tailPathInput.value.trim() : filePathInput.value.trim();
   if (!filePath) { showToast('Enter a file path to tail', 'warning'); return; }
@@ -1813,7 +3195,7 @@ async function fetchRawEvents(page = 1, options = {}) {
     return;
   }
 
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
 
   if (!filePath) {
     showToast('Enter a file path to view events', 'warning');
@@ -1911,6 +3293,16 @@ function extractedExceptionBadge(evt) {
 }
 
 function renderRawEvents(events, total, page, perPage, logType = 'error') {
+  if (exportRow) {
+    exportRow.classList.toggle('export-row-hidden', total <= 0);
+    exportRow.setAttribute('aria-hidden', total > 0 ? 'false' : 'true');
+  }
+  const exportDisabled = total <= 0;
+  exportCsvBtn.disabled = exportDisabled;
+  exportJsonBtn.disabled = exportDisabled;
+  exportPdfBtn.disabled = exportDisabled;
+  document.getElementById('exportAllBtn').disabled = exportDisabled;
+
   const totalPages = Math.ceil(total / perPage);
   const start = total > 0 ? ((page - 1) * perPage + 1) : 0;
   const end = Math.min(page * perPage, total);
@@ -2202,6 +3594,42 @@ window.fetchRawEvents = fetchRawEvents;
 window.changeRawEventsPage = changeRawEventsPage;
 window.changeRawEventsPerPage = changeRawEventsPerPage;
 
+if (cmHistoryList) {
+  cmHistoryList.addEventListener('click', async (event) => {
+    const button = event.target.closest('.cm-history-reopen');
+    if (!button) return;
+    const item = button.closest('[data-history-index]');
+    const index = Number(item?.dataset.historyIndex);
+    const history = readCloudManagerHistory();
+    const entry = history[index];
+    if (!entry || !entry.analyzedFile) return;
+
+    currentCloudManagerRunContext = entry;
+    renderCloudManagerResultBadges({}, entry);
+    renderCloudManagerSummary({
+      analyzedFile: entry.analyzedFile,
+      outputDirectory: entry.outputDirectory,
+      downloadedFiles: entry.downloadedFiles || [],
+      downloadedFilesDetailed: entry.downloadedFilesDetailed || []
+    });
+    setCloudManagerStatus('Reopening a previously downloaded Cloud Manager log...');
+    await analyzeSavedCloudManagerFile(entry.analyzedFile, entry);
+    setCloudManagerStatus('');
+  });
+}
+
+if (cmDownloadSummary) {
+  cmDownloadSummary.addEventListener('click', async (event) => {
+    const button = event.target.closest('.cm-download-analyze');
+    if (!button) return;
+    const filePath = button.dataset.filePath || '';
+    if (!filePath) return;
+
+    const runContext = currentCloudManagerRunContext || {};
+    await analyzeSavedCloudManagerFile(filePath, runContext);
+  });
+}
+
 // Single-select searchable dropdown behavior
 function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId, onChangeCallback = null) {
   const dropdown = document.getElementById(dropdownId);
@@ -2407,6 +3835,13 @@ updateCascadeCountBadges();
 renderSelectionHints();
 applyThemePreference();
 applySidebarState();
+restoreCloudManagerSelections();
+renderCloudManagerHistory();
+updateCloudManagerHintState();
+renderCloudManagerLogOptions();
+setSourceMode(currentSourceMode, { persist: false });
+refreshCloudManagerCommandPreview();
+updateCloudManagerActionState();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');
@@ -2439,3 +3874,12 @@ filePathInput.addEventListener('blur', () => {
     localStorage.setItem('aem_lastPath', val);
   }
 });
+
+if (cmOutputDirectoryInput) {
+  cmOutputDirectoryInput.addEventListener('blur', () => {
+    const value = cmOutputDirectoryInput.value.trim();
+    if (value) {
+      localStorage.setItem(CM_OUTPUT_DIRECTORY_STORAGE_KEY, value);
+    }
+  });
+}
