@@ -34,6 +34,13 @@ const runSearchBuilderBtn = document.getElementById('runSearchBuilderBtn');
 const sidebar = document.getElementById('sidebar');
 const sidebarBody = document.getElementById('sidebarBody');
 const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+const THEME_STORAGE_KEY = 'aem_themePreference';
+const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
+let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
+if (!THEME_OPTIONS.has(themePreference)) {
+  themePreference = 'system';
+}
 
 let timelineChart = null;
 let loggerChart = null;
@@ -60,6 +67,96 @@ const SIDEBAR_COLLAPSE_BREAKPOINT = 768;
 let sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
+
+const themeMediaQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+
+function getSystemTheme() {
+  return themeMediaQuery && themeMediaQuery.matches ? 'dark' : 'light';
+}
+
+function getResolvedTheme() {
+  return themePreference === 'system' ? getSystemTheme() : themePreference;
+}
+
+function getThemeTokens() {
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    backgroundPrimary: styles.getPropertyValue('--color-background-primary').trim(),
+    backgroundSecondary: styles.getPropertyValue('--color-background-secondary').trim(),
+    backgroundTertiary: styles.getPropertyValue('--color-background-tertiary').trim(),
+    borderPrimary: styles.getPropertyValue('--color-border-primary').trim(),
+    borderSecondary: styles.getPropertyValue('--color-border-secondary').trim(),
+    borderTertiary: styles.getPropertyValue('--color-border-tertiary').trim(),
+    textPrimary: styles.getPropertyValue('--color-text-primary').trim(),
+    textSecondary: styles.getPropertyValue('--color-text-secondary').trim(),
+    textTertiary: styles.getPropertyValue('--color-text-tertiary').trim(),
+    primary: styles.getPropertyValue('--color-primary').trim(),
+    primarySoft: styles.getPropertyValue('--color-primary-soft').trim(),
+    error: styles.getPropertyValue('--color-error').trim(),
+    warning: styles.getPropertyValue('--color-warning').trim(),
+    success: styles.getPropertyValue('--color-success').trim()
+  };
+}
+
+function syncThemeControls(resolvedTheme = getResolvedTheme()) {
+  const isDark = resolvedTheme === 'dark';
+  document.documentElement.dataset.theme = resolvedTheme;
+  if (document.body) {
+    document.body.dataset.theme = resolvedTheme;
+  }
+
+  themeButtons.forEach(button => {
+    const isActive = button.dataset.themeOption === themePreference;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+    if (button.dataset.themeOption === 'system') {
+      button.textContent = themePreference === 'system'
+        ? `Auto (${isDark ? 'Dark' : 'Light'})`
+        : 'Auto';
+    }
+  });
+}
+
+function refreshVisibleChartsForTheme() {
+  if (!chartsToggleBtn || chartsToggleBtn.disabled || !chartsVisible) return;
+  if (!currentBatchInput && !filePathInput.value.trim()) return;
+  fetchChartsData();
+}
+
+function applyThemePreference({ persist = false } = {}) {
+  const resolvedTheme = getResolvedTheme();
+  syncThemeControls(resolvedTheme);
+  if (persist) {
+    localStorage.setItem(THEME_STORAGE_KEY, themePreference);
+  }
+  refreshVisibleChartsForTheme();
+}
+
+function setThemePreference(nextPreference) {
+  if (!THEME_OPTIONS.has(nextPreference)) return;
+  themePreference = nextPreference;
+  applyThemePreference({ persist: true });
+}
+
+if (themeMediaQuery && typeof themeMediaQuery.addEventListener === 'function') {
+  themeMediaQuery.addEventListener('change', () => {
+    if (themePreference === 'system') {
+      applyThemePreference();
+    }
+  });
+} else if (themeMediaQuery && typeof themeMediaQuery.addListener === 'function') {
+  themeMediaQuery.addListener(() => {
+    if (themePreference === 'system') {
+      applyThemePreference();
+    }
+  });
+}
+
+themeButtons.forEach(button => {
+  button.addEventListener('click', () => {
+    setThemePreference(button.dataset.themeOption);
+  });
+});
 
 function isSidebarCollapseSupported() {
   return window.innerWidth > SIDEBAR_COLLAPSE_BREAKPOINT;
@@ -770,6 +867,34 @@ async function fetchChartsData() {
 
 function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
   setDateRangeBounds(timeline, currentLogType);
+  const palette = getThemeTokens();
+  const chartBaseOptions = {
+    responsive: true,
+    color: palette.textSecondary,
+    font: { family: "'Inter', sans-serif" },
+    plugins: {
+      legend: {
+        labels: {
+          color: palette.textSecondary,
+          font: { family: "'Inter', sans-serif", size: 11, weight: 500 }
+        }
+      },
+      title: {
+        color: palette.textPrimary,
+        font: { family: "'Inter', sans-serif", size: 14, weight: 600 }
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: palette.textSecondary, font: { family: "'Inter', sans-serif", size: 10 } },
+        grid: { color: palette.borderTertiary, drawBorder: false }
+      },
+      y: {
+        ticks: { color: palette.textSecondary, font: { family: "'Inter', sans-serif", size: 10 } },
+        grid: { color: palette.borderTertiary, drawBorder: false }
+      }
+    }
+  };
   const ctx1 = document.getElementById('timelineChart').getContext('2d');
   const dates = Object.keys(timeline).sort();
   const errors = dates.map(d => timeline[d].ERROR || 0);
@@ -781,12 +906,12 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
     data: {
       labels: dates,
       datasets: [
-        { label: 'Errors', data: errors, borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 },
-        { label: 'Warnings', data: warnings, borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.1)', fill: true, tension: 0.3 }
+        { label: 'Errors', data: errors, borderColor: palette.error, backgroundColor: palette.error.replace('rgb', 'rgba').replace(')', ', 0.1)'), fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3, pointHoverRadius: 5 },
+        { label: 'Warnings', data: warnings, borderColor: palette.warning, backgroundColor: palette.warning.replace('rgb', 'rgba').replace(')', ', 0.1)'), fill: true, tension: 0.4, borderWidth: 2, pointRadius: 3, pointHoverRadius: 5 }
       ]
     },
     options: {
-      responsive: true,
+      ...chartBaseOptions,
       onClick: (e, elements) => {
         if (elements.length > 0) {
           const dateLabel = dates[elements[0].index];
@@ -797,7 +922,11 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
           showToast(`Filtered to ${dateLabel}`, 'info');
         }
       },
-      plugins: { title: { display: true, text: 'Errors & Warnings Over Time (click to drill down)' } }
+      scales: chartBaseOptions.scales,
+      plugins: {
+        ...chartBaseOptions.plugins,
+        title: { ...chartBaseOptions.plugins.title, display: true, text: 'Errors & Warnings Over Time (click to drill down)' }
+      },
     }
   });
 
@@ -814,8 +943,8 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       datasets: [{
         data: sortedLoggers.map(([, v]) => v),
         backgroundColor: [
-          '#EF4444', '#F59E0B', '#0EA5E9', '#10B981', '#8B5CF6',
-          '#06B6D4', '#F97316', '#475569', '#14B8A6', '#E11D48'
+          '#EF4444', '#F59E0B', palette.primary, '#10B981', '#8B5CF6',
+          '#06B6D4', '#F97316', '#64748B', '#14B8A6', '#E11D48'
         ]
       }]
     },
@@ -832,7 +961,11 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
           showToast(`Filtered to logger: ${loggerName.substring(0, 40)}`, 'info');
         }
       },
-      plugins: { title: { display: true, text: 'Top 10 Loggers (click to drill down)' } }
+      plugins: {
+        ...chartBaseOptions.plugins,
+        title: { ...chartBaseOptions.plugins.title, display: true, text: 'Top 10 Loggers (click to drill down)' }
+      },
+      scales: chartBaseOptions.scales
     }
   });
 
@@ -849,13 +982,20 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       datasets: [{
         label: 'Count',
         data: sortedThreads.map(([, v]) => v),
-        backgroundColor: '#0EA5E9'
+        backgroundColor: palette.primary
       }]
     },
     options: {
       responsive: true,
       indexAxis: 'y',
-      plugins: { title: { display: true, text: 'Top 10 Threads' } }
+      scales: {
+        x: { ticks: { color: palette.textSecondary }, grid: { color: palette.borderTertiary } },
+        y: { ticks: { color: palette.textSecondary }, grid: { color: palette.borderTertiary } }
+      },
+      plugins: {
+        ...chartBaseOptions.plugins,
+        title: { ...chartBaseOptions.plugins.title, display: true, text: 'Top 10 Threads' }
+      }
     }
   });
 
@@ -887,12 +1027,19 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       datasets: [{
         label: 'Events',
         data: hourData,
-        backgroundColor: hourData.map(v => v > 0 ? `rgba(239,68,60,${Math.min(1, v / Math.max(...hourData, 1))})` : '#e2e8f0')
+        backgroundColor: hourData.map(v => v > 0 ? `rgba(20,184,166,${Math.min(0.9, 0.18 + (v / Math.max(...hourData, 1)) * 0.72)})` : palette.backgroundTertiary)
       }]
     },
     options: {
       responsive: true,
-      plugins: { title: { display: true, text: 'Events by Hour of Day' } }
+      scales: {
+        x: { ticks: { color: palette.textSecondary }, grid: { color: palette.borderTertiary } },
+        y: { ticks: { color: palette.textSecondary }, grid: { color: palette.borderTertiary } }
+      },
+      plugins: {
+        ...chartBaseOptions.plugins,
+        title: { ...chartBaseOptions.plugins.title, display: true, text: 'Events by Hour of Day' }
+      }
     }
   });
 }
@@ -2208,6 +2355,7 @@ initSearchableDropdown('exceptionDropdown', 'exceptionFilter', 'exceptionSelect'
 renderAdvancedRuleBuilder();
 updateCascadeCountBadges();
 renderSelectionHints();
+applyThemePreference();
 applySidebarState();
 
 // Restore last used file path on page load

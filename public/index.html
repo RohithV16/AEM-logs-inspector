@@ -3,11 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AEM Log Analyzer</title>
+  <title>Log Inspector</title>
+  <script>
+    (function () {
+      try {
+        const storageKey = 'aem_themePreference';
+        const stored = localStorage.getItem(storageKey);
+        const systemPrefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored === 'light' || stored === 'dark'
+          ? stored
+          : (systemPrefersDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = theme;
+      } catch (error) {
+        document.documentElement.dataset.theme = 'dark';
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body data-theme="dark">
+<body>
+
+  <!-- Removed app-header for cleaner UI -->
+
 
   <!-- Main Grid -->
   <div class="main-grid">
@@ -17,8 +38,9 @@
       <div class="filter-card">
         <div class="sidebar-header">
           <div class="sidebar-header-copy">
-            <h3>Filters</h3>
-            <p class="sidebar-subtitle">Refine the log stream without losing context</p>
+            <div class="sidebar-title-row">
+              <h3>Filters</h3>
+            </div>
           </div>
           <div class="sidebar-header-actions">
             <span class="filter-badge">Live</span>
@@ -31,7 +53,9 @@
 
         <div id="sidebarBody" class="sidebar-body">
           <section class="filter-group">
-            <p class="filter-section-label">Date range</p>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Date range</p>
+            </div>
             <div class="date-range-group">
               <label class="date-field">
                 <span>From</span>
@@ -41,7 +65,6 @@
                 <span>To</span>
                 <input type="text" id="endDate" class="filter-input date-input" placeholder="YYYY-MM-DD HH:mm" inputmode="numeric" autocomplete="off" title="24-hour format: YYYY-MM-DD HH:mm">
               </label>
-              <p class="date-range-note">Railway logs use 24-hour time. Enter dates as `YYYY-MM-DD HH:mm`.</p>
             </div>
           </section>
 
@@ -51,9 +74,11 @@
               <p class="filter-section-label">Java Package</p>
               <span class="filter-count" id="packageVisibleCount"></span>
             </div>
-            <div class="searchable-dropdown" id="packageDropdown">
-              <input type="text" id="packageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
-              <div id="packageResults" class="token-picker-results"></div>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="packageDropdown">
+                <input type="text" id="packageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
+                <div id="packageResults" class="token-picker-results"></div>
+              </div>
             </div>
             <div id="packageTags" class="filter-tags"></div>
             <p id="packageSelectionHint" class="filter-selection-hint"></p>
@@ -61,9 +86,11 @@
               <p class="filter-section-label">Logger</p>
               <span class="filter-count" id="loggerVisibleCount"></span>
             </div>
-            <div class="searchable-dropdown" id="loggerDropdown">
-              <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
-              <div id="loggerResults" class="token-picker-results"></div>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="loggerDropdown">
+                <input type="text" id="loggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
+                <div id="loggerResults" class="token-picker-results"></div>
+              </div>
             </div>
             <div id="loggerTags" class="filter-tags"></div>
             <p id="loggerSelectionHint" class="filter-selection-hint"></p>
@@ -71,21 +98,28 @@
               <p class="filter-section-label">AEMaaCs Pods</p>
               <span class="filter-count" id="threadVisibleCount"></span>
             </div>
-            <div class="searchable-dropdown" id="threadDropdown">
-              <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search pods...">
-              <select id="threadSelect" class="dropdown-select" size="6">
-                <option value="">All Pods</option>
-              </select>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="threadDropdown">
+                <input type="text" id="threadFilter" class="filter-input dropdown-search" placeholder="Search pods...">
+                <select id="threadSelect" class="dropdown-select" size="6">
+                  <option value="">All Pods</option>
+                </select>
+              </div>
             </div>
             <div class="filter-section-header">
               <p class="filter-section-label">Exception</p>
               <span class="filter-count" id="exceptionVisibleCount"></span>
             </div>
-            <div class="searchable-dropdown" id="exceptionDropdown">
-              <input type="text" id="exceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
-              <select id="exceptionSelect" class="dropdown-select" size="6">
-                <option value="">All Exceptions</option>
-              </select>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="exceptionDropdown">
+                <input type="text" id="exceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
+                <select id="exceptionSelect" class="dropdown-select" size="6">
+                  <option value="">All Exceptions</option>
+                </select>
+              </div>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Category</p>
             </div>
             <select id="categoryFilter" class="filter-select" title="Filter by auto-detected error category">
               <option value="">All Categories</option>
@@ -94,62 +128,106 @@
 
           <!-- REQUEST LOG FILTERS -->
           <section id="requestFilters" class="log-filter-panel hidden filter-group">
-            <p class="filter-section-label">HTTP Method</p>
-            <div class="searchable-dropdown" id="methodDropdown">
-              <select id="methodFilter" class="filter-select">
-                <option value="">All Methods</option>
-              </select>
+            <div class="filter-section-header">
+              <p class="filter-section-label">HTTP Method</p>
             </div>
-            <p class="filter-section-label">HTTP Status</p>
-            <div class="searchable-dropdown" id="statusDropdown">
-              <select id="statusFilter" class="filter-select">
-                <option value="">All Status Codes</option>
-              </select>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="methodDropdown">
+                <select id="methodFilter" class="filter-select">
+                  <option value="">All Methods</option>
+                </select>
+              </div>
             </div>
-            <p class="filter-section-label">Response Time</p>
-            <div class="filter-input-group">
-              <input type="number" id="minResponseTime" class="filter-input" placeholder="Min ms" min="0">
-              <input type="number" id="maxResponseTime" class="filter-input" placeholder="Max ms" min="0">
+            <div class="filter-section-header">
+              <p class="filter-section-label">HTTP Status</p>
             </div>
-            <p class="filter-section-label">Pod</p>
-            <div class="searchable-dropdown" id="podDropdown">
-              <select id="podFilter" class="filter-select">
-                <option value="">All Pods</option>
-              </select>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="statusDropdown">
+                <select id="statusFilter" class="filter-select">
+                  <option value="">All Status Codes</option>
+                </select>
+              </div>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Response Time</p>
+            </div>
+            <div class="filter-control-row">
+              <div class="filter-input-group">
+                <input type="number" id="minResponseTime" class="filter-input" placeholder="Min ms" min="0">
+                <input type="number" id="maxResponseTime" class="filter-input" placeholder="Max ms" min="0">
+              </div>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Pod</p>
+            </div>
+            <div class="filter-control-row">
+              <div class="searchable-dropdown" id="podDropdown">
+                <select id="podFilter" class="filter-select">
+                  <option value="">All Pods</option>
+                </select>
+              </div>
             </div>
           </section>
 
           <!-- CDN LOG FILTERS -->
           <section id="cdnFilters" class="log-filter-panel hidden filter-group">
-            <p class="filter-section-label">HTTP Method</p>
-            <select id="cdnMethodFilter" class="filter-select">
-              <option value="">All Methods</option>
-            </select>
-            <p class="filter-section-label">HTTP Status</p>
-            <select id="cdnStatusFilter" class="filter-select">
-              <option value="">All Status Codes</option>
-            </select>
-            <p class="filter-section-label">Cache Status</p>
-            <select id="cacheStatusFilter" class="filter-select">
-              <option value="">All Cache Status</option>
-            </select>
-            <p class="filter-section-label">Country</p>
-            <select id="countryFilter" class="filter-select">
-              <option value="">All Countries</option>
-            </select>
-            <p class="filter-section-label">POP</p>
-            <select id="popFilter" class="filter-select">
-              <option value="">All POPs</option>
-            </select>
-            <p class="filter-section-label">TTFB (ms)</p>
-            <div class="filter-input-group">
-              <input type="number" id="minTtfb" class="filter-input" placeholder="Min" min="0">
-              <input type="number" id="maxTtfb" class="filter-input" placeholder="Max" min="0">
+            <div class="filter-section-header">
+              <p class="filter-section-label">HTTP Method</p>
             </div>
-            <p class="filter-section-label">Host</p>
-            <select id="hostFilter" class="filter-select">
-              <option value="">All Hosts</option>
-            </select>
+            <div class="filter-control-row">
+              <select id="cdnMethodFilter" class="filter-select">
+                <option value="">All Methods</option>
+              </select>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">HTTP Status</p>
+            </div>
+            <div class="filter-control-row">
+              <select id="cdnStatusFilter" class="filter-select">
+                <option value="">All Status Codes</option>
+              </select>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Cache Status</p>
+            </div>
+            <div class="filter-control-row">
+              <select id="cacheStatusFilter" class="filter-select">
+                <option value="">All Cache Status</option>
+              </select>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Country</p>
+            </div>
+            <div class="filter-control-row">
+              <select id="countryFilter" class="filter-select">
+                <option value="">All Countries</option>
+              </select>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">POP</p>
+            </div>
+            <div class="filter-control-row">
+              <select id="popFilter" class="filter-select">
+                <option value="">All POPs</option>
+              </select>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">TTFB (ms)</p>
+            </div>
+            <div class="filter-control-row">
+              <div class="filter-input-group">
+                <input type="number" id="minTtfb" class="filter-input" placeholder="Min" min="0">
+                <input type="number" id="maxTtfb" class="filter-input" placeholder="Max" min="0">
+              </div>
+            </div>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Host</p>
+            </div>
+            <div class="filter-control-row">
+              <select id="hostFilter" class="filter-select">
+                <option value="">All Hosts</option>
+              </select>
+            </div>
           </section>
 
           <!-- Action Buttons -->
@@ -165,7 +243,9 @@
           </section>
 
           <section class="advanced-search-card filter-group">
-            <p class="filter-section-label">Advanced search</p>
+            <div class="filter-section-header">
+              <p class="filter-section-label">Advanced search</p>
+            </div>
             <div id="advancedSearchRules" class="advanced-search-rules"></div>
             <div class="filter-actions">
               <button id="addSearchRuleBtn" class="btn-apply" type="button">Add rule</button>
@@ -187,7 +267,11 @@
             <p class="filter-section-label">Analyze source</p>
             <h2>Load one or more error log files</h2>
           </div>
-          <span class="upload-card-chip">Dark only</span>
+          <div class="theme-switcher upload-theme-switcher" role="group" aria-label="Color theme">
+            <button class="theme-option" type="button" data-theme-option="system">Auto</button>
+            <button class="theme-option" type="button" data-theme-option="light">Light</button>
+            <button class="theme-option" type="button" data-theme-option="dark">Dark</button>
+          </div>
         </div>
         <div class="upload-row">
           <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/error.log">
