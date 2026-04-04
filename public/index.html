@@ -23,12 +23,47 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <style>
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 8px 16px;
+      background: var(--color-background-secondary, #1e1e1e);
+      border-bottom: 1px solid var(--color-border-primary, #333);
+    }
+    .btn-setup-cloudmanager {
+      padding: 8px 16px;
+      background-color: #2196f3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-setup-cloudmanager:hover {
+      background-color: #1976d2;
+    }
+    .setup-icon {
+      font-size: 16px;
+    }
+  </style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
   <!-- Removed app-header for cleaner UI -->
 
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button id="setup-cloudmanager-btn" class="btn-setup-cloudmanager" title="Setup Cloud Manager Integration">
+      <span class="setup-icon">⚙️</span> Setup Cloud Manager
+    </button>
+  </div>
 
   <!-- Main Grid -->
   <div class="main-grid">

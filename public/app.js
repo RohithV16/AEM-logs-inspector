@@ -3924,3 +3924,28 @@ if (cmOutputDirectoryInput) {
     }
   });
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  const setupBtn = document.getElementById('setup-cloudmanager-btn');
+  if (setupBtn) {
+    setupBtn.addEventListener('click', () => {
+      const wizard = window.open(
+        '/pages/onboarding.html',
+        'cm-setup-wizard',
+        'width=750,height=850,left=100,top=100,scrollbars=yes'
+      );
+      if (!wizard) {
+        window.location.href = '/pages/onboarding.html';
+      }
+    });
+  }
+
+  window.addEventListener('message', (event) => {
+    if (event.data.action === 'setup-complete') {
+      location.reload();
+    }
+    if (event.data.action === 'open-settings') {
+      setSourceMode('cloudmanager');
+    }
+  });
+});
