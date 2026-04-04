@@ -118,6 +118,29 @@ Use the main Analyze source field for one or more error log paths.
 If you paste two or more error log paths into the main field, the dashboard merges them into the same results view.
 The multi-error flow uses the dedicated multi-error endpoints internally.
 
+## Cloud Manager Integration Setup
+
+To use Cloud Manager features for downloading and analyzing AEM logs:
+
+```bash
+npm run setup:cloudmanager
+```
+
+This runs an automated setup wizard that:
+- Checks prerequisites (Node.js, npm)
+- Installs AIO CLI and Cloud Manager plugin
+- Guides you through OAuth credential setup
+- Verifies connection to Cloud Manager API
+
+**First time?** See [Cloud Manager Onboarding Guide](docs/aio-cloudmanager-setup.md)
+
+### After Setup
+
+1. Start the dashboard: `npm run dashboard`
+2. Select "Cloud Manager" as your source
+3. Choose a program and environment
+4. Download and analyze logs!
+
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
