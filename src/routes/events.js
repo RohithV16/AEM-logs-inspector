@@ -7,6 +7,13 @@ const { buildCDNFilter, countAndExtractCDNEntries } = require('../services/cdnLo
 const { validateFilePath, sanitizeErrorMessage } = require('../utils/files');
 const { isSafeRegex } = require('../utils/regex');
 
+function withoutLevelFilter(filters = {}) {
+  const normalized = { ...(filters || {}) };
+  delete normalized.level;
+  delete normalized.severity;
+  return normalized;
+}
+
 /**
  * Creates the events router with endpoints for paginated log event retrieval
  * @returns {express.Router} Express router with events endpoints
@@ -80,9 +87,11 @@ function createEventsRouter() {
       }
 
       /* Build filter with support for level, logger, thread, package, exception, category */
-      const filter = buildEntryFilter({ level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath });
+      const activeFilters = { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath };
+      const filter = buildEntryFilter(activeFilters);
       const skip = (page - 1) * perPage;
-      const { entries: events, total, levelCounts } = await extractPage(targetPath, filter, skip, perPage);
+      const { entries: events, total } = await extractPage(targetPath, filter, skip, perPage);
+      const { levelCounts } = await extractPage(targetPath, withoutLevelFilter(activeFilters), 1, 0);
 
       /* Return paginated results with total count and level counts for filter chips */
       res.json({

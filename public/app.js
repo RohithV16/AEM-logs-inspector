@@ -36,11 +36,13 @@ const sidebarBody = document.getElementById('sidebarBody');
 const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
 const THEME_STORAGE_KEY = 'aem_themePreference';
+const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
   themePreference = 'system';
 }
+const RAW_EVENTS_PAGE_SIZE_OPTIONS = new Set([50, 100, 150, 200]);
 
 let timelineChart = null;
 let loggerChart = null;
@@ -1274,6 +1276,13 @@ function getActiveErrorFilterPayload() {
   return filters;
 }
 
+function getSidebarErrorFilterPayload() {
+  const filters = getActiveErrorFilterPayload();
+  delete filters.level;
+  delete filters.severity;
+  return filters;
+}
+
 function applyErrorFilterSidebarResponse(data) {
   if (!data || !data.success) return;
 
@@ -1310,8 +1319,8 @@ async function refreshErrorFilterOptions() {
 
   const seq = ++errorFilterRefreshSeq;
   const payload = isMultiError
-    ? { input: currentBatchInput, filters: getCurrentErrorFilterPayload() }
-    : { filePath, filters: getCurrentErrorFilterPayload() };
+    ? { input: currentBatchInput, filters: getSidebarErrorFilterPayload() }
+    : { filePath, filters: getSidebarErrorFilterPayload() };
 
   try {
     const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
@@ -1744,19 +1753,29 @@ tailBtn.addEventListener('click', () => {
 let rawEventsPage = 1;
 let rawEventsLevel = 'ALL';
 let rawEventsSearch = '';
+let rawEventsPerPage = Number(localStorage.getItem(RAW_EVENTS_PAGE_SIZE_STORAGE_KEY) || 50);
+if (!RAW_EVENTS_PAGE_SIZE_OPTIONS.has(rawEventsPerPage)) {
+  rawEventsPerPage = 50;
+}
 
 const levelFilters = document.getElementById('levelFilters');
 const rawSearchRow = document.getElementById('rawSearchRow');
 const rawEventsSection = document.getElementById('rawEvents');
 
-async function fetchRawEvents(page = 1) {
+function scrollRawEventsToTop() {
+  if (!rawEventsSection) return;
+  rawEventsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function fetchRawEvents(page = 1, options = {}) {
+  const { scrollToTop = false } = options;
   rawEventsPage = page;
 
   if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
     const body = {
       input: currentBatchInput,
       page,
-      perPage: 50,
+      perPage: rawEventsPerPage,
       filters: getActiveErrorFilterPayload(),
       search: rawEventsSearch
     };
@@ -1787,6 +1806,7 @@ async function fetchRawEvents(page = 1) {
       }
       applyErrorFilterSidebarResponse(data);
       renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || 'error');
+      if (scrollToTop) scrollRawEventsToTop();
     } catch (e) {
       showToast('Failed to load merged error events: ' + e.message, 'error');
     }
@@ -1802,7 +1822,7 @@ async function fetchRawEvents(page = 1) {
 
   const body = {
     page,
-    perPage: 50,
+    perPage: rawEventsPerPage,
     search: rawEventsSearch,
     filePath
   };
@@ -1872,6 +1892,7 @@ async function fetchRawEvents(page = 1) {
 
     rawEventsData = data.events;
     renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || currentLogType);
+    if (scrollToTop) scrollRawEventsToTop();
   } catch (e) {
     showToast('Failed to load events: ' + e.message, 'error');
   }
@@ -1891,10 +1912,23 @@ function extractedExceptionBadge(evt) {
 
 function renderRawEvents(events, total, page, perPage, logType = 'error') {
   const totalPages = Math.ceil(total / perPage);
-  const start = (page - 1) * perPage + 1;
+  const start = total > 0 ? ((page - 1) * perPage + 1) : 0;
   const end = Math.min(page * perPage, total);
+  const pageSizeOptions = [50, 100, 150, 200]
+    .map((size) => `<option value="${size}" ${Number(perPage) === size ? 'selected' : ''}>${size}</option>`)
+    .join('');
 
-  let html = `<div class="pagination-info">Showing ${start}-${end} of ${total} events</div>`;
+  let html = `
+    <div class="pagination-header">
+      <div class="pagination-info">Showing ${start}-${end} of ${total} events</div>
+      <label class="page-size-control">
+        <span>Per page</span>
+        <select id="rawEventsPerPageSelect" class="filter-select">
+          ${pageSizeOptions}
+        </select>
+      </label>
+    </div>
+  `;
 
   events.forEach((evt, i) => {
     if (logType === 'request') {
@@ -1908,24 +1942,31 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
 
   if (totalPages > 1) {
     html += '<div class="pagination">';
-    html += `<button ${page === 1 ? 'disabled' : ''} onclick="fetchRawEvents(${page - 1})">Prev</button>`;
+    html += `<button ${page === 1 ? 'disabled' : ''} onclick="changeRawEventsPage(${page - 1})">Prev</button>`;
 
     const maxVis = 5;
     let sp = Math.max(1, page - Math.floor(maxVis / 2));
     let ep = Math.min(totalPages, sp + maxVis - 1);
     if (ep - sp < maxVis - 1) sp = Math.max(1, ep - maxVis + 1);
 
-    if (sp > 1) { html += `<button onclick="fetchRawEvents(1)">1</button>`; if (sp > 2) html += '<span>...</span>'; }
+    if (sp > 1) { html += `<button onclick="changeRawEventsPage(1)">1</button>`; if (sp > 2) html += '<span>...</span>'; }
     for (let i = sp; i <= ep; i++) {
-      html += `<button class="${i === page ? 'active' : ''}" onclick="fetchRawEvents(${i})">${i}</button>`;
+      html += `<button class="${i === page ? 'active' : ''}" onclick="changeRawEventsPage(${i})">${i}</button>`;
     }
-    if (ep < totalPages) { if (ep < totalPages - 1) html += '<span>...</span>'; html += `<button onclick="fetchRawEvents(${totalPages})">${totalPages}</button>`; }
+    if (ep < totalPages) { if (ep < totalPages - 1) html += '<span>...</span>'; html += `<button onclick="changeRawEventsPage(${totalPages})">${totalPages}</button>`; }
 
-    html += `<button ${page === totalPages ? 'disabled' : ''} onclick="fetchRawEvents(${page + 1})">Next</button>`;
+    html += `<button ${page === totalPages ? 'disabled' : ''} onclick="changeRawEventsPage(${page + 1})">Next</button>`;
     html += '</div>';
   }
 
   rawEventsSection.innerHTML = html;
+
+  const pageSizeSelect = document.getElementById('rawEventsPerPageSelect');
+  if (pageSizeSelect) {
+    pageSizeSelect.addEventListener('change', (event) => {
+      changeRawEventsPerPage(event.target.value);
+    });
+  }
 
   rawEventsSection.querySelectorAll('.raw-event').forEach(item => {
     const header = item.querySelector('.raw-event-header');
@@ -1945,6 +1986,18 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
       });
     });
   });
+}
+
+function changeRawEventsPage(page) {
+  fetchRawEvents(page, { scrollToTop: true });
+}
+
+function changeRawEventsPerPage(nextValue) {
+  const parsed = Number(nextValue);
+  if (!RAW_EVENTS_PAGE_SIZE_OPTIONS.has(parsed) || parsed === rawEventsPerPage) return;
+  rawEventsPerPage = parsed;
+  localStorage.setItem(RAW_EVENTS_PAGE_SIZE_STORAGE_KEY, String(parsed));
+  fetchRawEvents(1, { scrollToTop: true });
 }
 
 function formatStackTrace(trace) {
@@ -2120,12 +2173,7 @@ document.querySelectorAll('.level-chip').forEach(chip => {
     });
     chip.classList.add('active');
     rawEventsLevel = chip.dataset.level;
-    if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
-      fetchRawEvents(1);
-    } else {
-      scheduleErrorFilterRefresh();
-      fetchRawEvents(1);
-    }
+    fetchRawEvents(1);
   });
 });
 
@@ -2151,6 +2199,8 @@ rawSearchInput.addEventListener('keydown', (e) => {
 });
 
 window.fetchRawEvents = fetchRawEvents;
+window.changeRawEventsPage = changeRawEventsPage;
+window.changeRawEventsPerPage = changeRawEventsPerPage;
 
 // Single-select searchable dropdown behavior
 function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId, onChangeCallback = null) {

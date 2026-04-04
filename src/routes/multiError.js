@@ -6,6 +6,13 @@ const {
 } = require('../services/multiErrorAnalysisService');
 const { sanitizeErrorMessage } = require('../utils/files');
 
+function withoutLevelFilter(filters = {}) {
+  const normalized = { ...(filters || {}) };
+  delete normalized.level;
+  delete normalized.severity;
+  return normalized;
+}
+
 function createMultiErrorRouter() {
   const router = express.Router();
 
@@ -127,12 +134,13 @@ function createMultiErrorRouter() {
         }
       });
 
-      const { entries: events, total, ...stats } = await countAndExtractMultiErrorEntries(
+      const { entries: events, total, levelCounts: _filteredLevelCounts, ...stats } = await countAndExtractMultiErrorEntries(
         input,
         mergedFilters,
         Number(page),
         Number(perPage)
       );
+      const baseCounts = await analyzeMergedErrorFilters(input, withoutLevelFilter(mergedFilters));
 
       return res.json({
         success: true,
@@ -142,6 +150,7 @@ function createMultiErrorRouter() {
         totalPages: Math.ceil(total / perPage),
         events,
         logType: 'multi-error',
+        levelCounts: baseCounts.levelCounts,
         loggerDist: stats.loggers,
         threadDist: stats.threads,
         ...stats
