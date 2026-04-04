@@ -5,3 +5,4 @@ node_modules/
 temp/
 .worktrees/
 test-results/
+coverage/
