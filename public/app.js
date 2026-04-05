@@ -22,6 +22,16 @@ const cmCacheStatus = document.getElementById('cmCacheStatus');
 const cmCommandPreview = document.getElementById('cmCommandPreview');
 const cmResultBadges = document.getElementById('cmResultBadges');
 const cmHistoryList = document.getElementById('cmHistoryList');
+const cmWorkspaceSummary = document.getElementById('cmWorkspaceSummary');
+const cmRunSummary = document.getElementById('cmRunSummary');
+const cmLogSearchInput = document.getElementById('cmLogSearchInput');
+const cmRecipeSuggestions = document.getElementById('cmRecipeSuggestions');
+const cmSelectionCart = document.getElementById('cmSelectionCart');
+const cmRecipeList = document.getElementById('cmRecipeList');
+const cmSaveRecipeBtn = document.getElementById('cmSaveRecipeBtn');
+const cmClearSelectedLogsBtn = document.getElementById('cmClearSelectedLogsBtn');
+const cmHistorySearchInput = document.getElementById('cmHistorySearchInput');
+const cmHistoryEnvironmentFilter = document.getElementById('cmHistoryEnvironmentFilter');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -64,6 +74,7 @@ const CM_OUTPUT_DIRECTORY_STORAGE_KEY = 'aem_cmOutputDirectory';
 const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
 const CM_HISTORY_STORAGE_KEY = 'aem_cmHistory';
 const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
+const CM_RECIPES_STORAGE_KEY = 'aem_cmRecipes';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -85,10 +96,13 @@ let currentBatchSummary = null;
 let cloudManagerProgramsLoaded = false;
 let cloudManagerCommandPreviewPending = false;
 let cloudManagerLogOptions = [];
+let cloudManagerPrograms = [];
+let cloudManagerEnvironments = [];
 let selectedCloudManagerLogs = [];
 let currentCloudManagerTier = '';
 let cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
 let currentCloudManagerRunContext = null;
+let cloudManagerHistoryFilters = { search: '', environment: '' };
 let selectedLoggers = [];
 let selectedPackages = [];
 let allLoggers = {};  // Store all loggers for cascading filter
@@ -210,6 +224,14 @@ function writeCloudManagerHistory(entries) {
   localStorage.setItem(CM_HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, 12)));
 }
 
+function readCloudManagerRecipes() {
+  return safeJsonParse(localStorage.getItem(CM_RECIPES_STORAGE_KEY), []);
+}
+
+function writeCloudManagerRecipes(entries) {
+  localStorage.setItem(CM_RECIPES_STORAGE_KEY, JSON.stringify(entries.slice(0, 16)));
+}
+
 function updateCloudManagerCacheStatus() {
   if (!cmCacheStatus) return;
   if (!cloudManagerLiveMetadata.programsAvailable) {
@@ -227,6 +249,199 @@ function resetCloudManagerSummary() {
   if (!cmDownloadSummary) return;
   cmDownloadSummary.innerHTML = '';
   cmDownloadSummary.classList.add('hidden');
+}
+
+function getCloudManagerProgramMeta(programId = cmProgramSelect?.value || '') {
+  return cloudManagerPrograms.find((program) => program.id === programId) || null;
+}
+
+function getCloudManagerEnvironmentMeta(environmentId = cmEnvironmentSelect?.value || '') {
+  return cloudManagerEnvironments.find((environment) => environment.id === environmentId) || null;
+}
+
+function getCloudManagerRecipeSuggestions() {
+  return [
+    {
+      id: 'author-errors',
+      label: 'Author Errors',
+      matcher: (entry) => /author/i.test(entry.service) && /(error|stack|exception)/i.test(entry.name)
+    },
+    {
+      id: 'publish-requests',
+      label: 'Publish Requests',
+      matcher: (entry) => /publish/i.test(entry.service) && /(request|access)/i.test(entry.name)
+    },
+    {
+      id: 'dispatcher-cdn',
+      label: 'Dispatcher + CDN',
+      matcher: (entry) => /(dispatcher|cdn)/i.test(entry.service) || /(dispatcher|cdn)/i.test(entry.name)
+    }
+  ];
+}
+
+function getCloudManagerEnvironmentLabel(entry = {}) {
+  return entry.environmentName || entry.environmentId || 'Unknown environment';
+}
+
+function createCloudManagerRunRecord(base = {}) {
+  const timestamp = base.timestamp || new Date().toISOString();
+  const downloadedFilesDetailed = Array.isArray(base.downloadedFilesDetailed) ? base.downloadedFilesDetailed : [];
+  const supportedFiles = downloadedFilesDetailed.filter((file) => file.supported !== false).length;
+  return {
+    runId: base.runId || `cm-${Date.parse(timestamp) || Date.now()}`,
+    timestamp,
+    source: 'cloudmanager',
+    programId: base.programId || '',
+    environmentId: base.environmentId || '',
+    programName: base.programName || '',
+    environmentName: base.environmentName || '',
+    environmentType: base.environmentType || '',
+    selections: Array.isArray(base.selections) ? base.selections : [],
+    tier: base.tier || '',
+    days: String(base.days || '1'),
+    outputDirectory: base.outputDirectory || '',
+    analyzedFile: base.analyzedFile || '',
+    commandPreview: base.commandPreview || '',
+    fileDates: Array.isArray(base.fileDates) ? base.fileDates : [],
+    downloadedFiles: Array.isArray(base.downloadedFiles) ? base.downloadedFiles : [],
+    downloadedFilesDetailed,
+    downloads: Array.isArray(base.downloads) ? base.downloads : [],
+    summary: {
+      fileCount: downloadedFilesDetailed.length || (Array.isArray(base.downloadedFiles) ? base.downloadedFiles.length : 0),
+      supportedFiles,
+      selectionCount: Array.isArray(base.selections) ? base.selections.length : 0
+    }
+  };
+}
+
+function renderCloudManagerWorkspaceSummary() {
+  if (!cmWorkspaceSummary) return;
+  const program = getCloudManagerProgramMeta();
+  const environment = getCloudManagerEnvironmentMeta();
+  const selectionCount = selectedCloudManagerLogs.length;
+  const days = cmDaysInput?.value.trim() || '1';
+  const freshness = cloudManagerLiveMetadata.lastLoadedAt
+    ? new Date(cloudManagerLiveMetadata.lastLoadedAt).toLocaleString()
+    : 'Waiting for live data';
+
+  cmWorkspaceSummary.innerHTML = `
+    <div class="cloudmanager-summary-card">
+      <span>Program</span>
+      <strong>${escapeHtml(program?.name || 'Choose a program')}</strong>
+      <small>${escapeHtml(program?.id || 'Live from aio')}</small>
+    </div>
+    <div class="cloudmanager-summary-card">
+      <span>Environment</span>
+      <strong>${escapeHtml(environment?.name || 'Choose an environment')}</strong>
+      <small>${escapeHtml(environment?.type || 'No environment selected')}</small>
+    </div>
+    <div class="cloudmanager-summary-card">
+      <span>Selection</span>
+      <strong>${selectionCount} log${selectionCount === 1 ? '' : 's'}</strong>
+      <small>${escapeHtml(days)} day window</small>
+    </div>
+    <div class="cloudmanager-summary-card">
+      <span>Freshness</span>
+      <strong>${cloudManagerLiveMetadata.programsAvailable ? 'Live metadata' : 'Not loaded yet'}</strong>
+      <small>${escapeHtml(freshness)}</small>
+    </div>
+  `;
+}
+
+function renderCloudManagerRunSummary() {
+  if (!cmRunSummary) return;
+  const outputDirectory = cmOutputDirectoryInput?.value.trim() || 'No folder selected';
+  const selections = selectedCloudManagerLogs.length
+    ? selectedCloudManagerLogs.map((entry) => `${entry.service}/${entry.logName}`).join(', ')
+    : 'No logs selected';
+  cmRunSummary.innerHTML = `
+    <div class="cloudmanager-run-card">
+      <div>
+        <span>Scope</span>
+        <strong>${escapeHtml(cmProgramSelect?.selectedOptions?.[0]?.textContent || 'Program')} → ${escapeHtml(cmEnvironmentSelect?.selectedOptions?.[0]?.textContent || 'Environment')}</strong>
+      </div>
+      <div>
+        <span>Window</span>
+        <strong>${escapeHtml(cmDaysInput?.value.trim() || '1')} day${String(cmDaysInput?.value.trim() || '1') === '1' ? '' : 's'}</strong>
+      </div>
+      <div>
+        <span>Folder</span>
+        <strong>${escapeHtml(outputDirectory)}</strong>
+      </div>
+      <div class="cloudmanager-run-card-wide">
+        <span>Log cart</span>
+        <strong>${escapeHtml(selections)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function renderCloudManagerSelectionCart() {
+  if (!cmSelectionCart) return;
+  if (!selectedCloudManagerLogs.length) {
+    cmSelectionCart.innerHTML = '<div class="cloudmanager-hint">Select logs to build a reusable cart.</div>';
+    return;
+  }
+
+  cmSelectionCart.innerHTML = selectedCloudManagerLogs.map((entry) => {
+    const key = `${entry.service}::${entry.logName}`;
+    return `
+      <button class="cloudmanager-cart-chip" type="button" data-log-key="${escapeHtml(key)}">
+        ${escapeHtml(entry.service)} / ${escapeHtml(entry.logName)}
+        <span aria-hidden="true">×</span>
+      </button>
+    `;
+  }).join('');
+}
+
+function renderCloudManagerRecipeSuggestions() {
+  if (!cmRecipeSuggestions) return;
+  const suggestions = getCloudManagerRecipeSuggestions();
+  cmRecipeSuggestions.innerHTML = suggestions.map((recipe) => `
+    <button class="cloudmanager-suggestion-chip" type="button" data-recipe-suggestion="${recipe.id}">
+      ${escapeHtml(recipe.label)}
+    </button>
+  `).join('');
+}
+
+function renderCloudManagerHistoryFilters() {
+  if (!cmHistoryEnvironmentFilter) return;
+  const history = readCloudManagerHistory();
+  const values = [...new Set(history.map((entry) => `${getCloudManagerEnvironmentLabel(entry)}::${entry.environmentId || ''}`))].sort();
+  const current = cloudManagerHistoryFilters.environment;
+  cmHistoryEnvironmentFilter.innerHTML = '<option value="">All environments</option>';
+  values.forEach((value) => {
+    const [label, id] = value.split('::');
+    const option = document.createElement('option');
+    option.value = id || label;
+    option.textContent = label;
+    cmHistoryEnvironmentFilter.appendChild(option);
+  });
+  cmHistoryEnvironmentFilter.value = current;
+}
+
+function renderCloudManagerRecipeList() {
+  if (!cmRecipeList) return;
+  const recipes = readCloudManagerRecipes();
+  if (!recipes.length) {
+    cmRecipeList.innerHTML = '<div class="cloudmanager-hint">No saved recipes yet. Build a log cart and save it.</div>';
+    return;
+  }
+
+  cmRecipeList.innerHTML = recipes.map((entry, index) => `
+    <div class="cloudmanager-history-item" data-recipe-index="${index}">
+      <div>
+        <strong>${escapeHtml(entry.name || 'Cloud Manager recipe')}</strong>
+        <span>${escapeHtml(entry.programName || entry.programId || 'No program')}</span><br>
+        <span>${escapeHtml(entry.environmentName || entry.environmentId || 'No environment')}</span><br>
+        <span>${escapeHtml((entry.selections || []).map((item) => `${item.service}/${item.logName}`).join(', '))}</span>
+      </div>
+      <div class="cloudmanager-history-actions">
+        <button class="upload-btn secondary cm-recipe-apply" type="button">Apply</button>
+        <button class="upload-btn secondary cm-recipe-delete" type="button">Delete</button>
+      </div>
+    </div>
+  `).join('');
 }
 
 function setCloudManagerStatus(message = '') {
@@ -279,7 +494,7 @@ function toggleCloudManagerAdvancedSettings() {
 
 function restoreCloudManagerTabState() {
   const savedTab = localStorage.getItem('aem_cmActiveTab');
-  const nextTab = savedTab === 'history' ? 'history' : 'download';
+  const nextTab = savedTab === 'history' || savedTab === 'recipes' ? savedTab : 'download';
   if (savedTab === 'setup') {
     localStorage.setItem('aem_cmActiveTab', nextTab);
   }
@@ -319,28 +534,70 @@ function renderCloudManagerSummary(data) {
     : '';
   const selectedFile = currentCloudManagerRunContext?.analyzedFile || data.analyzedFile || '';
   const fileItems = files.length
-    ? `<div class="cloudmanager-download-files">${files.map((file) => {
-        const when = file.extractedDate || file.modifiedAt?.slice(0, 10) || '';
-        const label = [file.service, file.logName].filter(Boolean).join(' / ');
-        const isSelected = file.filePath === selectedFile;
-        const supportLabel = file.supported === false
-          ? `Unsupported: ${file.unsupportedReason || 'Unsupported log format'}`
-          : file.logFamily
-            ? `Detected: ${file.logFamily}`
-            : '';
-        return `
-          <div class="cloudmanager-download-file ${isSelected ? 'active' : ''}">
-            <div>
-              <strong>${escapeHtml(file.fileName || file.filePath)}</strong>
-              ${label ? `<span>${escapeHtml(label)}</span>` : ''}
-              ${when ? `<span>${escapeHtml(when)}</span>` : ''}
-              ${supportLabel ? `<span>${escapeHtml(supportLabel)}</span>` : ''}
-              <code>${escapeHtml(file.filePath)}</code>
-            </div>
-            <button class="upload-btn secondary cm-download-analyze" type="button" data-file-path="${escapeHtml(file.filePath)}" ${file.supported === false ? 'disabled' : ''}>Analyze</button>
-          </div>
-        `;
-      }).join('')}</div>`
+    ? `
+      <div class="cloudmanager-overview-grid">
+        <div class="cloudmanager-overview-card">
+          <span>Files Downloaded</span>
+          <strong>${files.length}</strong>
+        </div>
+        <div class="cloudmanager-overview-card">
+          <span>Supported</span>
+          <strong>${files.filter((file) => file.supported !== false).length}</strong>
+        </div>
+        <div class="cloudmanager-overview-card">
+          <span>Analyzed File</span>
+          <strong>${escapeHtml((selectedFile.split('/').pop()) || 'None')}</strong>
+        </div>
+        <div class="cloudmanager-overview-card">
+          <span>Selections</span>
+          <strong>${(currentCloudManagerRunContext?.selections || []).length}</strong>
+        </div>
+      </div>
+      <div class="cloudmanager-next-actions">
+        <button class="cloudmanager-action-chip" type="button" data-cm-action="exceptions">View top exceptions</button>
+        <button class="cloudmanager-action-chip" type="button" data-cm-action="requests">Show 5xx / failed requests</button>
+        <button class="cloudmanager-action-chip" type="button" data-cm-action="raw">Open raw events</button>
+      </div>
+      <div class="cloudmanager-download-table-wrap">
+        <table class="cloudmanager-download-table">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Service</th>
+              <th>Detected</th>
+              <th>Date</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${files.map((file) => {
+              const when = file.extractedDate || file.modifiedAt?.slice(0, 10) || '';
+              const label = [file.service, file.logName].filter(Boolean).join(' / ');
+              const isSelected = file.filePath === selectedFile;
+              const supportLabel = file.supported === false
+                ? (file.unsupportedReason || 'Unsupported')
+                : (file.logFamily || file.logType || 'Ready');
+              return `
+                <tr class="${isSelected ? 'active' : ''}">
+                  <td>
+                    <strong>${escapeHtml(file.fileName || file.filePath)}</strong>
+                    <code>${escapeHtml(file.filePath)}</code>
+                  </td>
+                  <td>${escapeHtml(label || file.service || 'Unknown')}</td>
+                  <td>${escapeHtml(file.logFamily || file.logType || 'Unknown')}</td>
+                  <td>${escapeHtml(when || 'Unknown')}</td>
+                  <td>${escapeHtml(supportLabel)}</td>
+                  <td>
+                    <button class="upload-btn secondary cm-download-analyze" type="button" data-file-path="${escapeHtml(file.filePath)}" ${file.supported === false ? 'disabled' : ''}>Analyze</button>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `
     : '<div>No downloaded files were returned.</div>';
 
   cmDownloadSummary.innerHTML = `
@@ -379,22 +636,40 @@ function renderCloudManagerResultBadges(data = {}, context = {}) {
 
 function renderCloudManagerHistory() {
   if (!cmHistoryList) return;
-  const entries = readCloudManagerHistory();
+  renderCloudManagerHistoryFilters();
+  const entries = readCloudManagerHistory().filter((entry) => {
+    const search = cloudManagerHistoryFilters.search.trim().toLowerCase();
+    const environmentFilter = cloudManagerHistoryFilters.environment;
+    const haystack = [
+      entry.programName,
+      entry.programId,
+      entry.environmentName,
+      entry.environmentId,
+      entry.analyzedFile,
+      ...(entry.selections || []).map((item) => `${item.service}/${item.logName}`)
+    ].join(' ').toLowerCase();
+    const matchesSearch = !search || haystack.includes(search);
+    const matchesEnvironment = !environmentFilter || entry.environmentId === environmentFilter || getCloudManagerEnvironmentLabel(entry) === environmentFilter;
+    return matchesSearch && matchesEnvironment;
+  });
   if (!entries.length) {
-    cmHistoryList.innerHTML = '<div class="cloudmanager-hint">No Cloud Manager runs yet.</div>';
+    cmHistoryList.innerHTML = '<div class="cloudmanager-hint">No Cloud Manager runs match the current filters.</div>';
     return;
   }
 
-  cmHistoryList.innerHTML = entries.map((entry, index) => `
-    <div class="cloudmanager-history-item" data-history-index="${index}">
+  cmHistoryList.innerHTML = entries.map((entry) => `
+    <div class="cloudmanager-history-item" data-history-index="${escapeHtml(entry.runId || '')}">
       <div>
         <strong>${escapeHtml(entry.programName || entry.programId || 'Cloud Manager run')}</strong>
-        <span>${escapeHtml(entry.environmentName || entry.environmentId || '')}</span><br>
+        <span>${escapeHtml(entry.environmentName || entry.environmentId || '')}${entry.environmentType ? ` • ${escapeHtml(entry.environmentType)}` : ''}</span><br>
+        <span>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</span><br>
         <span>${escapeHtml((entry.selections || []).map(item => `${item.service}/${item.logName}`).join(', '))}</span><br>
+        <span>${escapeHtml(`${entry.summary?.fileCount || 0} files • ${entry.summary?.supportedFiles || 0} supported`)}</span><br>
         <code>${escapeHtml(entry.analyzedFile || '')}</code>
       </div>
       <div class="cloudmanager-history-actions">
-        <button class="upload-btn secondary cm-history-reopen" type="button">Reopen</button>
+        <button class="upload-btn secondary cm-history-reopen" type="button" ${entry.analyzedFile ? '' : 'disabled'}>Reopen</button>
+        <button class="upload-btn secondary cm-history-reuse" type="button">Reuse</button>
       </div>
     </div>
   `).join('');
@@ -402,7 +677,8 @@ function renderCloudManagerHistory() {
 
 function pushCloudManagerHistoryEntry(entry) {
   const history = readCloudManagerHistory();
-  history.unshift(entry);
+  const normalized = createCloudManagerRunRecord(entry);
+  history.unshift(normalized);
   writeCloudManagerHistory(history);
   renderCloudManagerHistory();
 }
@@ -474,6 +750,13 @@ function updateCloudManagerHintState() {
   }
 }
 
+function syncCloudManagerWorkspace() {
+  renderCloudManagerWorkspaceSummary();
+  renderCloudManagerRunSummary();
+  renderCloudManagerSelectionCart();
+  renderCloudManagerRecipeSuggestions();
+}
+
 function normalizeCloudManagerTier(service = '') {
   const value = String(service || '').toLowerCase();
   if (value.includes('author')) return 'author';
@@ -533,7 +816,18 @@ function renderCloudManagerLogOptions() {
   }
 
   const selectedKeys = new Set(selectedCloudManagerLogs.map((entry) => `${entry.service}::${entry.logName}`));
-  cmLogOptionList.innerHTML = activeGroup.entries.map((entry) => {
+  const searchValue = String(cmLogSearchInput?.value || '').trim().toLowerCase();
+  const visibleEntries = activeGroup.entries.filter((entry) => {
+    if (!searchValue) return true;
+    return `${entry.service} ${entry.name}`.toLowerCase().includes(searchValue);
+  });
+  if (!visibleEntries.length) {
+    cmLogOptionList.innerHTML = '<div class="cloudmanager-hint">No logs match the current search.</div>';
+    cmLogOptionList.classList.remove('disabled');
+    syncCloudManagerWorkspace();
+    return;
+  }
+  cmLogOptionList.innerHTML = visibleEntries.map((entry) => {
     const key = `${entry.service}::${entry.name}`;
     const checked = selectedKeys.has(key) ? 'checked' : '';
     return `
@@ -547,6 +841,7 @@ function renderCloudManagerLogOptions() {
     `;
   }).join('');
   cmLogOptionList.classList.remove('disabled');
+  syncCloudManagerWorkspace();
 }
 
 function getSelectedCloudManagerLogOptions() {
@@ -650,6 +945,7 @@ function restoreCloudManagerSelections() {
   if (cmDaysInput && saved.days) cmDaysInput.value = String(saved.days);
   if (cmOutputDirectoryInput && saved.outputDirectory) cmOutputDirectoryInput.value = saved.outputDirectory;
   currentCloudManagerTier = saved.tier || '';
+  syncCloudManagerWorkspace();
 }
 
 function setSourceMode(mode, { persist = true } = {}) {
@@ -686,6 +982,7 @@ function setSourceMode(mode, { persist = true } = {}) {
     updateCloudManagerCacheStatus();
     updateCloudManagerActionState();
     renderCloudManagerHistory();
+    renderCloudManagerRecipeList();
     ensureCloudManagerProgramsLoaded();
   }
 }
@@ -708,6 +1005,7 @@ async function ensureCloudManagerProgramsLoaded() {
       lastLoadedAt: data.loadedAt || new Date().toISOString(),
       programsAvailable: Array.isArray(data.programs) && data.programs.length > 0
     };
+    cloudManagerPrograms = data.programs || [];
     updateCloudManagerCacheStatus();
     cmProgramSelect.innerHTML = '<option value="">Select program</option>';
     (data.programs || []).forEach((program) => {
@@ -725,8 +1023,10 @@ async function ensureCloudManagerProgramsLoaded() {
     cloudManagerProgramsLoaded = true;
     setCloudManagerStatus((data.programs || []).length ? '' : 'No Cloud Manager programs were returned.');
     updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
   } catch (error) {
     cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
+    cloudManagerPrograms = [];
     updateCloudManagerCacheStatus();
     cmProgramSelect.innerHTML = hadExistingOptions
       ? previousMarkup
@@ -753,6 +1053,7 @@ async function loadCloudManagerEnvironments(programId) {
     }
 
     cloudManagerLiveMetadata.lastLoadedAt = data.loadedAt || cloudManagerLiveMetadata.lastLoadedAt;
+    cloudManagerEnvironments = data.environments || [];
     updateCloudManagerCacheStatus();
     cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
     (data.environments || []).forEach((environment) => {
@@ -770,7 +1071,9 @@ async function loadCloudManagerEnvironments(programId) {
       await loadCloudManagerLogOptions(programId, saved.environmentId);
     }
     setCloudManagerStatus((data.environments || []).length ? '' : 'No environments were returned for the selected program.');
+    syncCloudManagerWorkspace();
   } catch (error) {
+    cloudManagerEnvironments = [];
     cmEnvironmentSelect.innerHTML = '<option value="">Unable to load environments</option>';
     setCloudManagerStatus('');
     showError(error.message);
@@ -804,6 +1107,7 @@ async function loadCloudManagerLogOptions(programId, environmentId) {
     setCloudManagerStatus((data.logOptions || []).length ? '' : 'No downloadable log options were returned for the selected environment.');
     await refreshCloudManagerCommandPreview();
     updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
   } catch (error) {
     cloudManagerLogOptions = [];
     selectedCloudManagerLogs = [];
@@ -901,6 +1205,7 @@ if (cmLogOptionList) {
     persistCloudManagerSelectionState();
     await refreshCloudManagerCommandPreview();
     updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
   });
 }
 
@@ -915,11 +1220,26 @@ if (cmTierTabs) {
   });
 }
 
+if (cmLogSearchInput) {
+  cmLogSearchInput.addEventListener('input', () => {
+    renderCloudManagerLogOptions();
+  });
+}
+
+if (cmRecipeSuggestions) {
+  cmRecipeSuggestions.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-recipe-suggestion]');
+    if (!button) return;
+    applyCloudManagerRecipeSuggestion(button.dataset.recipeSuggestion || '');
+  });
+}
+
 if (cmDaysInput) {
   cmDaysInput.addEventListener('input', async () => {
     persistCloudManagerSelectionState();
     await refreshCloudManagerCommandPreview();
     updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
   });
 }
 
@@ -928,6 +1248,7 @@ if (cmOutputDirectoryInput) {
     persistCloudManagerSelectionState();
     await refreshCloudManagerCommandPreview();
     updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
   });
 
   cmOutputDirectoryInput.addEventListener('blur', async () => {
@@ -947,6 +1268,72 @@ document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
 const advancedSettingsToggle = document.querySelector('.cloudmanager-advanced-settings-toggle');
 if (advancedSettingsToggle) {
   advancedSettingsToggle.addEventListener('click', toggleCloudManagerAdvancedSettings);
+}
+
+if (cmSelectionCart) {
+  cmSelectionCart.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-log-key]');
+    if (!button) return;
+    selectedCloudManagerLogs = selectedCloudManagerLogs.filter((entry) => `${entry.service}::${entry.logName}` !== button.dataset.logKey);
+    persistCloudManagerSelectionState();
+    renderCloudManagerLogOptions();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  });
+}
+
+if (cmClearSelectedLogsBtn) {
+  cmClearSelectedLogsBtn.addEventListener('click', async () => {
+    selectedCloudManagerLogs = [];
+    persistCloudManagerSelectionState();
+    renderCloudManagerLogOptions();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  });
+}
+
+if (cmSaveRecipeBtn) {
+  cmSaveRecipeBtn.addEventListener('click', saveCloudManagerRecipe);
+}
+
+if (cmRecipeList) {
+  cmRecipeList.addEventListener('click', async (event) => {
+    const item = event.target.closest('[data-recipe-index]');
+    if (!item) return;
+    const index = Number(item.dataset.recipeIndex);
+    const recipes = readCloudManagerRecipes();
+    const recipe = recipes[index];
+    if (!recipe) return;
+
+    if (event.target.closest('.cm-recipe-delete')) {
+      recipes.splice(index, 1);
+      writeCloudManagerRecipes(recipes);
+      renderCloudManagerRecipeList();
+      showToast('Recipe deleted', 'success');
+      return;
+    }
+
+    if (event.target.closest('.cm-recipe-apply')) {
+      await applyCloudManagerRecipe(recipe);
+      showToast(`Applied recipe "${recipe.name || 'Cloud Manager recipe'}"`, 'success');
+    }
+  });
+}
+
+if (cmHistorySearchInput) {
+  cmHistorySearchInput.addEventListener('input', () => {
+    cloudManagerHistoryFilters.search = cmHistorySearchInput.value || '';
+    renderCloudManagerHistory();
+  });
+}
+
+if (cmHistoryEnvironmentFilter) {
+  cmHistoryEnvironmentFilter.addEventListener('change', () => {
+    cloudManagerHistoryFilters.environment = cmHistoryEnvironmentFilter.value || '';
+    renderCloudManagerHistory();
+  });
 }
 
 document.addEventListener('keydown', (event) => {
@@ -1150,6 +1537,90 @@ function parseMultiErrorInput(value) {
     .split(/[\n,]+/)
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function applyCloudManagerSelections(selections = []) {
+  const allowedKeys = new Set(cloudManagerLogOptions.map((entry) => `${entry.service}::${entry.name}`));
+  selectedCloudManagerLogs = (selections || []).filter((entry) => {
+    return allowedKeys.has(`${entry.service}::${entry.logName}`);
+  });
+  persistCloudManagerSelectionState();
+  renderCloudManagerLogOptions();
+  void refreshCloudManagerCommandPreview();
+  updateCloudManagerActionState();
+}
+
+function applyCloudManagerRecipeSuggestion(suggestionId) {
+  const suggestion = getCloudManagerRecipeSuggestions().find((entry) => entry.id === suggestionId);
+  if (!suggestion) return;
+  const matched = cloudManagerLogOptions
+    .filter((entry) => suggestion.matcher(entry))
+    .map((entry) => ({ service: entry.service, logName: entry.name }));
+  if (!matched.length) {
+    showToast('No matching logs were found for that suggested recipe', 'warning');
+    return;
+  }
+  applyCloudManagerSelections(matched);
+  showToast(`Applied ${suggestion.label}`, 'success');
+}
+
+async function applyCloudManagerRecipe(entry = {}) {
+  if (!entry.programId || !entry.environmentId) {
+    showToast('This recipe is missing its program or environment context', 'warning');
+    return;
+  }
+
+  setSourceMode('cloudmanager');
+  if (cmDaysInput) cmDaysInput.value = String(entry.days || '1');
+  if (cmOutputDirectoryInput && entry.outputDirectory) {
+    cmOutputDirectoryInput.value = entry.outputDirectory;
+  }
+  currentCloudManagerTier = entry.tier || currentCloudManagerTier;
+  if (cmProgramSelect) {
+    cmProgramSelect.value = entry.programId;
+    await loadCloudManagerEnvironments(entry.programId);
+  }
+  if (cmEnvironmentSelect) {
+    cmEnvironmentSelect.value = entry.environmentId;
+    await loadCloudManagerLogOptions(entry.programId, entry.environmentId);
+  }
+  applyCloudManagerSelections(entry.selections || []);
+  persistCloudManagerSelectionState();
+  await refreshCloudManagerCommandPreview();
+  updateCloudManagerActionState();
+  renderCloudManagerRecipeList();
+  renderCloudManagerHistory();
+  syncCloudManagerWorkspace();
+}
+
+function saveCloudManagerRecipe() {
+  const state = getCloudManagerSelectionState();
+  if (!state.programId || !state.environmentId || !state.selections.length) {
+    showToast('Build a Cloud Manager selection before saving a recipe', 'warning');
+    return;
+  }
+
+  const name = prompt('Recipe name:');
+  if (!name) return;
+  const trimmedName = String(name).trim();
+  if (!trimmedName) return;
+
+  const recipes = readCloudManagerRecipes();
+  recipes.unshift({
+    name: trimmedName,
+    programId: state.programId,
+    environmentId: state.environmentId,
+    programName: cmProgramSelect?.selectedOptions?.[0]?.textContent || '',
+    environmentName: cmEnvironmentSelect?.selectedOptions?.[0]?.textContent || '',
+    selections: state.selections,
+    tier: state.tier,
+    days: state.days,
+    outputDirectory: state.outputDirectory,
+    savedAt: new Date().toISOString()
+  });
+  writeCloudManagerRecipes(recipes);
+  renderCloudManagerRecipeList();
+  showToast(`Saved recipe "${trimmedName}"`, 'success');
 }
 
 /* ============================================================
@@ -1562,12 +2033,15 @@ async function analyzeCloudManagerSelection(options) {
     cmProgressText.textContent = 'Downloaded. Rendering analysis...';
     setCloudManagerStatus('Rendering analysis results from the downloaded log...');
     const labels = buildCloudManagerSelectionLabels();
+    const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
     currentCloudManagerRunContext = {
       source: 'cloudmanager',
+      runId: `cm-${Date.now()}`,
       programId: options.programId,
       environmentId: options.environmentId,
       programName: labels.programName,
       environmentName: labels.environmentName,
+      environmentType: environmentMeta?.type || '',
       selections: options.selections || [],
       days: options.days,
       outputDirectory: data.outputDirectory,
@@ -3139,13 +3613,26 @@ window.changeRawEventsPerPage = changeRawEventsPerPage;
 
 if (cmHistoryList) {
   cmHistoryList.addEventListener('click', async (event) => {
+    const item = event.target.closest('[data-history-index]');
+    if (!item) return;
+    const runId = item?.dataset.historyIndex;
+    const history = readCloudManagerHistory();
+    const entry = history.find((historyEntry) => historyEntry.runId === runId);
+    if (!entry) return;
+
+    if (event.target.closest('.cm-history-reuse')) {
+      await applyCloudManagerRecipe(entry);
+      switchCloudManagerTab('download');
+      showToast('Loaded the saved run selection into the workspace', 'success');
+      return;
+    }
+
     const button = event.target.closest('.cm-history-reopen');
     if (!button) return;
-    const item = button.closest('[data-history-index]');
-    const index = Number(item?.dataset.historyIndex);
-    const history = readCloudManagerHistory();
-    const entry = history[index];
-    if (!entry || !entry.analyzedFile) return;
+    if (!entry.analyzedFile) {
+      showToast('This run has no analyzed file to reopen', 'warning');
+      return;
+    }
 
     currentCloudManagerRunContext = entry;
     renderCloudManagerResultBadges({}, entry);
@@ -3170,6 +3657,28 @@ if (cmDownloadSummary) {
 
     const runContext = currentCloudManagerRunContext || {};
     await analyzeSavedCloudManagerFile(filePath, runContext);
+  });
+}
+
+if (cmDownloadSummary) {
+  cmDownloadSummary.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-cm-action]');
+    if (!button) return;
+    const action = button.dataset.cmAction;
+    if (action === 'raw') {
+      document.getElementById('rawSearchInput')?.focus();
+      return;
+    }
+    if (action === 'exceptions') {
+      document.getElementById('exceptionFilter')?.focus();
+      return;
+    }
+    if (action === 'requests') {
+      const statusFilter = document.getElementById(currentLogType === 'cdn' ? 'cdnStatusFilter' : 'statusFilter');
+      if (statusFilter) {
+        statusFilter.focus();
+      }
+    }
   });
 }
 
@@ -3381,11 +3890,13 @@ applySidebarState();
 restoreCloudManagerSelections();
 restoreCloudManagerTabState();
 renderCloudManagerHistory();
+renderCloudManagerRecipeList();
 updateCloudManagerHintState();
 renderCloudManagerLogOptions();
 setSourceMode(currentSourceMode, { persist: false });
 refreshCloudManagerCommandPreview();
 updateCloudManagerActionState();
+syncCloudManagerWorkspace();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');

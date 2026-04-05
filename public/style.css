@@ -853,6 +853,143 @@ body.sidebar-collapsed .main-grid {
   gap: 0.75rem;
 }
 
+.cloudmanager-workspace-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+}
+
+.cloudmanager-summary-card,
+.cloudmanager-overview-card {
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-tertiary);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-primary-soft) 42%, transparent), transparent 72%),
+    var(--color-background-primary);
+}
+
+.cloudmanager-summary-card span,
+.cloudmanager-overview-card span,
+.cloudmanager-run-card span {
+  display: block;
+  margin-bottom: 0.28rem;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.cloudmanager-summary-card strong,
+.cloudmanager-overview-card strong,
+.cloudmanager-run-card strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.cloudmanager-summary-card small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.cloudmanager-stage {
+  margin-bottom: 0.9rem;
+  padding: 0.95rem;
+  border-radius: 18px;
+  border: 1px solid var(--color-border-tertiary);
+  background: color-mix(in srgb, var(--color-background-secondary) 74%, var(--color-background-primary));
+}
+
+.cloudmanager-stage-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.cloudmanager-stage-heading h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.cloudmanager-log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.cloudmanager-log-toolbar .filter-input {
+  min-width: 240px;
+  flex: 1 1 240px;
+}
+
+.cloudmanager-suggestion-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.cloudmanager-suggestion-chip,
+.cloudmanager-action-chip,
+.cloudmanager-cart-chip {
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-primary);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cloudmanager-selection-cart {
+  min-height: 94px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-tertiary);
+}
+
+.cloudmanager-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.cloudmanager-run-summary {
+  border-radius: 14px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-tertiary);
+  padding: 0.8rem;
+}
+
+.cloudmanager-run-card {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.cloudmanager-run-card > div {
+  grid-column: span 4;
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-tertiary);
+}
+
+.cloudmanager-run-card-wide {
+  grid-column: span 12 !important;
+}
+
 /* ============================================================
    Cloud Manager Tabs
    ============================================================ */
@@ -1314,6 +1451,49 @@ body.sidebar-collapsed .main-grid {
   margin-top: 0.8rem;
 }
 
+.cloudmanager-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0.8rem 0;
+}
+
+.cloudmanager-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.8rem;
+}
+
+.cloudmanager-download-table-wrap {
+  overflow-x: auto;
+}
+
+.cloudmanager-download-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cloudmanager-download-table th,
+.cloudmanager-download-table td {
+  padding: 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-tertiary);
+  vertical-align: top;
+}
+
+.cloudmanager-download-table tr.active {
+  background: color-mix(in srgb, var(--color-primary-soft) 54%, transparent);
+}
+
+.cloudmanager-download-table code {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
 .cloudmanager-download-file {
   display: flex;
   align-items: flex-start;
@@ -1350,6 +1530,13 @@ body.sidebar-collapsed .main-grid {
   padding: 0.75rem;
 }
 
+.cloudmanager-history-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 0.7rem;
+  margin: 0.9rem 0 0.8rem;
+}
+
 .cloudmanager-history-item {
   display: flex;
   justify-content: space-between;
@@ -1376,6 +1563,7 @@ body.sidebar-collapsed .main-grid {
   display: flex;
   gap: 0.45rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .upload-btn {
@@ -2108,9 +2296,19 @@ body.sidebar-collapsed .main-grid {
   .cloudmanager-grid {
     grid-template-columns: 1fr;
   }
+  .cloudmanager-workspace-summary,
+  .cloudmanager-overview-grid,
+  .cloudmanager-history-filters,
+  .cloudmanager-run-card {
+    grid-template-columns: 1fr;
+  }
   .cloudmanager-field,
   .cloudmanager-field-wide {
     grid-column: auto;
+  }
+  .cloudmanager-run-card > div,
+  .cloudmanager-run-card-wide {
+    grid-column: auto !important;
   }
   .cloudmanager-setup-dialog {
     padding: 1rem;

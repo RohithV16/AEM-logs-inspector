@@ -290,6 +290,7 @@
           <!-- Tab Navigation -->
           <div class="cloudmanager-tabs">
             <button class="cloudmanager-tab active" data-tab="download" type="button">Download & Analyze</button>
+            <button class="cloudmanager-tab" data-tab="recipes" type="button">Recipes</button>
             <button class="cloudmanager-tab" data-tab="history" type="button">History</button>
           </div>
 
@@ -297,51 +298,74 @@
           <div class="cloudmanager-tab-pane active" id="cmTab-download">
             <div id="cmStatusBanner" class="cloudmanager-status hidden" aria-live="polite"></div>
             <div id="cmCacheStatus" class="cloudmanager-cache-status">Programs and environments load live from aio when Cloud Manager is selected.</div>
+            <div id="cmWorkspaceSummary" class="cloudmanager-workspace-summary" aria-live="polite"></div>
             
-            <!-- Main Selection Grid -->
-            <div class="cloudmanager-grid">
-              <label class="cloudmanager-field">
-                <span>Program</span>
-                <select id="cmProgramSelect" class="filter-select">
-                  <option value="">Select program</option>
-                </select>
-                <small id="cmProgramHint" class="cloudmanager-hint">Programs load live from aio.</small>
-              </label>
-              <label class="cloudmanager-field">
-                <span>Environment</span>
-                <select id="cmEnvironmentSelect" class="filter-select" disabled>
-                  <option value="">Select environment</option>
-                </select>
-                <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
-              </label>
-              <div class="cloudmanager-field cloudmanager-field-wide">
-                <span>Tier / Logs</span>
-                <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
-                <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
-                <small id="cmLogHint" class="cloudmanager-hint">Choose an environment to load downloadable logs.</small>
+            <div class="cloudmanager-stage">
+              <div class="cloudmanager-stage-heading">
+                <p class="filter-section-label">Step 1</p>
+                <h3>Scope</h3>
+              </div>
+              <div class="cloudmanager-grid">
+                <label class="cloudmanager-field">
+                  <span>Program</span>
+                  <select id="cmProgramSelect" class="filter-select">
+                    <option value="">Select program</option>
+                  </select>
+                  <small id="cmProgramHint" class="cloudmanager-hint">Programs load live from aio.</small>
+                </label>
+                <label class="cloudmanager-field">
+                  <span>Environment</span>
+                  <select id="cmEnvironmentSelect" class="filter-select" disabled>
+                    <option value="">Select environment</option>
+                  </select>
+                  <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
+                </label>
+                <div class="cloudmanager-field">
+                  <span>Date Window</span>
+                  <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
+                  <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
+                </div>
+                <label class="cloudmanager-field cloudmanager-field-wide">
+                  <span>Download folder</span>
+                  <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="/path/to/local/folder">
+                  <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Provide a writable local folder for Cloud Manager downloads.</small>
+                </label>
               </div>
             </div>
 
-            <!-- Advanced Settings Accordion -->
-            <div class="cloudmanager-advanced-settings">
-              <div class="cloudmanager-advanced-settings-toggle">
-                <span>Advanced Settings</span>
-                <span class="cloudmanager-advanced-settings-chevron">▼</span>
+            <div class="cloudmanager-stage">
+              <div class="cloudmanager-stage-heading">
+                <p class="filter-section-label">Step 2</p>
+                <h3>Logs</h3>
               </div>
-              <div class="cloudmanager-advanced-settings-content">
-                <div class="cloudmanager-grid">
-                  <label class="cloudmanager-field">
-                    <span>Days</span>
-                    <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
-                    <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
-                  </label>
-                  <label class="cloudmanager-field cloudmanager-field-wide">
-                    <span>Download folder</span>
-                    <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="/path/to/local/folder">
-                    <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Provide a writable local folder for Cloud Manager downloads.</small>
-                  </label>
+              <div class="cloudmanager-grid">
+                <div class="cloudmanager-field cloudmanager-field-wide">
+                  <span>Tier / Logs</span>
+                  <div class="cloudmanager-log-toolbar">
+                    <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
+                    <input type="text" id="cmLogSearchInput" class="filter-input" placeholder="Search service or log name">
+                  </div>
+                  <div id="cmRecipeSuggestions" class="cloudmanager-suggestion-row"></div>
+                  <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
+                  <small id="cmLogHint" class="cloudmanager-hint">Choose an environment to load downloadable logs.</small>
+                </div>
+                <div class="cloudmanager-field">
+                  <span>Selection cart</span>
+                  <div id="cmSelectionCart" class="cloudmanager-selection-cart"></div>
+                  <div class="cloudmanager-inline-actions">
+                    <button id="cmClearSelectedLogsBtn" class="upload-btn secondary" type="button">Clear logs</button>
+                    <button id="cmSaveRecipeBtn" class="upload-btn secondary" type="button">Save recipe</button>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            <div class="cloudmanager-stage">
+              <div class="cloudmanager-stage-heading">
+                <p class="filter-section-label">Step 3</p>
+                <h3>Run</h3>
+              </div>
+              <div id="cmRunSummary" class="cloudmanager-run-summary"></div>
             </div>
 
             <div id="cmCommandPreview" class="cloudmanager-command-preview hidden" aria-live="polite"></div>
@@ -354,6 +378,16 @@
             <p class="upload-hint">Requires `aio` plus `@adobe/aio-cli-plugin-cloudmanager` already installed and authenticated outside this app.</p>
           </div>
 
+          <div class="cloudmanager-tab-pane" id="cmTab-recipes">
+            <div class="cloudmanager-history-header">
+              <div>
+                <p class="filter-section-label">Saved Recipes</p>
+                <h3>Reusable download setups</h3>
+              </div>
+            </div>
+            <div id="cmRecipeList" class="cloudmanager-history-list"></div>
+          </div>
+
           <!-- History Tab -->
           <div class="cloudmanager-tab-pane" id="cmTab-history">
             <div class="cloudmanager-history-header">
@@ -361,6 +395,12 @@
                 <p class="filter-section-label">Cloud Manager History</p>
                 <h3>Recent runs</h3>
               </div>
+            </div>
+            <div class="cloudmanager-history-filters">
+              <input type="text" id="cmHistorySearchInput" class="filter-input" placeholder="Search program, environment, log, or file">
+              <select id="cmHistoryEnvironmentFilter" class="filter-select">
+                <option value="">All environments</option>
+              </select>
             </div>
             <div id="cmHistoryList" class="cloudmanager-history-list"></div>
           </div>
