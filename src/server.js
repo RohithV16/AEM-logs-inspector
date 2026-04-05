@@ -16,7 +16,6 @@ const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
 const createCloudManagerRouter = require('./routes/cloudManager');
-const createOnboardingRouter = require('./routes/onboarding');
 
 /* === Express App Setup === */
 const app = express();
@@ -35,7 +34,6 @@ app.use('/api', createFilterRouter());
 app.use('/api', createEventsRouter());
 app.use('/api', createExportRouter());
 app.use('/api', createCloudManagerRouter());
-app.use('/api', createOnboardingRouter());
 
 let httpServer = null;
 let wss = null;

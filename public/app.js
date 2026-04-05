@@ -14,9 +14,6 @@ const cmProgramHint = document.getElementById('cmProgramHint');
 const cmEnvironmentHint = document.getElementById('cmEnvironmentHint');
 const cmLogHint = document.getElementById('cmLogHint');
 const cmOutputDirectoryHint = document.getElementById('cmOutputDirectoryHint');
-const cmCheckBtn = document.getElementById('cmCheckBtn');
-const cmRefreshCacheBtn = document.getElementById('cmRefreshCacheBtn');
-const cmTestConnectionBtn = document.getElementById('cmTestConnectionBtn');
 const cmAnalyzeBtn = document.getElementById('cmAnalyzeBtn');
 const cmProgressText = document.getElementById('cmProgressText');
 const cmDownloadSummary = document.getElementById('cmDownloadSummary');
@@ -25,19 +22,6 @@ const cmCacheStatus = document.getElementById('cmCacheStatus');
 const cmCommandPreview = document.getElementById('cmCommandPreview');
 const cmResultBadges = document.getElementById('cmResultBadges');
 const cmHistoryList = document.getElementById('cmHistoryList');
-const cmSetupBtn = document.getElementById('cmSetupBtn');
-const cmSetupModeButtons = Array.from(document.querySelectorAll('[data-setup-mode]'));
-const cmSetupStatus = document.getElementById('cmSetupStatus');
-const cmSetupBrowserPanel = document.getElementById('cmSetupBrowserPanel');
-const cmSetupOauthPanel = document.getElementById('cmSetupOauthPanel');
-const cmSetupOrgId = document.getElementById('cmSetupOrgId');
-const cmSetupBrowserProgramId = document.getElementById('cmSetupBrowserProgramId');
-const cmSetupOauthProgramId = document.getElementById('cmSetupOauthProgramId');
-const cmSetupOauthFile = document.getElementById('cmSetupOauthFile');
-const cmSetupOauthJson = document.getElementById('cmSetupOauthJson');
-const cmSetupPreview = document.getElementById('cmSetupPreview');
-const cmSetupResult = document.getElementById('cmSetupResult');
-const cmSetupRunBtn = document.getElementById('cmSetupRunBtn');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -80,7 +64,6 @@ const CM_OUTPUT_DIRECTORY_STORAGE_KEY = 'aem_cmOutputDirectory';
 const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
 const CM_HISTORY_STORAGE_KEY = 'aem_cmHistory';
 const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
-const CM_ONBOARDING_DISMISSED_KEY = 'aem_cmOnboardingDismissed';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -100,15 +83,12 @@ let currentAnalyzedFilePath = '';
 let currentBatchInput = null;
 let currentBatchSummary = null;
 let cloudManagerProgramsLoaded = false;
-let cloudManagerPrerequisiteState = null;
 let cloudManagerCommandPreviewPending = false;
 let cloudManagerLogOptions = [];
 let selectedCloudManagerLogs = [];
 let currentCloudManagerTier = '';
-let cloudManagerCacheMetadata = { refreshedAt: '', present: false };
+let cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
 let currentCloudManagerRunContext = null;
-let currentCloudManagerSetupMode = 'browser';
-let cloudManagerSetupAutoPrompted = false;
 let selectedLoggers = [];
 let selectedPackages = [];
 let allLoggers = {};  // Store all loggers for cascading filter
@@ -232,15 +212,15 @@ function writeCloudManagerHistory(entries) {
 
 function updateCloudManagerCacheStatus() {
   if (!cmCacheStatus) return;
-  if (!cloudManagerCacheMetadata.present) {
-    cmCacheStatus.textContent = 'Cache missing. Open Cloud Manager Setup to configure aio and create the first cache.';
+  if (!cloudManagerLiveMetadata.programsAvailable) {
+    cmCacheStatus.textContent = 'Programs load live from aio. Select Cloud Manager to fetch available programs.';
     return;
   }
 
-  const refreshedAt = cloudManagerCacheMetadata.refreshedAt
-    ? new Date(cloudManagerCacheMetadata.refreshedAt).toLocaleString()
+  const refreshedAt = cloudManagerLiveMetadata.lastLoadedAt
+    ? new Date(cloudManagerLiveMetadata.lastLoadedAt).toLocaleString()
     : 'unknown';
-  cmCacheStatus.textContent = `Cache ready. Last refreshed: ${refreshedAt}.`;
+  cmCacheStatus.textContent = `Programs loaded live from aio. Last updated: ${refreshedAt}.`;
 }
 
 function resetCloudManagerSummary() {
@@ -260,250 +240,6 @@ function setCloudManagerStatus(message = '') {
 
   cmStatusBanner.textContent = text;
   cmStatusBanner.classList.remove('hidden');
-}
-
-function setCloudManagerSetupStatus(message = '') {
-  if (!cmSetupStatus) return;
-  const text = String(message || '').trim();
-  if (!text) {
-    cmSetupStatus.textContent = '';
-    cmSetupStatus.classList.add('hidden');
-    return;
-  }
-
-  cmSetupStatus.textContent = text;
-  cmSetupStatus.classList.remove('hidden');
-}
-
-function getCloudManagerSetupPreviewPath() {
-  return '~/.aem-log-analyzer/setup/cloudmanager-oauth-config.json';
-}
-
-function extractCloudManagerOauthJsonText(value = '') {
-  const text = String(value || '').trim().replace(/^\uFEFF/, '');
-  if (!text) return '';
-
-  const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fencedMatch) {
-    return fencedMatch[1].trim();
-  }
-
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace >= firstBrace) {
-    return text.slice(firstBrace, lastBrace + 1).trim();
-  }
-
-  return text;
-}
-
-function parseCloudManagerOauthJsonInput(rawText = '') {
-  const text = extractCloudManagerOauthJsonText(rawText);
-  if (!text) {
-    return { ok: false, error: 'Paste or load the Adobe OAuth JSON first.' };
-  }
-
-  try {
-    const parsed = JSON.parse(text);
-    const clientSecrets = Array.isArray(parsed.CLIENT_SECRETS)
-      ? parsed.CLIENT_SECRETS
-      : Array.isArray(parsed.client_secrets)
-        ? parsed.client_secrets
-        : [];
-    const scopes = Array.isArray(parsed.SCOPES)
-      ? parsed.SCOPES
-      : Array.isArray(parsed.scopes)
-        ? parsed.scopes
-        : [];
-
-    const normalized = {
-      orgId: String(parsed.ORG_ID || parsed.ims_org_id || parsed.IMS_ORG_ID || '').trim(),
-      clientId: String(parsed.CLIENT_ID || parsed.client_id || '').trim(),
-      clientSecret: String(clientSecrets[0] || parsed.CLIENT_SECRET || parsed.client_secret || '').trim(),
-      technicalAccountId: String(parsed.TECHNICAL_ACCOUNT_ID || parsed.technical_account_id || '').trim(),
-      technicalAccountEmail: String(parsed.TECHNICAL_ACCOUNT_EMAIL || parsed.technical_account_email || '').trim(),
-      scopes: scopes.map(scope => String(scope || '').trim()).filter(Boolean)
-    };
-
-    return { ok: true, raw: parsed, normalized };
-  } catch (error) {
-    return { ok: false, error: `Invalid OAuth JSON: ${error.message}` };
-  }
-}
-
-function getCloudManagerSetupPayload() {
-  if (currentCloudManagerSetupMode === 'oauth') {
-    return {
-      mode: 'oauth',
-      oauthConfigJson: cmSetupOauthJson?.value || '',
-      programId: cmSetupOauthProgramId?.value.trim() || ''
-    };
-  }
-
-  return {
-    mode: 'browser',
-    orgId: cmSetupOrgId?.value.trim() || '',
-    programId: cmSetupBrowserProgramId?.value.trim() || ''
-  };
-}
-
-function renderCloudManagerSetupMode() {
-  const isOauth = currentCloudManagerSetupMode === 'oauth';
-  cmSetupModeButtons.forEach((button) => {
-    const active = button.dataset.setupMode === currentCloudManagerSetupMode;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-selected', String(active));
-  });
-  if (cmSetupBrowserPanel) cmSetupBrowserPanel.classList.toggle('hidden', isOauth);
-  if (cmSetupOauthPanel) cmSetupOauthPanel.classList.toggle('hidden', !isOauth);
-}
-
-function renderCloudManagerSetupPreview() {
-  if (!cmSetupPreview) return;
-  const payload = getCloudManagerSetupPayload();
-  const blocks = [];
-
-  if (payload.mode === 'browser') {
-    const commands = [
-      {
-        label: 'Authenticate with Adobe',
-        note: 'This opens the Adobe browser login flow using your own identity.',
-        command: 'aio auth:login'
-      },
-      payload.orgId
-        ? {
-            label: 'Set Cloud Manager org globally',
-            note: 'Stores the Cloud Manager org in your global aio config, not in this repo.',
-            command: `aio config:set cloudmanager_orgid ${escapeHtml(payload.orgId)} --global`
-          }
-        : null,
-      payload.programId
-        ? {
-            label: 'Set default program globally',
-            note: 'Optional, but useful for default CLI context.',
-            command: `aio config:set cloudmanager_programid ${escapeHtml(payload.programId)} --global`
-          }
-        : null
-    ].filter(Boolean);
-
-    blocks.push(`
-      <div class="cloudmanager-setup-preview-block">
-        <strong>What the app will run</strong>
-        <div class="cloudmanager-setup-steps">
-          ${commands.map((step) => `
-            <div class="cloudmanager-setup-preview-item">
-              <strong>${step.label}</strong>
-              <span>${step.note}</span>
-              <code>${step.command}</code>
-            </div>
-          `).join('')}
-          <div class="cloudmanager-setup-preview-item">
-            <strong>Create the first Cloud Manager cache</strong>
-            <span>After setup succeeds, the app immediately loads programs and environments into the user-profile cache.</span>
-          </div>
-        </div>
-      </div>
-    `);
-  } else {
-    const parsed = parseCloudManagerOauthJsonInput(payload.oauthConfigJson);
-    if (!parsed.ok) {
-      cmSetupPreview.innerHTML = `
-        <div class="cloudmanager-setup-preview-block">
-          <strong>OAuth JSON required</strong>
-          <div class="cloudmanager-setup-preview-item">
-            <span>${escapeHtml(parsed.error)}</span>
-          </div>
-        </div>
-      `;
-      return;
-    }
-
-    const configPreview = {
-      client_id: parsed.normalized.clientId || 'value from Adobe I/O Console',
-      client_secrets: [parsed.normalized.clientSecret ? '********' : 'client secret'],
-      technical_account_id: parsed.normalized.technicalAccountId || 'technical account id',
-      technical_account_email: parsed.normalized.technicalAccountEmail || 'technical account email',
-      ims_org_id: parsed.normalized.orgId || 'ims org id',
-      scopes: parsed.normalized.scopes.length ? parsed.normalized.scopes : ['openid', 'AdobeID', 'read_organizations', 'additional_info.projectedProductContext', 'read_pc.dma_aem_ams'],
-      oauth_enabled: true
-    };
-    const commands = [
-      `aio config:set ims.contexts.aio-cli-plugin-cloudmanager ${getCloudManagerSetupPreviewPath()} --file --json --global`,
-      parsed.normalized.orgId ? `aio config:set cloudmanager_orgid ${escapeHtml(parsed.normalized.orgId)} --global` : null,
-      payload.programId ? `aio config:set cloudmanager_programid ${escapeHtml(payload.programId)} --global` : null
-    ].filter(Boolean);
-
-    blocks.push(`
-      <div class="cloudmanager-setup-preview-block">
-        <strong>OAuth config written under your profile</strong>
-        <div class="cloudmanager-setup-preview-item">
-          <span>Path</span>
-          <code>${getCloudManagerSetupPreviewPath()}</code>
-        </div>
-        <div class="cloudmanager-setup-preview-item">
-          <span>Config JSON</span>
-          <code>${escapeHtml(JSON.stringify(configPreview, null, 2))}</code>
-        </div>
-      </div>
-    `);
-    blocks.push(`
-      <div class="cloudmanager-setup-preview-block">
-        <strong>What the app will run</strong>
-        <div class="cloudmanager-setup-steps">
-          ${commands.map((command) => `
-            <div class="cloudmanager-setup-preview-item">
-              <strong>Apply global aio config</strong>
-              <code>${command}</code>
-            </div>
-          `).join('')}
-          <div class="cloudmanager-setup-preview-item">
-            <strong>Create the first Cloud Manager cache</strong>
-            <span>After setup succeeds, the app immediately loads programs and environments into the user-profile cache.</span>
-          </div>
-        </div>
-      </div>
-    `);
-  }
-
-  cmSetupPreview.innerHTML = blocks.join('');
-}
-
-function resetCloudManagerSetupResult() {
-  if (!cmSetupResult) return;
-  cmSetupResult.innerHTML = '';
-  cmSetupResult.classList.add('hidden');
-}
-
-function renderCloudManagerSetupResult(result = {}, errorMessage = '') {
-  if (!cmSetupResult) return;
-  const steps = Array.isArray(result.steps) ? result.steps : [];
-  const summary = errorMessage
-    ? `<div><strong>${escapeHtml(errorMessage)}</strong></div>`
-    : `<div><strong>Cloud Manager setup completed.</strong></div>`;
-  const items = steps.length
-    ? `<div class="cloudmanager-setup-steps">${steps.map((step) => `
-        <div class="cloudmanager-setup-step ${step.ok ? 'ok' : 'fail'}">
-          <strong>${escapeHtml(step.label || step.id || 'Step')}</strong>
-          ${step.command ? `<code>${escapeHtml(step.command)}</code>` : ''}
-          <span>${escapeHtml(step.detail || '')}</span>
-        </div>
-      `).join('')}</div>`
-    : '<div>No setup steps were returned.</div>';
-
-  cmSetupResult.innerHTML = `${summary}${items}`;
-  cmSetupResult.classList.remove('hidden');
-}
-
-function openCloudManagerSetupPopover() {
-  if (!cloudManagerPanel) return;
-  // Switch to Setup tab
-  switchCloudManagerTab('setup');
-}
-
-function closeCloudManagerSetupPopover() {
-  if (!cloudManagerPanel) return;
-  // Switch back to Download & Analyze tab
-  switchCloudManagerTab('download');
 }
 
 function switchCloudManagerTab(tabName) {
@@ -542,8 +278,12 @@ function toggleCloudManagerAdvancedSettings() {
 }
 
 function restoreCloudManagerTabState() {
-  const savedTab = localStorage.getItem('aem_cmActiveTab') || 'download';
-  switchCloudManagerTab(savedTab);
+  const savedTab = localStorage.getItem('aem_cmActiveTab');
+  const nextTab = savedTab === 'history' ? 'history' : 'download';
+  if (savedTab === 'setup') {
+    localStorage.setItem('aem_cmActiveTab', nextTab);
+  }
+  switchCloudManagerTab(nextTab);
   
   const expandedState = localStorage.getItem('aem_cmAdvancedExpanded');
   if (expandedState === 'true') {
@@ -552,15 +292,6 @@ function restoreCloudManagerTabState() {
       accordion.classList.add('expanded');
     }
   }
-}
-
-function maybeOpenCloudManagerSetupPopover() {
-  if (currentSourceMode !== 'cloudmanager' || cloudManagerCacheMetadata.present || cloudManagerSetupAutoPrompted) {
-    return;
-  }
-
-  cloudManagerSetupAutoPrompted = true;
-  openCloudManagerSetupPopover();
 }
 
 function renderCloudManagerSummary(data) {
@@ -618,24 +349,6 @@ function renderCloudManagerSummary(data) {
     <div>Saved under: <code>${escapeHtml(data.outputDirectory || '')}</code></div>
     ${dates ? `<div>Extracted dates: <span>${escapeHtml(dates)}</span></div>` : ''}
     ${fileItems}
-  `;
-  cmDownloadSummary.classList.remove('hidden');
-}
-
-function renderCloudManagerPrerequisiteSummary(data) {
-  if (!cmDownloadSummary) return;
-  const checks = Array.isArray(data.checks) ? data.checks : [];
-  const items = checks.map((check) => {
-    const state = check.ok ? 'PASS' : 'FAIL';
-    const remediation = check.remediationCommand
-      ? `<div><code>${escapeHtml(check.remediationCommand)}</code></div>`
-      : '';
-    return `<div><strong>${escapeHtml(check.label)}:</strong> ${state} <span>${escapeHtml(check.detail || '')}</span>${remediation}</div>`;
-  }).join('');
-
-  cmDownloadSummary.innerHTML = `
-    <div><strong>${escapeHtml(data.summary || 'Cloud Manager prerequisite check complete.')}</strong></div>
-    ${items || '<div>No prerequisite details returned.</div>'}
   `;
   cmDownloadSummary.classList.remove('hidden');
 }
@@ -745,14 +458,14 @@ function buildCloudManagerSelectionLabels() {
 
 function updateCloudManagerHintState() {
   if (cmProgramHint) {
-    cmProgramHint.textContent = cloudManagerCacheMetadata.present
-      ? 'Choose a program from the cached metadata.'
-      : 'Open setup first, then let the app create the cache.';
+    cmProgramHint.textContent = cloudManagerLiveMetadata.programsAvailable
+      ? 'Choose a program from the live Cloud Manager list.'
+      : 'Cloud Manager programs will load live from aio.';
   }
   if (cmEnvironmentHint) {
     cmEnvironmentHint.textContent = cmProgramSelect?.value
-      ? 'Choose an environment from the cached program data.'
-      : 'Choose a cached program to load environments.';
+      ? 'Choose an environment returned for the selected program.'
+      : 'Choose a program to load environments.';
   }
   if (cmLogHint) {
     cmLogHint.textContent = cmEnvironmentSelect?.value
@@ -922,13 +635,12 @@ async function validateCloudManagerOutputDirectory() {
 }
 
 function updateCloudManagerActionState(outputDirectoryValid) {
-  const hasSelection = Boolean(cloudManagerCacheMetadata.present && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
+  const hasSelection = Boolean(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
   const outputReady = typeof outputDirectoryValid === 'boolean'
     ? outputDirectoryValid
     : Boolean(cmOutputDirectoryInput?.value.trim());
-  const prerequisitesPassed = Boolean(cloudManagerPrerequisiteState?.ok);
   if (cmAnalyzeBtn) {
-    cmAnalyzeBtn.disabled = !(prerequisitesPassed && hasSelection && outputReady);
+    cmAnalyzeBtn.disabled = !(hasSelection && outputReady);
   }
   updateCloudManagerHintState();
 }
@@ -975,7 +687,6 @@ function setSourceMode(mode, { persist = true } = {}) {
     updateCloudManagerActionState();
     renderCloudManagerHistory();
     ensureCloudManagerProgramsLoaded();
-    maybeOpenCloudManagerSetupPopover();
   }
 }
 
@@ -984,7 +695,7 @@ async function ensureCloudManagerProgramsLoaded() {
   const hadExistingOptions = cmProgramSelect.options.length > 1;
   cmProgramSelect.disabled = true;
   cmProgramSelect.innerHTML = '<option value="">Loading programs...</option>';
-  setCloudManagerStatus('Loading cached Cloud Manager programs...');
+  setCloudManagerStatus('Loading Cloud Manager programs...');
 
   try {
     const response = await fetch('/api/cloudmanager/programs');
@@ -993,9 +704,9 @@ async function ensureCloudManagerProgramsLoaded() {
       throw new Error(data.error || 'Failed to load Cloud Manager programs');
     }
 
-    cloudManagerCacheMetadata = {
-      refreshedAt: data.refreshedAt || '',
-      present: Array.isArray(data.programs) && data.programs.length > 0
+    cloudManagerLiveMetadata = {
+      lastLoadedAt: data.loadedAt || new Date().toISOString(),
+      programsAvailable: Array.isArray(data.programs) && data.programs.length > 0
     };
     updateCloudManagerCacheStatus();
     cmProgramSelect.innerHTML = '<option value="">Select program</option>';
@@ -1012,20 +723,17 @@ async function ensureCloudManagerProgramsLoaded() {
     }
     cmProgramSelect.disabled = false;
     cloudManagerProgramsLoaded = true;
-    setCloudManagerStatus((data.programs || []).length ? '' : 'Cloud Manager cache is empty. Refresh cache to load programs.');
+    setCloudManagerStatus((data.programs || []).length ? '' : 'No Cloud Manager programs were returned.');
     updateCloudManagerActionState();
   } catch (error) {
-    cloudManagerCacheMetadata = { refreshedAt: '', present: false };
+    cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
     updateCloudManagerCacheStatus();
     cmProgramSelect.innerHTML = hadExistingOptions
       ? previousMarkup
-      : '<option value="">Refresh cache to load programs</option>';
+      : '<option value="">Unable to load programs</option>';
     cmProgramSelect.disabled = false;
-    setCloudManagerStatus(/cache is empty/i.test(error.message) ? error.message : '');
-    if (!/cache is empty/i.test(error.message)) {
-      showError(error.message);
-    }
-    maybeOpenCloudManagerSetupPopover();
+    setCloudManagerStatus('');
+    showError(error.message);
   }
 }
 
@@ -1044,7 +752,7 @@ async function loadCloudManagerEnvironments(programId) {
       throw new Error(data.error || 'Failed to load environments');
     }
 
-    cloudManagerCacheMetadata.refreshedAt = data.refreshedAt || cloudManagerCacheMetadata.refreshedAt;
+    cloudManagerLiveMetadata.lastLoadedAt = data.loadedAt || cloudManagerLiveMetadata.lastLoadedAt;
     updateCloudManagerCacheStatus();
     cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
     (data.environments || []).forEach((environment) => {
@@ -1063,11 +771,9 @@ async function loadCloudManagerEnvironments(programId) {
     }
     setCloudManagerStatus((data.environments || []).length ? '' : 'No environments were returned for the selected program.');
   } catch (error) {
-    cmEnvironmentSelect.innerHTML = '<option value="">No cached environments available</option>';
-    setCloudManagerStatus(/cache is empty/i.test(error.message) ? error.message : '');
-    if (!/cache is empty/i.test(error.message)) {
-      showError(error.message);
-    }
+    cmEnvironmentSelect.innerHTML = '<option value="">Unable to load environments</option>';
+    setCloudManagerStatus('');
+    showError(error.message);
   }
 }
 
@@ -1229,105 +935,6 @@ if (cmOutputDirectoryInput) {
   });
 }
 
-if (cmSetupBtn) {
-  cmSetupBtn.addEventListener('click', () => {
-    openCloudManagerSetupPopover();
-  });
-}
-
-cmSetupModeButtons.forEach((button) => {
-  button.addEventListener('click', () => {
-    currentCloudManagerSetupMode = button.dataset.setupMode === 'oauth' ? 'oauth' : 'browser';
-    renderCloudManagerSetupMode();
-    renderCloudManagerSetupPreview();
-    resetCloudManagerSetupResult();
-  });
-});
-
-[
-  cmSetupOrgId,
-  cmSetupBrowserProgramId,
-  cmSetupOauthProgramId,
-  cmSetupOauthJson
-].filter(Boolean).forEach((input) => {
-  input.addEventListener('input', () => {
-    renderCloudManagerSetupPreview();
-    resetCloudManagerSetupResult();
-  });
-});
-
-if (cmSetupOauthFile) {
-  cmSetupOauthFile.addEventListener('change', async (event) => {
-    const file = event.target.files && event.target.files[0];
-    if (!file || !cmSetupOauthJson) return;
-
-    try {
-      const text = await file.text();
-      cmSetupOauthJson.value = text;
-      renderCloudManagerSetupPreview();
-      resetCloudManagerSetupResult();
-      setCloudManagerSetupStatus(`Loaded OAuth JSON from ${file.name}.`);
-    } catch (error) {
-      setCloudManagerSetupStatus(`Failed to read OAuth JSON file: ${error.message}`);
-    }
-  });
-}
-
-if (cmSetupRunBtn) {
-  cmSetupRunBtn.addEventListener('click', async () => {
-    const payload = getCloudManagerSetupPayload();
-    cmSetupRunBtn.disabled = true;
-    cmSetupRunBtn.textContent = 'Running Setup...';
-    setCloudManagerSetupStatus('Applying aio configuration and creating the Cloud Manager cache...');
-    resetCloudManagerSetupResult();
-
-    try {
-      const response = await fetch('/api/cloudmanager/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-
-      if (!data.success) {
-        renderCloudManagerSetupResult(data, data.error || 'Cloud Manager setup failed.');
-        setCloudManagerSetupStatus(data.error || 'Cloud Manager setup failed.');
-        return;
-      }
-
-      renderCloudManagerSetupResult(data, '');
-      cloudManagerPrerequisiteState = data.prerequisites || cloudManagerPrerequisiteState;
-      cloudManagerCacheMetadata = {
-        refreshedAt: data.cache?.refreshedAt || '',
-        present: Boolean(data.cache?.totalPrograms)
-      };
-      cloudManagerProgramsLoaded = false;
-      updateCloudManagerCacheStatus();
-      renderCloudManagerPrerequisiteSummary({
-        summary: data.cache?.environmentErrors?.length
-          ? `Cloud Manager setup completed. Cache created with ${data.cache.totalPrograms || 0} program(s), but some environment lists could not be loaded yet.`
-          : 'Cloud Manager setup completed and the cache was created.',
-        checks: data.steps || []
-      });
-      await ensureCloudManagerProgramsLoaded();
-      setCloudManagerStatus(data.cache?.environmentErrors?.length
-        ? `Cloud Manager setup completed. Cache created with ${data.cache?.totalPrograms || 0} program(s), but ${data.cache.environmentErrors.length} program(s) have no cached environments yet.`
-        : `Cloud Manager setup complete. Cache created with ${data.cache?.totalPrograms || 0} program(s).`);
-      showToast(data.cache?.environmentErrors?.length
-        ? 'Cloud Manager setup completed with cache warnings'
-        : 'Cloud Manager setup completed', data.cache?.environmentErrors?.length ? 'warning' : 'success');
-      closeCloudManagerSetupPopover();
-    } catch (error) {
-      renderCloudManagerSetupResult({}, error.message);
-      setCloudManagerSetupStatus(error.message);
-    } finally {
-      cmSetupRunBtn.disabled = false;
-      cmSetupRunBtn.textContent = 'Run Setup & Create Cache';
-      updateCloudManagerActionState();
-    }
-  });
-}
-
 /* === Cloud Manager Tab Navigation === */
 document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
   tabBtn.addEventListener('click', () => {
@@ -1343,7 +950,7 @@ if (advancedSettingsToggle) {
 }
 
 document.addEventListener('keydown', (event) => {
-  // Escape key can close setup tab in future if needed
+  void event;
 });
 
 function isSidebarCollapseSupported() {
@@ -1827,110 +1434,6 @@ if (cmAnalyzeBtn) {
       days,
       outputDirectory
     });
-  });
-}
-
-if (cmCheckBtn) {
-  cmCheckBtn.addEventListener('click', async () => {
-    cmCheckBtn.disabled = true;
-    cmCheckBtn.textContent = 'Checking...';
-    setCloudManagerStatus('Checking aio, Cloud Manager plugin, and access...');
-    resetCloudManagerSummary();
-
-    try {
-      const response = await fetch('/api/cloudmanager/check-prerequisites');
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to check Cloud Manager prerequisites');
-      }
-
-      cloudManagerPrerequisiteState = data;
-      renderCloudManagerPrerequisiteSummary(data);
-      setCloudManagerStatus(data.ok
-        ? 'Cloud Manager prerequisites look good.'
-        : 'Cloud Manager prerequisite check found issues.');
-      if (!data.ok) {
-        maybeOpenCloudManagerSetupPopover();
-      }
-      updateCloudManagerActionState();
-    } catch (error) {
-      setCloudManagerStatus('');
-      showError(error.message);
-    } finally {
-      cmCheckBtn.disabled = false;
-      cmCheckBtn.textContent = 'Check Prerequisites';
-    }
-  });
-}
-
-if (cmRefreshCacheBtn) {
-  cmRefreshCacheBtn.addEventListener('click', async () => {
-    cmRefreshCacheBtn.disabled = true;
-    cmRefreshCacheBtn.textContent = 'Refreshing...';
-    setCloudManagerStatus('Refreshing Cloud Manager cache from aio...');
-
-    try {
-      const response = await fetch('/api/cloudmanager/refresh-cache', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to refresh Cloud Manager cache');
-      }
-
-      cloudManagerCacheMetadata = {
-        refreshedAt: data.refreshedAt || '',
-        present: Boolean(data.totalPrograms)
-      };
-      cloudManagerProgramsLoaded = false;
-      updateCloudManagerCacheStatus();
-      await ensureCloudManagerProgramsLoaded();
-      setCloudManagerStatus(data.environmentErrors?.length
-        ? `Cloud Manager cache refreshed. Loaded ${data.totalPrograms || 0} program(s), but ${data.environmentErrors.length} program(s) could not load environments.`
-        : `Cloud Manager cache refreshed. Loaded ${data.totalPrograms || 0} program(s).`);
-    } catch (error) {
-      showError(error.message);
-      setCloudManagerStatus('');
-    } finally {
-      cmRefreshCacheBtn.disabled = false;
-      cmRefreshCacheBtn.textContent = 'Refresh Cache';
-    }
-  });
-}
-
-if (cmTestConnectionBtn) {
-  cmTestConnectionBtn.addEventListener('click', async () => {
-    cmTestConnectionBtn.disabled = true;
-    cmTestConnectionBtn.textContent = 'Testing...';
-    setCloudManagerStatus('Testing Cloud Manager connectivity...');
-
-    try {
-      const response = await fetch('/api/cloudmanager/check-prerequisites');
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to test Cloud Manager connection');
-      }
-
-      cloudManagerPrerequisiteState = data;
-      const accessCheck = (data.checks || []).find((check) => check.id === 'auth');
-      renderCloudManagerPrerequisiteSummary({
-        summary: accessCheck?.ok
-          ? 'Cloud Manager connection test passed.'
-          : 'Cloud Manager connection test failed.',
-        checks: accessCheck ? [accessCheck] : []
-      });
-      setCloudManagerStatus(accessCheck?.ok
-        ? 'Cloud Manager connection looks healthy.'
-        : 'Cloud Manager connection test found issues.');
-      updateCloudManagerActionState();
-    } catch (error) {
-      setCloudManagerStatus('');
-      showError(error.message);
-    } finally {
-      cmTestConnectionBtn.disabled = false;
-      cmTestConnectionBtn.textContent = 'Test Connection';
-    }
   });
 }
 
@@ -3924,28 +3427,3 @@ if (cmOutputDirectoryInput) {
     }
   });
 }
-
-document.addEventListener('DOMContentLoaded', () => {
-  const setupBtn = document.getElementById('setup-cloudmanager-btn');
-  if (setupBtn) {
-    setupBtn.addEventListener('click', () => {
-      const wizard = window.open(
-        '/pages/onboarding.html',
-        'cm-setup-wizard',
-        'width=750,height=850,left=100,top=100,scrollbars=yes'
-      );
-      if (!wizard) {
-        window.location.href = '/pages/onboarding.html';
-      }
-    });
-  }
-
-  window.addEventListener('message', (event) => {
-    if (event.data.action === 'setup-complete') {
-      location.reload();
-    }
-    if (event.data.action === 'open-settings') {
-      setSourceMode('cloudmanager');
-    }
-  });
-});

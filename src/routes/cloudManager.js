@@ -1,33 +1,19 @@
 const express = require('express');
-const path = require('path');
 const {
-  buildCloudManagerSetupPreview,
-  checkPrerequisites,
   buildDownloadCommand,
   getAioCommandPreview,
   getEstimatedDateRange,
-  refreshCloudManagerMetadataCache,
-  getCachedPrograms,
-  getCachedEnvironments,
+  fetchProgramsFromCloudManager,
+  fetchEnvironmentsFromCloudManager,
   listAvailableLogOptions,
   downloadLogs,
-  describeDownloadedFiles,
-  setupCloudManager
+  describeDownloadedFiles
 } = require('../services/cloudManagerService');
 const { analyzeResolvedLogFile } = require('../services/logAnalysisService');
 const { sanitizeErrorMessage } = require('../utils/files');
 
 function createCloudManagerRouter() {
   const router = express.Router();
-
-  router.get('/cloudmanager/check-prerequisites', async (_req, res) => {
-    try {
-      const result = await checkPrerequisites();
-      res.json({ success: true, ...result });
-    } catch (error) {
-      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-    }
-  });
 
   router.post('/cloudmanager/validate-output-directory', async (req, res) => {
     try {
@@ -82,52 +68,10 @@ function createCloudManagerRouter() {
     }
   });
 
-  router.post('/cloudmanager/setup-preview', async (req, res) => {
-    try {
-      const preview = buildCloudManagerSetupPreview(req.body || {});
-      res.json({ success: true, ...preview });
-    } catch (error) {
-      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-    }
-  });
-
-  router.post('/cloudmanager/setup', async (req, res) => {
-    try {
-      const result = await setupCloudManager(req.body || {});
-      res.json({
-        success: result.ok,
-        error: result.ok ? '' : sanitizeErrorMessage(result.error || 'Cloud Manager setup failed.'),
-        steps: result.steps || [],
-        preview: result.preview || null,
-        prerequisites: result.prerequisites || null,
-        cache: result.cache || null,
-        configPath: result.configPath || ''
-      });
-    } catch (error) {
-      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-    }
-  });
-
-  router.post('/cloudmanager/refresh-cache', async (_req, res) => {
-    try {
-      const cache = await refreshCloudManagerMetadataCache();
-      res.json({
-        success: true,
-        refreshedAt: cache.refreshedAt,
-        programs: cache.programs,
-        totalPrograms: cache.programs.length,
-        totalEnvironments: Object.values(cache.environmentsByProgram || {}).reduce((sum, list) => sum + list.length, 0),
-        environmentErrors: cache.environmentErrors || []
-      });
-    } catch (error) {
-      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
-    }
-  });
-
   router.get('/cloudmanager/programs', async (_req, res) => {
     try {
-      const { programs, refreshedAt } = getCachedPrograms();
-      res.json({ success: true, programs, refreshedAt });
+      const programs = await fetchProgramsFromCloudManager();
+      res.json({ success: true, programs, loadedAt: new Date().toISOString() });
     } catch (error) {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }
@@ -135,8 +79,8 @@ function createCloudManagerRouter() {
 
   router.get('/cloudmanager/programs/:programId/environments', async (req, res) => {
     try {
-      const { environments, refreshedAt } = getCachedEnvironments(req.params.programId);
-      res.json({ success: true, environments, refreshedAt });
+      const environments = await fetchEnvironmentsFromCloudManager(req.params.programId);
+      res.json({ success: true, environments, loadedAt: new Date().toISOString() });
     } catch (error) {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }

@@ -6,27 +6,25 @@
 
 ## Problem Statement
 
-The Cloud Manager panel takes up excessive vertical space when users switch to it, causing poor UX. Multiple form fields, setup options, and history are all stacked vertically without organization, making the interface feel cluttered and forcing unnecessary scrolling.
+The Cloud Manager panel takes up excessive vertical space when users switch to it, causing poor UX. Multiple form fields and history are stacked vertically without organization, making the interface feel cluttered and forcing unnecessary scrolling.
 
 **User Pain Points:**
-- Setup configuration is mixed with main workflow
 - History section is always visible, consuming space
 - Advanced settings (Days, Output Folder) take up space even when not needed
 - Single-column layout doesn't leverage horizontal screen real estate
 
 ## Solution Overview
 
-Reorganize the Cloud Manager panel into **three horizontal tabs**:
-1. **Setup** — One-time auth configuration (Browser Login / OAuth)
-2. **Download & Analyze** — Main workflow (Program/Env/Tier selection + action buttons)
-3. **History** — Recent runs list
+Reorganize the Cloud Manager panel into **two horizontal tabs**:
+1. **Download & Analyze** — Main workflow (Program/Env/Tier selection + action buttons)
+2. **History** — Recent runs list
 
 Within the main **Download & Analyze** tab, implement a collapsible **Advanced Settings** accordion to hide Days and Output Folder until needed.
 
 ### Benefits
 
-- **60% space reduction on initial view** — Three-quarter of content moved to other tabs
-- **Clear workflow** — Setup, main action, and history are logically separated
+- **60% space reduction on initial view** — Secondary content moved behind tabs and collapsible controls
+- **Clear workflow** — Main action and history are logically separated
 - **Discoverable** — All features remain accessible; tabbed interface is intuitive
 - **Mobile-friendly** — Tabs stack better on small screens than a long vertical form
 
@@ -49,21 +47,7 @@ Within the main **Download & Analyze** tab, implement a collapsible **Advanced S
 - Smooth transition between tabs (0.2s)
 - Spacing: 0.35rem gap between pills
 
-### 2. Setup Tab
-
-**Visibility:** When "Setup" tab is active
-
-**Content:**
-- Mode switch (Browser Login / OAuth) — unchanged from current design
-- Config fields based on selected mode — unchanged
-- Setup status messages
-- "Run Setup & Create Cache" button
-
-**Layout:**
-- Same as current `#cmSetupPanel` content
-- Inherits from existing `cloudmanager-setup-panel` structure
-
-### 3. Download & Analyze Tab (Main Workflow)
+### 2. Download & Analyze Tab (Main Workflow)
 
 **Visibility:** Default tab when Cloud Manager panel is shown  
 **Layout:** Compact with collapsible section
@@ -232,11 +216,6 @@ Button Row:
       <!-- Buttons -->
     </div>
     <div id="cmResultBadges">...</div>
-  </div>
-
-  <!-- Setup Tab -->
-  <div class="cloudmanager-tab-pane" id="cmTab-setup">
-    <!-- Current setup content -->
   </div>
 
   <!-- History Tab -->

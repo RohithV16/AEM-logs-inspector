@@ -7,89 +7,14 @@ const { execFile } = require('child_process');
 
 describe('cloudManagerService - Exported Functions', () => {
   let tempDir;
-  let tempCacheDir;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cm-test-'));
-    tempCacheDir = path.join(tempDir, 'cache');
     execFile.mockReset();
   });
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  describe('buildCloudManagerSetupPreview', () => {
-    const { buildCloudManagerSetupPreview } = require('../../src/services/cloudManagerService');
-
-    test('generates browser mode steps with login, org, program, and cache', () => {
-      const payload = {
-        mode: 'browser',
-        orgId: 'org123',
-        programId: 'prog123'
-      };
-      const result = buildCloudManagerSetupPreview(payload);
-      expect(result.mode).toBe('browser');
-      expect(result.steps).toHaveLength(4);
-      expect(result.steps.map(s => s.id)).toEqual(['login', 'org', 'program', 'cache']);
-    });
-
-    test('generates browser mode without programId', () => {
-      const payload = {
-        mode: 'browser',
-        orgId: 'org123'
-      };
-      const result = buildCloudManagerSetupPreview(payload);
-      expect(result.steps).toHaveLength(3);
-      expect(result.steps.map(s => s.id)).toEqual(['login', 'org', 'cache']);
-    });
-
-    test('generates oauth mode steps with oauth-config, ims-context, org, and cache', () => {
-      const payload = {
-        mode: 'oauth',
-        clientId: 'client123',
-        clientSecret: 'secret123',
-        technicalAccountId: 'tech123',
-        technicalAccountEmail: 'tech@example.com',
-        imsOrgId: 'org123',
-        scopes: ['openid', 'AdobeID']
-      };
-      const result = buildCloudManagerSetupPreview(payload);
-      expect(result.mode).toBe('oauth');
-      expect(result.configJson).toContain('client_id');
-      expect(result.configJson).toContain('oauth_enabled');
-      expect(result.steps.map(s => s.id)).toEqual(['oauth-config', 'ims-context', 'org', 'cache']);
-    });
-
-    test('oauth mode includes program step when programId provided', () => {
-      const payload = {
-        mode: 'oauth',
-        clientId: 'client123',
-        clientSecret: 'secret123',
-        technicalAccountId: 'tech123',
-        technicalAccountEmail: 'tech@example.com',
-        imsOrgId: 'org123',
-        scopes: ['openid'],
-        programId: 'prog123'
-      };
-      const result = buildCloudManagerSetupPreview(payload);
-      const stepIds = result.steps.map(s => s.id);
-      expect(stepIds).toContain('program');
-      expect(stepIds).toEqual(['oauth-config', 'ims-context', 'org', 'program', 'cache']);
-    });
-
-    test('throws error for browser mode without orgId', () => {
-      const payload = { mode: 'browser' };
-      expect(() => buildCloudManagerSetupPreview(payload)).toThrow('org ID is required');
-    });
-
-    test('throws error for oauth mode with missing fields', () => {
-      const payload = {
-        mode: 'oauth',
-        clientId: 'client123'
-      };
-      expect(() => buildCloudManagerSetupPreview(payload)).toThrow();
-    });
   });
 
   describe('getAioCommandPreview', () => {
@@ -186,20 +111,6 @@ describe('cloudManagerService - Exported Functions', () => {
     });
   });
 
-  describe('readCloudManagerMetadataCache', () => {
-    test('returns empty cache structure with correct properties', () => {
-      const { readCloudManagerMetadataCache } = require('../../src/services/cloudManagerService');
-      const result = readCloudManagerMetadataCache();
-      expect(result).toHaveProperty('programs');
-      expect(result).toHaveProperty('environmentsByProgram');
-      expect(result).toHaveProperty('environmentErrors');
-      expect(result).toHaveProperty('refreshedAt');
-      expect(Array.isArray(result.programs)).toBe(true);
-      expect(typeof result.environmentsByProgram).toBe('object');
-      expect(Array.isArray(result.environmentErrors)).toBe(true);
-    });
-  });
-
   describe('downloadLogs', () => {
     const { downloadLogs } = require('../../src/services/cloudManagerService');
 
@@ -271,20 +182,6 @@ describe('cloudManagerService - Exported Functions', () => {
     });
   });
 
-  describe('getCachedPrograms', () => {
-    test('throws error when cache is empty', () => {
-      const { getCachedPrograms } = require('../../src/services/cloudManagerService');
-      expect(() => getCachedPrograms()).toThrow('cache is empty');
-    });
-  });
-
-  describe('getCachedEnvironments', () => {
-    test('throws error when cache is empty', () => {
-      const { getCachedEnvironments } = require('../../src/services/cloudManagerService');
-      expect(() => getCachedEnvironments('any')).toThrow('cache is empty');
-    });
-  });
-
   describe('fetchProgramsFromCloudManager', () => {
     const { fetchProgramsFromCloudManager } = require('../../src/services/cloudManagerService');
 
@@ -345,150 +242,4 @@ describe('cloudManagerService - Exported Functions', () => {
     });
   });
 
-  describe('refreshCloudManagerMetadataCache', () => {
-    const { refreshCloudManagerMetadataCache } = require('../../src/services/cloudManagerService');
-
-    test('fetches programs and environments', async () => {
-      let callCount = 0;
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        callCount++;
-        if (cmd === 'aio' && args[0] === 'cloudmanager:list-programs') {
-          cb(null, '{"programs": [{"id": "123", "name": "Test"}]}', '');
-        } else if (cmd === 'aio' && args[0] === 'cloudmanager:program:list-environments') {
-          cb(null, '{"environments": []}', '');
-        } else {
-          cb(null, '', '');
-        }
-      });
-
-      const result = await refreshCloudManagerMetadataCache();
-      expect(result.programs).toHaveLength(1);
-      expect(result.refreshedAt).toBeTruthy();
-    });
-
-    test('handles environment fetch errors gracefully', async () => {
-      let callCount = 0;
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        callCount++;
-        if (cmd === 'aio' && args[0] === 'cloudmanager:list-programs') {
-          cb(null, '{"programs": [{"id": "123", "name": "Test"}]}', '');
-        } else {
-          cb(new Error('failed'), '', 'error');
-        }
-      });
-
-      const result = await refreshCloudManagerMetadataCache();
-      expect(result.environmentErrors).toHaveLength(1);
-    });
-  });
-
-  describe('checkPrerequisites', () => {
-    const { checkPrerequisites } = require('../../src/services/cloudManagerService');
-
-    test('checks all prerequisites successfully', async () => {
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        if (args[0] === '--version') {
-          cb(null, 'aio 1.0.0', '');
-        } else if (args[0] === 'cloudmanager:list-programs' && args[1] === '--help') {
-          cb(null, 'help output', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_orgid') {
-          cb(null, 'org123', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_programid') {
-          cb(null, 'prog123', '');
-        } else if (args[0] === 'where') {
-          cb(null, '/path/to/config', '');
-        } else if (args[0] === 'cloudmanager:list-programs') {
-          cb(null, '{"programs": []}', '');
-        } else {
-          cb(null, '', '');
-        }
-      });
-
-      const result = await checkPrerequisites();
-      expect(result.checks.length).toBeGreaterThan(0);
-    });
-
-    test('returns failure when aio is not found', async () => {
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        cb(new Error('ENOENT'), '', '');
-      });
-
-      const result = await checkPrerequisites();
-      expect(result.ok).toBe(false);
-    });
-  });
-
-  describe('setupCloudManager', () => {
-    const { setupCloudManager } = require('../../src/services/cloudManagerService');
-
-    test('browser mode sets up via auth:login', async () => {
-      let callCount = 0;
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        callCount++;
-        if (args[0] === 'auth:login') {
-          cb(null, 'logged in', '');
-        } else if (args[1] === 'cloudmanager_orgid') {
-          cb(null, 'set', '');
-        } else if (args[1] === 'cloudmanager_programid') {
-          cb(null, 'set', '');
-        } else if (args[0] === '--version') {
-          cb(null, 'aio 1.0', '');
-        } else if (args[0] === 'cloudmanager:list-programs' && args[1] === '--help') {
-          cb(null, 'help', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_orgid') {
-          cb(null, 'org', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_programid') {
-          cb(null, 'prog', '');
-        } else if (args[0] === 'where') {
-          cb(null, 'context', '');
-        } else if (args[0] === 'cloudmanager:list-programs') {
-          cb(null, '{"programs": []}', '');
-        } else {
-          cb(null, '', '');
-        }
-      });
-
-      const result = await setupCloudManager({ mode: 'browser', orgId: 'org123', programId: 'prog123' });
-      expect(result.steps).toBeDefined();
-    });
-
-    test('oauth mode writes config file', async () => {
-      let callCount = 0;
-      execFile.mockImplementation((cmd, args, opts, cb) => {
-        callCount++;
-        if (args[1] === 'ims.contexts.aio-cli-plugin-cloudmanager') {
-          cb(null, 'set', '');
-        } else if (args[1] === 'cloudmanager_orgid') {
-          cb(null, 'set', '');
-        } else if (args[1] === 'cloudmanager_programid') {
-          cb(null, 'set', '');
-        } else if (args[0] === '--version') {
-          cb(null, 'aio 1.0', '');
-        } else if (args[0] === 'cloudmanager:list-programs' && args[1] === '--help') {
-          cb(null, 'help', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_orgid') {
-          cb(null, 'org', '');
-        } else if (args[1] === 'get' && args[2] === 'cloudmanager_programid') {
-          cb(null, 'prog', '');
-        } else if (args[0] === 'where') {
-          cb(null, 'context', '');
-        } else if (args[0] === 'cloudmanager:list-programs') {
-          cb(null, '{"programs": []}', '');
-        } else {
-          cb(null, '', '');
-        }
-      });
-
-      const result = await setupCloudManager({
-        mode: 'oauth',
-        clientId: 'client123',
-        clientSecret: 'secret123',
-        technicalAccountId: 'tech123',
-        technicalAccountEmail: 'tech@example.com',
-        imsOrgId: 'org123',
-        scopes: ['openid']
-      });
-      expect(result.configPath).toBeTruthy();
-    });
-  });
 });
