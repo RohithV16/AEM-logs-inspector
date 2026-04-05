@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { detectLogSignature } = require('../parser');
@@ -6,6 +7,8 @@ const { isAllowedLogFile } = require('../utils/files');
 
 const AIO_BINARY = 'aio';
 const DATE_TOKEN_PATTERN = /(\d{4}[-_]\d{2}[-_]\d{2}|\d{2}[-_]\d{2}[-_]\d{4})/;
+const CLOUD_MANAGER_CACHE_ROOT = path.join(os.homedir(), '.aem-logs');
+const CLOUD_MANAGER_CACHE_INDEX = 'index.json';
 
 function execAioRawCommand(args) {
   return new Promise((resolve, reject) => {
@@ -207,24 +210,61 @@ function validateOutputDirectory(outputDirectory) {
   return resolved;
 }
 
-function createDownloadRunDirectory(baseDirectory, metadata) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const runDirectory = path.join(
-    baseDirectory,
-    'cloudmanager',
-    sanitizeSegment(metadata.programId),
-    sanitizeSegment(metadata.environmentId),
-    sanitizeSegment(metadata.service),
-    sanitizeSegment(metadata.logName),
-    timestamp
-  );
+function getCloudManagerCacheRoot() {
+  fs.mkdirSync(CLOUD_MANAGER_CACHE_ROOT, { recursive: true });
+  return CLOUD_MANAGER_CACHE_ROOT;
+}
 
-  fs.mkdirSync(runDirectory, { recursive: true });
-  return runDirectory;
+function getCloudManagerEnvironmentDirectory(programId, environmentId) {
+  return path.join(
+    getCloudManagerCacheRoot(),
+    sanitizeSegment(programId),
+    sanitizeSegment(environmentId)
+  );
+}
+
+function getCloudManagerCacheIndexPath(programId, environmentId) {
+  return path.join(getCloudManagerEnvironmentDirectory(programId, environmentId), CLOUD_MANAGER_CACHE_INDEX);
 }
 
 function sanitizeSegment(value) {
   return String(value || 'unknown').replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function normalizeCloudManagerTier(service = '') {
+  const value = String(service || '').toLowerCase();
+  if (value.includes('author')) return 'author';
+  if (value.includes('publish')) return 'publish';
+  if (value.includes('dispatcher')) return 'dispatcher';
+  return sanitizeSegment(value || 'other');
+}
+
+function normalizeExtractedDate(value = '') {
+  const raw = String(value || '').replace(/_/g, '-');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{2}-\d{2}-\d{4}$/.test(raw)) {
+    const [day, month, year] = raw.split('-');
+    return `${year}-${month}-${day}`;
+  }
+  return '';
+}
+
+function extractDateFromFileName(fileName = '') {
+  const match = String(fileName || '').match(DATE_TOKEN_PATTERN);
+  return normalizeExtractedDate(match ? match[1] : '');
+}
+
+function getFileDateSegment(filePath) {
+  const extracted = extractDateFromFileName(path.basename(filePath));
+  if (extracted) return extracted;
+  const stats = fs.statSync(filePath);
+  return new Date(stats.mtimeMs).toISOString().slice(0, 10);
+}
+
+function createTempDownloadDirectory(environmentDirectory) {
+  const directory = path.join(environmentDirectory, '.tmp', new Date().toISOString().replace(/[:.]/g, '-'));
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
 }
 
 function collectFilesRecursively(directoryPath) {
@@ -258,14 +298,134 @@ function extractDatesFromDownloadedFiles(files = []) {
   return files.map((filePath) => {
     const fileName = path.basename(filePath);
     const stats = fs.statSync(filePath);
-    const match = fileName.match(DATE_TOKEN_PATTERN);
+    const extractedDate = extractDateFromFileName(fileName);
     return {
       filePath,
       fileName,
-      extractedDate: match ? match[1].replace(/_/g, '-') : '',
+      extractedDate,
       modifiedAt: new Date(stats.mtimeMs).toISOString()
     };
   });
+}
+
+function moveFileIntoCache(sourcePath, destinationPath) {
+  fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+  if (fs.existsSync(destinationPath)) {
+    fs.unlinkSync(destinationPath);
+  }
+  try {
+    fs.renameSync(sourcePath, destinationPath);
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    fs.copyFileSync(sourcePath, destinationPath);
+    fs.unlinkSync(sourcePath);
+  }
+  return destinationPath;
+}
+
+function readCacheIndex(programId, environmentId) {
+  const indexPath = getCloudManagerCacheIndexPath(programId, environmentId);
+  if (!fs.existsSync(indexPath)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    return Array.isArray(parsed.files) ? parsed.files : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCacheIndex(programId, environmentId, files = []) {
+  const environmentDirectory = getCloudManagerEnvironmentDirectory(programId, environmentId);
+  fs.mkdirSync(environmentDirectory, { recursive: true });
+  const indexPath = getCloudManagerCacheIndexPath(programId, environmentId);
+  fs.writeFileSync(indexPath, JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    files
+  }, null, 2));
+}
+
+async function rebuildCloudManagerCacheIndex(programId, environmentId) {
+  const environmentDirectory = getCloudManagerEnvironmentDirectory(programId, environmentId);
+  fs.mkdirSync(environmentDirectory, { recursive: true });
+  const previousEntries = readCacheIndex(programId, environmentId);
+  const previousByPath = new Map(previousEntries.map((entry) => [entry.filePath, entry]));
+  const files = collectFilesRecursively(environmentDirectory)
+    .filter((filePath) => !filePath.includes(`${path.sep}.tmp${path.sep}`))
+    .filter(isAllowedLogFile);
+
+  const described = [];
+  for (const filePath of files) {
+    const stats = fs.statSync(filePath);
+    const previous = previousByPath.get(filePath) || {};
+    const signature = await detectLogSignature(filePath);
+    const relative = path.relative(environmentDirectory, filePath).split(path.sep).filter(Boolean);
+    const tier = previous.tier || relative[0] || normalizeCloudManagerTier(previous.service || '');
+    const extractedDate = previous.extractedDate || relative[1] || getFileDateSegment(filePath);
+    described.push({
+      filePath,
+      fileName: path.basename(filePath),
+      size: stats.size,
+      modifiedAt: new Date(stats.mtimeMs).toISOString(),
+      extractedDate,
+      tier: tier || 'other',
+      service: previous.service || tier || 'other',
+      logName: previous.logName || path.basename(filePath),
+      cached: true,
+      logType: signature.logType,
+      logFamily: signature.logFamily,
+      supported: Boolean(signature.supported),
+      unsupportedReason: signature.unsupportedReason || '',
+      detectedBy: signature.detectedBy || ''
+    });
+  }
+
+  described.sort((a, b) => {
+    if (b.extractedDate !== a.extractedDate) return String(b.extractedDate).localeCompare(String(a.extractedDate));
+    return b.modifiedAt.localeCompare(a.modifiedAt);
+  });
+  writeCacheIndex(programId, environmentId, described);
+  return described;
+}
+
+async function getCloudManagerCacheView(programId, environmentId) {
+  const environmentDirectory = getCloudManagerEnvironmentDirectory(programId, environmentId);
+  const files = await rebuildCloudManagerCacheIndex(programId, environmentId);
+  const grouped = {};
+
+  files.forEach((file) => {
+    const tier = file.tier || normalizeCloudManagerTier(file.service);
+    const date = file.extractedDate || 'Unknown date';
+    if (!grouped[tier]) grouped[tier] = {};
+    if (!grouped[tier][date]) grouped[tier][date] = [];
+    grouped[tier][date].push(file);
+  });
+
+  const tierOrder = { author: 0, publish: 1, dispatcher: 2 };
+  const tiers = Object.entries(grouped)
+    .sort((a, b) => (tierOrder[a[0]] ?? 99) - (tierOrder[b[0]] ?? 99) || a[0].localeCompare(b[0]))
+    .map(([tier, dates]) => ({
+      tier,
+      totalFiles: Object.values(dates).reduce((count, entries) => count + entries.length, 0),
+      supportedFiles: Object.values(dates).reduce((count, entries) => count + entries.filter((entry) => entry.supported !== false).length, 0),
+      dates: Object.entries(dates)
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([date, entries]) => ({
+          date,
+          totalFiles: entries.length,
+          files: entries.sort((a, b) => a.fileName.localeCompare(b.fileName))
+        }))
+    }));
+
+  return {
+    cacheRoot: getCloudManagerCacheRoot(),
+    environmentDirectory,
+    tiers,
+    summary: {
+      totalFiles: files.length,
+      supportedFiles: files.filter((file) => file.supported !== false).length,
+      tierCount: tiers.length
+    }
+  };
 }
 
 async function fetchProgramsFromCloudManager() {
@@ -307,35 +467,72 @@ function buildDownloadCommand(options = {}) {
 }
 
 async function downloadLogs(options) {
-  const baseDirectory = validateOutputDirectory(options.outputDirectory);
+  const environmentDirectory = getCloudManagerEnvironmentDirectory(options.programId, options.environmentId);
+  fs.mkdirSync(environmentDirectory, { recursive: true });
   const days = Number(options.days || 1);
 
   if (!Number.isInteger(days) || days <= 0) {
     throw new Error('Days must be a positive integer.');
   }
 
-  const runDirectory = createDownloadRunDirectory(baseDirectory, options);
+  const runDirectory = createTempDownloadDirectory(environmentDirectory);
   const downloadCommand = buildDownloadCommand({
     ...options,
     days,
     outputDirectory: runDirectory
   });
-  await execAioCommand(downloadCommand);
+  try {
+    await execAioCommand(downloadCommand);
 
-  const downloadedFiles = collectFilesRecursively(runDirectory).filter(isAllowedLogFile);
-  if (!downloadedFiles.length) {
-    throw new Error('Cloud Manager did not produce any downloadable log files.');
+    const downloadedFiles = collectFilesRecursively(runDirectory).filter(isAllowedLogFile);
+    if (!downloadedFiles.length) {
+      throw new Error('Cloud Manager did not produce any downloadable log files.');
+    }
+
+    const cacheTier = normalizeCloudManagerTier(options.service);
+    const cachedFiles = downloadedFiles.map((filePath) => {
+      const dateSegment = getFileDateSegment(filePath);
+      const destinationPath = path.join(
+        environmentDirectory,
+        cacheTier,
+        sanitizeSegment(dateSegment || 'unknown-date'),
+        path.basename(filePath)
+      );
+      return moveFileIntoCache(filePath, destinationPath);
+    });
+
+    const previousEntries = readCacheIndex(options.programId, options.environmentId);
+    const entryMap = new Map(previousEntries.map((entry) => [entry.filePath, entry]));
+    cachedFiles.forEach((filePath) => {
+      const fileName = path.basename(filePath);
+      const existing = entryMap.get(filePath) || {};
+      entryMap.set(filePath, {
+        ...existing,
+        filePath,
+        fileName,
+        extractedDate: existing.extractedDate || extractDateFromFileName(fileName),
+        tier: cacheTier,
+        service: options.service,
+        logName: options.logName,
+        cached: true
+      });
+    });
+    writeCacheIndex(options.programId, options.environmentId, Array.from(entryMap.values()));
+
+    const analyzedFile = pickNewestFile(cachedFiles);
+
+    return {
+      cacheRoot: getCloudManagerCacheRoot(),
+      outputDirectory: environmentDirectory,
+      environmentDirectory,
+      downloadedFiles: cachedFiles,
+      analyzedFile,
+      fileDates: extractDatesFromDownloadedFiles(cachedFiles),
+      commandPreview: getAioCommandPreview(downloadCommand)
+    };
+  } finally {
+    fs.rmSync(runDirectory, { recursive: true, force: true });
   }
-
-  const analyzedFile = pickNewestFile(downloadedFiles);
-
-  return {
-    outputDirectory: runDirectory,
-    downloadedFiles,
-    analyzedFile,
-    fileDates: extractDatesFromDownloadedFiles(downloadedFiles),
-    commandPreview: getAioCommandPreview(downloadCommand)
-  };
 }
 
 async function describeDownloadedFiles(download) {
@@ -382,5 +579,8 @@ module.exports = {
   listAvailableLogOptions,
   downloadLogs,
   describeDownloadedFiles,
-  validateOutputDirectory
+  validateOutputDirectory,
+  getCloudManagerCacheRoot,
+  getCloudManagerEnvironmentDirectory,
+  getCloudManagerCacheView
 };

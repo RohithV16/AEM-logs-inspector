@@ -271,9 +271,25 @@
           </div>
         </div>
 
-        <div class="source-mode-switch" role="tablist" aria-label="Analysis source mode">
-          <button id="sourceModeLocal" class="source-mode-btn active" type="button" data-source-mode="local" aria-selected="true">Local Path</button>
-          <button id="sourceModeCloudManager" class="source-mode-btn" type="button" data-source-mode="cloudmanager" aria-selected="false">Cloud Manager</button>
+        <div class="source-mode-row">
+          <div class="source-mode-switch" role="tablist" aria-label="Analysis source mode">
+            <button id="sourceModeLocal" class="source-mode-btn active" type="button" data-source-mode="local" aria-selected="true">Local Path</button>
+            <button id="sourceModeCloudManager" class="source-mode-btn" type="button" data-source-mode="cloudmanager" aria-selected="false">Cloud Manager</button>
+          </div>
+          <div class="local-downloads-picker">
+            <button
+              id="localDownloadsTrigger"
+              class="local-downloads-trigger"
+              type="button"
+              aria-expanded="false"
+              aria-controls="localDownloadsPopover"
+            >
+              <span class="local-downloads-trigger-copy">
+                <span class="local-downloads-trigger-label">Cloud Manager Logs</span>
+                <span id="localDownloadsTriggerMeta" class="local-downloads-trigger-meta">Choose an environment</span>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div id="localSourcePanel" class="source-panel">
@@ -286,11 +302,30 @@
           <p class="upload-hint">Use one path for standard analysis or comma-separated error logs for merged error analysis.</p>
         </div>
 
+        <div id="localDownloadsPopover" class="local-downloads-overlay hidden" role="dialog" aria-modal="true" aria-label="Cloud Manager log picker">
+          <div id="localDownloadsBackdrop" class="local-downloads-backdrop"></div>
+          <div class="local-downloads-dialog">
+            <div class="local-downloads-popover-header">
+              <div>
+                <p class="filter-section-label">Cloud Manager Cache</p>
+                <h3>Browse cached logs and download new ones</h3>
+              </div>
+              <div class="local-downloads-actions">
+                <button id="refreshLocalDownloadsBtn" class="upload-btn secondary" type="button">Refresh cache</button>
+                <button id="downloadSelectedLocalLogsBtn" class="upload-btn secondary" type="button">Download selected</button>
+                <button id="clearSelectedDownloadsBtn" class="upload-btn secondary" type="button">Clear selection</button>
+                <button id="closeLocalDownloadsPopoverBtn" class="local-downloads-close-btn" type="button" aria-label="Close recent downloads">&times;</button>
+              </div>
+            </div>
+            <div id="localDownloadsOverlayStatus" class="local-downloads-overlay-status hidden" aria-live="polite"></div>
+            <div id="localDownloadsList" class="local-downloads-list"></div>
+          </div>
+        </div>
+
         <div id="cloudManagerPanel" class="source-panel hidden">
           <!-- Tab Navigation -->
           <div class="cloudmanager-tabs">
-            <button class="cloudmanager-tab active" data-tab="download" type="button">Download & Analyze</button>
-            <button class="cloudmanager-tab" data-tab="recipes" type="button">Recipes</button>
+            <button class="cloudmanager-tab active" data-tab="download" type="button">Download Logs</button>
             <button class="cloudmanager-tab" data-tab="history" type="button">History</button>
           </div>
 
@@ -298,94 +333,46 @@
           <div class="cloudmanager-tab-pane active" id="cmTab-download">
             <div id="cmStatusBanner" class="cloudmanager-status hidden" aria-live="polite"></div>
             <div id="cmCacheStatus" class="cloudmanager-cache-status">Programs and environments load live from aio when Cloud Manager is selected.</div>
-            <div id="cmWorkspaceSummary" class="cloudmanager-workspace-summary" aria-live="polite"></div>
-            
-            <div class="cloudmanager-stage">
-              <div class="cloudmanager-stage-heading">
-                <p class="filter-section-label">Step 1</p>
-                <h3>Scope</h3>
+            <div class="cloudmanager-grid">
+              <label class="cloudmanager-field">
+                <span>Program</span>
+                <select id="cmProgramSelect" class="filter-select">
+                  <option value="">Select program</option>
+                </select>
+                <small id="cmProgramHint" class="cloudmanager-hint">Programs load live from aio.</small>
+              </label>
+              <label class="cloudmanager-field">
+                <span>Environment</span>
+                <select id="cmEnvironmentSelect" class="filter-select" disabled>
+                  <option value="">Select environment</option>
+                </select>
+                <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
+              </label>
+              <label class="cloudmanager-field">
+                <span>Days</span>
+                <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
+                <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
+              </label>
+              <label class="cloudmanager-field cloudmanager-field-wide">
+                <span>Cache root</span>
+                <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="~/.aem-logs" readonly>
+                <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Cloud Manager downloads are cached automatically for browsing and analysis.</small>
+              </label>
+              <div class="cloudmanager-field cloudmanager-field-wide">
+                <span>Tier / Logs</span>
+                <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
+                <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
+                <small id="cmLogHint" class="cloudmanager-hint">Choose one or more logs to download.</small>
               </div>
-              <div class="cloudmanager-grid">
-                <label class="cloudmanager-field">
-                  <span>Program</span>
-                  <select id="cmProgramSelect" class="filter-select">
-                    <option value="">Select program</option>
-                  </select>
-                  <small id="cmProgramHint" class="cloudmanager-hint">Programs load live from aio.</small>
-                </label>
-                <label class="cloudmanager-field">
-                  <span>Environment</span>
-                  <select id="cmEnvironmentSelect" class="filter-select" disabled>
-                    <option value="">Select environment</option>
-                  </select>
-                  <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
-                </label>
-                <div class="cloudmanager-field">
-                  <span>Date Window</span>
-                  <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
-                  <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
-                </div>
-                <label class="cloudmanager-field cloudmanager-field-wide">
-                  <span>Download folder</span>
-                  <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="/path/to/local/folder">
-                  <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Provide a writable local folder for Cloud Manager downloads.</small>
-                </label>
-              </div>
-            </div>
-
-            <div class="cloudmanager-stage">
-              <div class="cloudmanager-stage-heading">
-                <p class="filter-section-label">Step 2</p>
-                <h3>Logs</h3>
-              </div>
-              <div class="cloudmanager-grid">
-                <div class="cloudmanager-field cloudmanager-field-wide">
-                  <span>Tier / Logs</span>
-                  <div class="cloudmanager-log-toolbar">
-                    <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
-                    <input type="text" id="cmLogSearchInput" class="filter-input" placeholder="Search service or log name">
-                  </div>
-                  <div id="cmRecipeSuggestions" class="cloudmanager-suggestion-row"></div>
-                  <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
-                  <small id="cmLogHint" class="cloudmanager-hint">Choose an environment to load downloadable logs.</small>
-                </div>
-                <div class="cloudmanager-field">
-                  <span>Selection cart</span>
-                  <div id="cmSelectionCart" class="cloudmanager-selection-cart"></div>
-                  <div class="cloudmanager-inline-actions">
-                    <button id="cmClearSelectedLogsBtn" class="upload-btn secondary" type="button">Clear logs</button>
-                    <button id="cmSaveRecipeBtn" class="upload-btn secondary" type="button">Save recipe</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="cloudmanager-stage">
-              <div class="cloudmanager-stage-heading">
-                <p class="filter-section-label">Step 3</p>
-                <h3>Run</h3>
-              </div>
-              <div id="cmRunSummary" class="cloudmanager-run-summary"></div>
             </div>
 
             <div id="cmCommandPreview" class="cloudmanager-command-preview hidden" aria-live="polite"></div>
             <div class="upload-row">
-              <button id="cmAnalyzeBtn" class="upload-btn">Download & Analyze</button>
+              <button id="cmAnalyzeBtn" class="upload-btn">Cache Selected Logs</button>
               <span id="cmProgressText" class="hidden"></span>
             </div>
-            <div id="cmResultBadges" class="cloudmanager-result-badges hidden" aria-live="polite"></div>
             <div id="cmDownloadSummary" class="cloudmanager-summary hidden" aria-live="polite"></div>
-            <p class="upload-hint">Requires `aio` plus `@adobe/aio-cli-plugin-cloudmanager` already installed and authenticated outside this app.</p>
-          </div>
-
-          <div class="cloudmanager-tab-pane" id="cmTab-recipes">
-            <div class="cloudmanager-history-header">
-              <div>
-                <p class="filter-section-label">Saved Recipes</p>
-                <h3>Reusable download setups</h3>
-              </div>
-            </div>
-            <div id="cmRecipeList" class="cloudmanager-history-list"></div>
+            <p class="upload-hint">Downloads land in the Cloud Manager cache. Analyze cached files from the picker in Local Path mode.</p>
           </div>
 
           <!-- History Tab -->

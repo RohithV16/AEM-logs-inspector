@@ -9,3 +9,5 @@ coverage/
 
 # Cloud Manager credentials
 ~/.aem-log-analyzer/
+.opencode
+.gstack/
