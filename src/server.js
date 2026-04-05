@@ -5,11 +5,9 @@ const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { watchLogFile } = require('./tailer');
 const { detectLogType } = require('./parser');
-const { analyzeAllInOnePass } = require('./services/errorLogService');
-const { analyzeRequestLog } = require('./services/requestLogService');
-const { analyzeCDNLog } = require('./services/cdnLogService');
-const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('./utils/files');
+const { validateFilePath, sanitizeErrorMessage } = require('./utils/files');
 const { PORT } = require('./utils/constants');
+const { analyzeResolvedLogFile } = require('./services/logAnalysisService');
 
 /* === Route Imports === */
 const createAnalyzeRouter = require('./routes/analyze');
@@ -17,6 +15,8 @@ const createMultiErrorRouter = require('./routes/multiError');
 const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
+const createCloudManagerRouter = require('./routes/cloudManager');
+const { performCloudManagerDownload } = require('./routes/cloudManager');
 
 /* === Express App Setup === */
 const app = express();
@@ -34,6 +34,7 @@ app.use('/api', createMultiErrorRouter());
 app.use('/api', createFilterRouter());
 app.use('/api', createEventsRouter());
 app.use('/api', createExportRouter());
+app.use('/api', createCloudManagerRouter());
 
 let httpServer = null;
 let wss = null;
@@ -47,78 +48,48 @@ async function handleAnalyzeAction(ws, filePath) {
   try {
     /* Validate and resolve the file path to prevent directory traversal */
     const targetPath = validateFilePath(filePath);
-    
-    /* Detect log type (error, request, or CDN) to select appropriate analyzer */
     const logType = await detectLogType(targetPath);
-    
-    /* Notify client of detected log type so UI can adapt */
-    ws.send(JSON.stringify({ type: 'logType', logType }));
 
-    /* Callback to stream progress updates to the client */
     const onProgress = (progress) => {
       ws.send(JSON.stringify({ type: 'progress', ...progress }));
     };
 
-    /* Route to the correct analyzer based on log type */
-    let result;
-    if (logType === 'request') {
-      result = await analyzeRequestLog(targetPath, onProgress);
-    } else if (logType === 'cdn') {
-      result = await analyzeCDNLog(targetPath, onProgress);
-    } else {
-      /* Default: AEM error log analysis */
-      result = await analyzeAllInOnePass(targetPath, onProgress);
-    }
-
-    /* Build response structure based on log type - each type has different metrics */
-    let response;
-    if (logType === 'request') {
-      response = {
-        success: true,
-        logType: 'request',
-        summary: result.summary,
-        filterOptions: result.filterOptions,
-        results: result.results,
-        methods: result.methods,
-        statuses: result.statuses,
-        pods: result.pods,
-        timeline: result.timeline
-      };
-    } else if (logType === 'cdn') {
-      response = {
-        success: true,
-        logType: 'cdn',
-        summary: result.summary,
-        filterOptions: result.filterOptions,
-        methods: result.methods,
-        statuses: result.statuses,
-        cacheStatuses: result.cacheStatuses,
-        countries: result.countries,
-        pops: result.pops,
-        hosts: result.hosts,
-        timeline: result.timeline
-      };
-    } else {
-      response = {
-        success: true,
-        logType: 'error',
-        summary: result.summary,
-        results: result.results,
-        loggers: result.loggers,
-        threads: result.threads,
-        packages: result.packages,
-        exceptions: result.exceptions,
-        httpMethods: result.httpMethods,
-        timeline: result.timeline,
-        levelCounts: result.levelCounts
-      };
-    }
+    const { payload } = await analyzeResolvedLogFile(targetPath, onProgress);
+    
+    /* Notify client of detected log type so UI can adapt */
+    ws.send(JSON.stringify({ type: 'logType', logType }));
 
     /* Send complete results with all computed metrics */
-    ws.send(JSON.stringify({ type: 'complete', ...response }));
+    ws.send(JSON.stringify({ type: 'complete', ...payload }));
   } catch (err) {
     /* Sanitize error message to prevent XSS in client */
     ws.send(JSON.stringify({ type: 'error', error: sanitizeErrorMessage(err.message) }));
+  }
+}
+
+/**
+ * Handles Cloud Manager download with progress updates
+ * @param {WebSocket} ws - WebSocket connection to send results to
+ * @param {Object} options - Download options
+ */
+async function handleCloudManagerDownloadAction(ws, options) {
+  try {
+    console.log('[CM] Starting download with options:', JSON.stringify(options, null, 2));
+    ws.send(JSON.stringify({ type: 'status', message: 'Starting download from Cloud Manager...', status: 'starting' }));
+
+    const onProgress = (progress) => {
+      console.log('[CM] Progress:', JSON.stringify(progress));
+      ws.send(JSON.stringify({ type: 'progress', ...progress }));
+    };
+
+    console.log('[CM] Calling performCloudManagerDownload...');
+    const result = await performCloudManagerDownload(options, onProgress);
+    console.log('[CM] Download complete, result keys:', Object.keys(result));
+
+    ws.send(JSON.stringify({ type: 'complete', ...result, status: 'complete' }));
+  } catch (err) {
+    console.error('[CM] Download error:', err.message);
+    ws.send(JSON.stringify({ type: 'error', error: sanitizeErrorMessage(err.message), status: 'error' }));
   }
 }
 
@@ -135,7 +106,11 @@ function attachWebSocketHandlers(server) {
         /* Handle analyze action - full file analysis */
         if (data.action === 'analyze' && data.filePath) {
           await handleAnalyzeAction(ws, data.filePath);
-        } 
+        }
+        /* Handle Cloud Manager download action */
+        else if (data.action === 'cloudmanager-download') {
+          await handleCloudManagerDownloadAction(ws, data.options);
+        }
         /* Handle tail action - real-time file watching */
         else if (data.type === 'tail') {
           const { filePath } = data;

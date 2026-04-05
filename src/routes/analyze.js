@@ -1,10 +1,8 @@
 /* === Imports === */
 const express = require('express');
 const { detectLogType } = require('../parser');
-const { analyzeAllInOnePass } = require('../services/errorLogService');
-const { analyzeRequestLog } = require('../services/requestLogService');
-const { analyzeCDNLog } = require('../services/cdnLogService');
 const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('../utils/files');
+const { analyzeResolvedLogFile } = require('../services/logAnalysisService');
 
 /**
  * Creates the analyze router with endpoints for log analysis
@@ -28,62 +26,8 @@ function createAnalyzeRouter() {
         throw new Error('Please enter a file path.');
       }
 
-      /* Detect log type to route to the appropriate analyzer */
-      const logType = await detectLogType(targetPath);
-
-      let result;
-      
-      /* Route to request log analyzer for AEM request.log files */
-      if (logType === 'request') {
-        result = await analyzeRequestLog(targetPath);
-        res.json({
-          success: true,
-          logType: 'request',
-          summary: result.summary,
-          filterOptions: result.filterOptions,
-          results: result.results,
-          methods: result.methods,
-          statuses: result.statuses,
-          pods: result.pods,
-          timeline: result.timeline
-        });
-      } 
-      /* Route to CDN log analyzer for CDN access logs */
-      else if (logType === 'cdn') {
-        result = await analyzeCDNLog(targetPath);
-        res.json({
-          success: true,
-          logType: 'cdn',
-          summary: result.summary,
-          filterOptions: result.filterOptions,
-          methods: result.methods,
-          statuses: result.statuses,
-          cacheStatuses: result.cacheStatuses,
-          countries: result.countries,
-          pops: result.pops,
-          hosts: result.hosts,
-          timeline: result.timeline
-        });
-      } 
-      /* Default to AEM error log analyzer for standard error logs */
-      else {
-        result = await analyzeAllInOnePass(targetPath);
-        res.json({
-          success: true,
-          logType: 'error',
-          summary: result.summary,
-          results: result.results,
-          loggers: result.loggers,
-          threads: result.threads,
-          packages: result.packages,
-          exceptions: result.exceptions,
-          httpMethods: result.httpMethods,
-          packageThreads: result.packageThreads,
-          packageExceptions: result.packageExceptions,
-          timeline: result.timeline,
-          levelCounts: result.levelCounts
-        });
-      }
+      const { payload } = await analyzeResolvedLogFile(targetPath);
+      res.json(payload);
     } catch (error) {
       /* Sanitize error message before sending to client to prevent XSS */
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
@@ -127,17 +71,10 @@ function createAnalyzeRouter() {
       };
 
       /* Same routing logic as /analyze but with progress reporting */
-      let result;
-      if (logType === 'request') {
-        result = await analyzeRequestLog(targetPath, onProgress);
-      } else if (logType === 'cdn') {
-        result = await analyzeCDNLog(targetPath, onProgress);
-      } else {
-        result = await analyzeAllInOnePass(targetPath, onProgress);
-      }
+      const { payload } = await analyzeResolvedLogFile(targetPath, onProgress);
 
       /* Send final results and close the SSE connection */
-      res.write(`data: ${JSON.stringify({ type: 'complete', result })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'complete', result: payload })}\n\n`);
       res.end();
     } catch (error) {
       /* Send error through SSE stream and close connection */

@@ -4,3 +4,10 @@ node_modules/
 .DS_Store
 temp/
 .worktrees/
+test-results/
+coverage/
+
+# Cloud Manager credentials
+~/.aem-log-analyzer/
+.opencode
+.gstack/

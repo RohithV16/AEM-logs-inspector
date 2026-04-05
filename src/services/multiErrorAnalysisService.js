@@ -3,13 +3,15 @@ const { detectLogType } = require('../parser');
 const { resolveAnalysisTargets } = require('../utils/files');
 const {
   analyzeBatch,
+  analyzeMergedErrorFilters,
   collectBatchEvents,
   countAndExtractBatchEntries,
   buildBatchEventMatcher
 } = require('./batchAnalysisService');
 
-async function resolveMultiErrorTargets(input) {
+async function resolveMultiErrorSources(input) {
   const filePaths = resolveAnalysisTargets(input);
+  const sources = [];
 
   if (filePaths.length < 2) {
     throw new Error('Please provide at least two error log paths.');
@@ -20,14 +22,20 @@ async function resolveMultiErrorTargets(input) {
     if (logType !== 'error') {
       throw new Error(`Multi-error analysis supports error logs only. Invalid file: ${path.basename(filePath)}`);
     }
+    sources.push({ filePath, logType });
   }
 
-  return filePaths;
+  return sources;
+}
+
+async function resolveMultiErrorTargets(input) {
+  const sources = await resolveMultiErrorSources(input);
+  return sources.map(source => source.filePath);
 }
 
 async function analyzeMultiError(input, filters = {}, onProgress) {
-  const filePaths = await resolveMultiErrorTargets(input);
-  const result = await analyzeBatch(filePaths, filters, onProgress);
+  const sources = await resolveMultiErrorSources(input);
+  const result = await analyzeBatch(sources, filters, onProgress);
 
   return {
     ...result,
@@ -36,19 +44,26 @@ async function analyzeMultiError(input, filters = {}, onProgress) {
 }
 
 async function collectMultiErrorEvents(input, filters = {}, options = {}) {
-  const filePaths = await resolveMultiErrorTargets(input);
-  return collectBatchEvents(filePaths, filters, options);
+  const sources = await resolveMultiErrorSources(input);
+  return collectBatchEvents(sources, filters, options);
 }
 
 async function countAndExtractMultiErrorEntries(input, filters = {}, page = 1, pageSize = 50) {
-  const filePaths = await resolveMultiErrorTargets(input);
-  return countAndExtractBatchEntries(filePaths, filters, page, pageSize);
+  const sources = await resolveMultiErrorSources(input);
+  return countAndExtractBatchEntries(sources, filters, page, pageSize);
+}
+
+async function analyzeMultiErrorFilters(input, filters = {}) {
+  const sources = await resolveMultiErrorSources(input);
+  return analyzeMergedErrorFilters(sources, filters);
 }
 
 module.exports = {
   analyzeMultiError,
+  analyzeMergedErrorFilters: analyzeMultiErrorFilters,
   collectMultiErrorEvents,
   countAndExtractMultiErrorEntries,
   buildMultiErrorEventMatcher: buildBatchEventMatcher,
-  resolveMultiErrorTargets
+  resolveMultiErrorTargets,
+  resolveMultiErrorSources
 };

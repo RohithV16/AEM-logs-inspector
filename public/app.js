@@ -1,5 +1,46 @@
 const filePathInput = document.getElementById('filePath');
 const analyzeBtn = document.getElementById('analyzeBtn');
+const sourceModeButtons = Array.from(document.querySelectorAll('[data-source-mode]'));
+const localSourcePanel = document.getElementById('localSourcePanel');
+const cloudManagerPanel = document.getElementById('cloudManagerPanel');
+const localDownloadsTrigger = document.getElementById('localDownloadsTrigger');
+const localDownloadsTriggerMeta = document.getElementById('localDownloadsTriggerMeta');
+const localDownloadsPopover = document.getElementById('localDownloadsPopover');
+const localDownloadsBackdrop = document.getElementById('localDownloadsBackdrop');
+const localDownloadsList = document.getElementById('localDownloadsList');
+const localDownloadsOverlayStatus = document.getElementById('localDownloadsOverlayStatus');
+const refreshLocalDownloadsBtn = document.getElementById('refreshLocalDownloadsBtn');
+const appendSelectedToLocalBtn = document.getElementById('appendSelectedToLocalBtn');
+const clearSelectedDownloadsBtn = document.getElementById('clearSelectedDownloadsBtn');
+const closeLocalDownloadsPopoverBtn = document.getElementById('closeLocalDownloadsPopoverBtn');
+const cmLogTypeTabs = document.getElementById('cmLogTypeTabs');
+const popoverCmProgramSelect = document.getElementById('popoverCmProgramSelect');
+const popoverCmEnvironmentSelect = document.getElementById('popoverCmEnvironmentSelect');
+const cmProgramSelect = document.getElementById('cmProgramSelect');
+const cmEnvironmentSelect = document.getElementById('cmEnvironmentSelect');
+const cmTierTabs = document.getElementById('cmTierTabs');
+const cmLogOptionList = document.getElementById('cmLogOptionList');
+const cmDaysInput = document.getElementById('cmDaysInput');
+const cmOutputDirectoryInput = document.getElementById('cmOutputDirectory');
+const cmEstimatedDateRange = document.getElementById('cmEstimatedDateRange');
+const cmProgramHint = document.getElementById('cmProgramHint');
+const cmEnvironmentHint = document.getElementById('cmEnvironmentHint');
+const cmLogHint = document.getElementById('cmLogHint');
+const cmOutputDirectoryHint = document.getElementById('cmOutputDirectoryHint');
+const cmAnalyzeBtn = document.getElementById('cmAnalyzeBtn');
+const cmProgressText = document.getElementById('cmProgressText');
+const cmDownloadSummary = document.getElementById('cmDownloadSummary');
+const cmDownloadProgressPanel = document.getElementById('cmDownloadProgressPanel');
+const cmDownloadProgressTitle = document.getElementById('cmDownloadProgressTitle');
+const cmDownloadProgressCount = document.getElementById('cmDownloadProgressCount');
+const cmDownloadProgressList = document.getElementById('cmDownloadProgressList');
+const cmDownloadProgressStatus = document.getElementById('cmDownloadProgressStatus');
+const cmStatusBanner = document.getElementById('cmStatusBanner');
+const cmCacheStatus = document.getElementById('cmCacheStatus');
+const cmCommandPreview = document.getElementById('cmCommandPreview');
+const cmHistoryList = document.getElementById('cmHistoryList');
+const cmHistorySearchInput = document.getElementById('cmHistorySearchInput');
+const cmHistoryEnvironmentFilter = document.getElementById('cmHistoryEnvironmentFilter');
 const loggerFilter = document.getElementById('loggerFilter');
 const threadFilter = document.getElementById('threadFilter');
 const categoryFilter = document.getElementById('categoryFilter');
@@ -12,6 +53,7 @@ const presetSelect = document.getElementById('presetSelect');
 const exportCsvBtn = document.getElementById('exportCsvBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
+const exportRow = document.querySelector('.export-row');
 const progressText = document.getElementById('progressText');
 const paginationInfo = document.getElementById('paginationInfo');
 const tailBtn = document.getElementById('tailBtn');
@@ -37,6 +79,12 @@ const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
 const THEME_STORAGE_KEY = 'aem_themePreference';
 const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
+const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
+const CM_HISTORY_STORAGE_KEY = 'aem_cmHistory';
+const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
+const CM_PROGRAMS_CACHE_KEY = 'aem_cmProgramsCache';
+const CM_ENVIRONMENTS_CACHE_KEY = 'aem_cmEnvironmentsCache';
+const CM_LOG_OPTIONS_CACHE_KEY = 'aem_cmLogOptionsCache';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -51,8 +99,39 @@ let heatmapChart = null;
 let rawEventsData = [];
 let currentLogType = 'error';
 let currentAnalysisMode = 'single';
+let currentSourceMode = localStorage.getItem(SOURCE_MODE_STORAGE_KEY) === 'cloudmanager' ? 'cloudmanager' : 'local';
+let currentAnalyzedFilePath = '';
 let currentBatchInput = null;
 let currentBatchSummary = null;
+let cloudManagerProgramsLoaded = false;
+let cloudManagerCommandPreviewPending = false;
+let cloudManagerLogOptions = [];
+let cloudManagerPrograms = [];
+let cloudManagerEnvironments = [];
+let selectedCloudManagerLogs = [];
+let currentCloudManagerTier = '';
+let activeLogTypeFilter = 'all';
+let cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
+let currentCloudManagerRunContext = null;
+let cloudManagerHistoryFilters = { search: '', environment: '' };
+let cloudManagerCacheData = {
+  cacheRoot: '',
+  environmentDirectory: '',
+  tiers: [],
+  summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+};
+let popoverCacheData = {
+  cacheRoot: '',
+  environmentDirectory: '',
+  tiers: [],
+  summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+};
+let popoverProgramId = '';
+let popoverEnvironmentId = '';
+let selectedLocalDownloadFiles = [];
+let localDownloadsPopoverOpen = false;
+let cloudManagerDownloadPending = false;
+let cloudManagerDownloadStatusMessage = '';
 let selectedLoggers = [];
 let selectedPackages = [];
 let allLoggers = {};  // Store all loggers for cascading filter
@@ -121,7 +200,7 @@ function syncThemeControls(resolvedTheme = getResolvedTheme()) {
 
 function refreshVisibleChartsForTheme() {
   if (!chartsToggleBtn || chartsToggleBtn.disabled || !chartsVisible) return;
-  if (!currentBatchInput && !filePathInput.value.trim()) return;
+  if (!currentBatchInput && !getActiveAnalysisFilePath()) return;
   fetchChartsData();
 }
 
@@ -138,6 +217,1317 @@ function setThemePreference(nextPreference) {
   if (!THEME_OPTIONS.has(nextPreference)) return;
   themePreference = nextPreference;
   applyThemePreference({ persist: true });
+}
+
+function getActiveAnalysisFilePath() {
+  if (currentAnalysisMode === 'multi-error') return '';
+  if (currentAnalyzedFilePath) return currentAnalyzedFilePath;
+  if (currentSourceMode === 'local') return filePathInput.value.trim();
+  return '';
+}
+
+function setCurrentAnalyzedFilePath(filePath) {
+  currentAnalyzedFilePath = filePath ? String(filePath).trim() : '';
+}
+
+function getCloudManagerSelectionState() {
+  return {
+    programId: cmProgramSelect?.value || '',
+    environmentId: cmEnvironmentSelect?.value || '',
+    selections: [...selectedCloudManagerLogs],
+    tier: currentCloudManagerTier,
+    days: cmDaysInput?.value.trim() || '1',
+    outputDirectory: cmOutputDirectoryInput?.value.trim() || ''
+  };
+}
+
+function persistCloudManagerSelectionState() {
+  localStorage.setItem(CM_SELECTIONS_STORAGE_KEY, JSON.stringify(getCloudManagerSelectionState()));
+}
+
+function readCloudManagerHistory() {
+  return safeJsonParse(localStorage.getItem(CM_HISTORY_STORAGE_KEY), []);
+}
+
+function writeCloudManagerHistory(entries) {
+  localStorage.setItem(CM_HISTORY_STORAGE_KEY, JSON.stringify(entries.slice(0, 12)));
+}
+
+function updateCloudManagerCacheStatus() {
+  if (!cmCacheStatus) return;
+  if (!cloudManagerLiveMetadata.programsAvailable) {
+    cmCacheStatus.textContent = 'Programs load live from aio. Select Cloud Manager to fetch available programs.';
+    return;
+  }
+
+  const refreshedAt = cloudManagerLiveMetadata.lastLoadedAt
+    ? new Date(cloudManagerLiveMetadata.lastLoadedAt).toLocaleString()
+    : 'unknown';
+  const cacheRoot = cmOutputDirectoryInput?.value.trim() || cloudManagerCacheData.cacheRoot || '~/.aem-logs';
+  cmCacheStatus.textContent = `Programs loaded live from aio. Cache root: ${cacheRoot}. Last updated: ${refreshedAt}.`;
+}
+
+function resetCloudManagerSummary() {
+  if (!cmDownloadSummary) return;
+  cmDownloadSummary.innerHTML = '';
+  cmDownloadSummary.classList.add('hidden');
+}
+
+function getCloudManagerEnvironmentMeta(environmentId = cmEnvironmentSelect?.value || '') {
+  return cloudManagerEnvironments.find((environment) => environment.id === environmentId) || null;
+}
+
+function getCloudManagerEnvironmentLabel(entry = {}) {
+  return entry.environmentName || entry.environmentId || 'Unknown environment';
+}
+
+function createCloudManagerRunRecord(base = {}) {
+  const timestamp = base.timestamp || new Date().toISOString();
+  const downloadedFilesDetailed = Array.isArray(base.downloadedFilesDetailed) ? base.downloadedFilesDetailed : [];
+  const supportedFiles = downloadedFilesDetailed.filter((file) => file.supported !== false).length;
+  return {
+    runId: base.runId || `cm-${Date.parse(timestamp) || Date.now()}`,
+    timestamp,
+    source: 'cloudmanager',
+    programId: base.programId || '',
+    environmentId: base.environmentId || '',
+    programName: base.programName || '',
+    environmentName: base.environmentName || '',
+    environmentType: base.environmentType || '',
+    selections: Array.isArray(base.selections) ? base.selections : [],
+    tier: base.tier || '',
+    days: String(base.days || '1'),
+    outputDirectory: base.outputDirectory || '',
+    analyzedFile: base.analyzedFile || '',
+    commandPreview: base.commandPreview || '',
+    fileDates: Array.isArray(base.fileDates) ? base.fileDates : [],
+    downloadedFiles: Array.isArray(base.downloadedFiles) ? base.downloadedFiles : [],
+    downloadedFilesDetailed,
+    downloads: Array.isArray(base.downloads) ? base.downloads : [],
+    summary: {
+      fileCount: downloadedFilesDetailed.length || (Array.isArray(base.downloadedFiles) ? base.downloadedFiles.length : 0),
+      supportedFiles,
+      selectionCount: Array.isArray(base.selections) ? base.selections.length : 0
+    }
+  };
+}
+
+function renderCloudManagerHistoryFilters() {
+  if (!cmHistoryEnvironmentFilter) return;
+  const history = readCloudManagerHistory();
+  const values = [...new Set(history.map((entry) => `${getCloudManagerEnvironmentLabel(entry)}::${entry.environmentId || ''}`))].sort();
+  const current = cloudManagerHistoryFilters.environment;
+  cmHistoryEnvironmentFilter.innerHTML = '<option value="">All environments</option>';
+  values.forEach((value) => {
+    const [label, id] = value.split('::');
+    const option = document.createElement('option');
+    option.value = id || label;
+    option.textContent = label;
+    cmHistoryEnvironmentFilter.appendChild(option);
+  });
+  cmHistoryEnvironmentFilter.value = current;
+}
+
+function setCloudManagerStatus(message = '') {
+  if (!cmStatusBanner) return;
+  const text = String(message || '').trim();
+  if (!text) {
+    cmStatusBanner.textContent = '';
+    cmStatusBanner.classList.add('hidden');
+    return;
+  }
+
+  cmStatusBanner.textContent = text;
+  cmStatusBanner.classList.remove('hidden');
+}
+
+function switchCloudManagerTab(tabName) {
+  // Hide all tab panes
+  document.querySelectorAll('.cloudmanager-tab-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  
+  // Show selected pane
+  const selectedPane = document.getElementById(`cmTab-${tabName}`);
+  if (selectedPane) {
+    selectedPane.classList.add('active');
+  }
+  
+  // Update active tab button
+  document.querySelectorAll('.cloudmanager-tab').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+  
+  // Save preference to localStorage
+  localStorage.setItem('aem_cmActiveTab', tabName);
+}
+
+function toggleCloudManagerAdvancedSettings() {
+  const accordion = document.querySelector('.cloudmanager-advanced-settings');
+  if (accordion) {
+    accordion.classList.toggle('expanded');
+    // Save preference to localStorage
+    const isExpanded = accordion.classList.contains('expanded');
+    localStorage.setItem('aem_cmAdvancedExpanded', isExpanded ? 'true' : 'false');
+  }
+}
+
+function restoreCloudManagerTabState() {
+  const savedTab = localStorage.getItem('aem_cmActiveTab');
+  const nextTab = savedTab === 'history' ? 'history' : 'download';
+  if (savedTab === 'setup') {
+    localStorage.setItem('aem_cmActiveTab', nextTab);
+  }
+  switchCloudManagerTab(nextTab);
+}
+
+function renderCloudManagerSummary(data) {
+  if (!cmDownloadSummary) return;
+  const files = Array.isArray(data.downloadedFilesDetailed) && data.downloadedFilesDetailed.length
+    ? data.downloadedFilesDetailed
+    : (Array.isArray(data.downloadedFiles) ? data.downloadedFiles.map((filePath) => ({
+        filePath,
+      fileName: filePath.split('/').pop() || filePath,
+      service: '',
+      logName: '',
+      extractedDate: '',
+      modifiedAt: '',
+      supported: true,
+      unsupportedReason: '',
+      logFamily: '',
+      logType: ''
+      })) : []);
+  const dates = Array.isArray(data.fileDates)
+    ? data.fileDates
+        .map((entry) => entry.extractedDate || entry.modifiedAt?.slice(0, 10) || '')
+        .filter(Boolean)
+        .slice(0, 4)
+        .join(', ')
+    : '';
+  const fileItems = files.length
+    ? `<div class="cloudmanager-download-files">${files.map((file) => {
+        const label = [file.service, file.logName].filter(Boolean).join(' / ');
+        const when = file.extractedDate || file.modifiedAt?.slice(0, 10) || '';
+        const supportLabel = file.supported === false
+          ? (file.unsupportedReason || 'Unsupported')
+          : (file.logFamily || file.logType || 'Ready for local analysis');
+        return `
+          <div class="cloudmanager-download-file">
+            <div>
+              <strong>${escapeHtml(file.fileName || file.filePath)}</strong>
+              ${label ? `<span>${escapeHtml(label)}</span>` : ''}
+              ${when ? `<span>${escapeHtml(when)}</span>` : ''}
+              <span>${escapeHtml(supportLabel)}</span>
+              <code>${escapeHtml(file.filePath)}</code>
+            </div>
+          </div>
+        `;
+      }).join('')}</div>`
+    : '<div>No downloaded files were returned.</div>';
+
+  cmDownloadSummary.innerHTML = `
+    <div><strong>Downloaded ${files.length}</strong> Cloud Manager file(s).</div>
+    <div>Cached under: <code>${escapeHtml(data.environmentDirectory || data.outputDirectory || '')}</code></div>
+    ${dates ? `<div>Extracted dates: <span>${escapeHtml(dates)}</span></div>` : ''}
+    <div>Analyze these files from <strong>Cloud Manager Logs</strong> in Local Path mode.</div>
+    ${fileItems}
+  `;
+  cmDownloadSummary.classList.remove('hidden');
+}
+
+function renderCloudManagerHistory() {
+  if (!cmHistoryList) return;
+  renderCloudManagerHistoryFilters();
+  const entries = readCloudManagerHistory().filter((entry) => {
+    const search = cloudManagerHistoryFilters.search.trim().toLowerCase();
+    const environmentFilter = cloudManagerHistoryFilters.environment;
+    const haystack = [
+      entry.programName,
+      entry.programId,
+      entry.environmentName,
+      entry.environmentId,
+      entry.outputDirectory,
+      ...(entry.selections || []).map((item) => `${item.service}/${item.logName}`)
+    ].join(' ').toLowerCase();
+    const matchesSearch = !search || haystack.includes(search);
+    const matchesEnvironment = !environmentFilter || entry.environmentId === environmentFilter || getCloudManagerEnvironmentLabel(entry) === environmentFilter;
+    return matchesSearch && matchesEnvironment;
+  });
+  if (!entries.length) {
+    cmHistoryList.innerHTML = '<div class="cloudmanager-hint">No Cloud Manager runs match the current filters.</div>';
+    return;
+  }
+
+  cmHistoryList.innerHTML = entries.map((entry) => `
+    <div class="cloudmanager-history-item" data-history-index="${escapeHtml(entry.runId || '')}">
+      <div>
+        <strong>${escapeHtml(entry.programName || entry.programId || 'Cloud Manager run')}</strong>
+        <span>${escapeHtml(entry.environmentName || entry.environmentId || '')}${entry.environmentType ? ` • ${escapeHtml(entry.environmentType)}` : ''}</span><br>
+        <span>${escapeHtml(new Date(entry.timestamp).toLocaleString())}</span><br>
+        <span>${escapeHtml((entry.selections || []).map(item => `${item.service}/${item.logName}`).join(', '))}</span><br>
+        <span>${escapeHtml(`${entry.summary?.fileCount || 0} files • ${entry.summary?.supportedFiles || 0} supported`)}</span><br>
+        <code>${escapeHtml(entry.outputDirectory || '')}</code>
+      </div>
+    </div>
+  `).join('');
+}
+
+function pushCloudManagerHistoryEntry(entry) {
+  const history = readCloudManagerHistory();
+  const normalized = createCloudManagerRunRecord(entry);
+  history.unshift(normalized);
+  writeCloudManagerHistory(history);
+  renderCloudManagerHistory();
+  renderLocalDownloadsList();
+}
+
+function buildCloudManagerSelectionLabels() {
+  const isPopover = localDownloadsPopoverOpen && popoverCmProgramSelect?.value && popoverCmEnvironmentSelect?.value;
+  const programName = isPopover
+    ? popoverCmProgramSelect.selectedOptions?.[0]?.textContent || ''
+    : cmProgramSelect?.selectedOptions?.[0]?.textContent || '';
+  const environmentName = isPopover
+    ? popoverCmEnvironmentSelect.selectedOptions?.[0]?.textContent || ''
+    : cmEnvironmentSelect.selectedOptions?.[0]?.textContent || '';
+  return { programName, environmentName };
+}
+
+function getCloudManagerSelectedEnvironmentLabel() {
+  const { programName, environmentName } = buildCloudManagerSelectionLabels();
+  if (!programName || !environmentName) return '';
+  return `${programName} / ${environmentName}`;
+}
+
+function updateCloudManagerHintState() {
+  if (cmProgramHint) {
+    cmProgramHint.textContent = cloudManagerLiveMetadata.programsAvailable
+      ? 'Choose a program from the live Cloud Manager list.'
+      : 'Cloud Manager programs will load live from aio.';
+  }
+  if (cmEnvironmentHint) {
+    cmEnvironmentHint.textContent = cmProgramSelect?.value
+      ? 'Choose an environment returned for the selected program.'
+      : 'Choose a program to load environments.';
+  }
+  if (cmLogHint) {
+    cmLogHint.textContent = cmEnvironmentSelect?.value
+      ? 'Choose a tier tab, then select one or more logs to download.'
+      : 'Choose an environment to load downloadable logs.';
+  }
+}
+
+function syncCloudManagerWorkspace() {
+  renderLocalDownloadsList();
+}
+
+function getRecentLocalDownloadCandidates() {
+  const usePopoverData = localDownloadsPopoverOpen && popoverCmProgramSelect?.value && popoverCmEnvironmentSelect?.value;
+  const activeCacheData = usePopoverData ? popoverCacheData : cloudManagerCacheData;
+
+  const candidates = [];
+  (activeCacheData.tiers || []).forEach((tierGroup) => {
+    (tierGroup.dates || []).forEach((dateGroup) => {
+      (dateGroup.files || []).forEach((file) => {
+        candidates.push({
+          id: file.filePath,
+          programName: buildCloudManagerSelectionLabels().programName,
+          environmentName: buildCloudManagerSelectionLabels().environmentName,
+          service: file.service || tierGroup.tier || '',
+          tier: file.tier || tierGroup.tier || '',
+          logName: file.logName || file.fileName || '',
+          filePath: file.filePath,
+          fileName: file.fileName || (file.filePath ? file.filePath.split('/').pop() : ''),
+          supported: file.supported !== false,
+          unsupportedReason: file.unsupportedReason || '',
+          logFamily: file.logFamily || '',
+          logType: file.logType || '',
+          modifiedAt: file.modifiedAt || '',
+          extractedDate: file.extractedDate || dateGroup.date || '',
+          size: file.size || 0
+        });
+      });
+    });
+  });
+  return candidates;
+}
+
+function getLogTypeIcon(logType) {
+  const icons = {
+    error: '⚠',
+    request: '↔',
+    cdn: '🌐',
+  };
+  return icons[logType] || '📄';
+}
+
+function getLogTypeLabel(logType) {
+  const labels = {
+    error: 'Error Logs',
+    request: 'Request Logs',
+    cdn: 'CDN Logs',
+  };
+  return labels[logType] || 'Other Logs';
+}
+
+function getLogTypeOrder(logType) {
+  const order = { error: 0, request: 1, cdn: 2 };
+  return order[logType] ?? 99;
+}
+
+function isLocalDownloadSelectable(file) {
+  return Boolean(file && file.supported && file.filePath);
+}
+
+function updateLocalDownloadsTrigger(candidates = []) {
+  if (!localDownloadsTrigger || !localDownloadsTriggerMeta) return;
+  const selectedCount = selectedLocalDownloadFiles.filter((id) => candidates.some((candidate) => candidate.id === id)).length;
+  const environmentLabel = localDownloadsPopoverOpen ? getPopoverEnvironmentLabel() : getCloudManagerSelectedEnvironmentLabel();
+  let summary = environmentLabel ? 'No cached logs yet' : 'Choose an environment';
+  if (environmentLabel && candidates.length) {
+    summary = selectedCount
+      ? `${selectedCount} selected • ${candidates.length} cached`
+      : `${candidates.length} cached in ${environmentLabel}`;
+  }
+  localDownloadsTriggerMeta.textContent = summary;
+}
+
+function setCloudManagerDownloadStatus(message = '', { pending = false } = {}) {
+  cloudManagerDownloadPending = Boolean(pending);
+  cloudManagerDownloadStatusMessage = String(message || '').trim();
+
+  if (cmAnalyzeBtn) {
+    cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
+    cmAnalyzeBtn.textContent = cloudManagerDownloadPending ? 'Caching…' : 'Cache Selected Logs';
+  }
+
+  if (refreshLocalDownloadsBtn) {
+    refreshLocalDownloadsBtn.disabled = cloudManagerDownloadPending;
+  }
+
+  if (cmProgressText) {
+    cmProgressText.textContent = cloudManagerDownloadStatusMessage;
+    cmProgressText.classList.toggle('hidden', !cloudManagerDownloadStatusMessage);
+  }
+
+  if (localDownloadsOverlayStatus) {
+    localDownloadsOverlayStatus.textContent = cloudManagerDownloadStatusMessage;
+    localDownloadsOverlayStatus.classList.toggle('hidden', !cloudManagerDownloadStatusMessage);
+  }
+}
+
+function setLocalDownloadsPopoverOpen(nextOpen) {
+  if (!localDownloadsPopover || !localDownloadsTrigger) return;
+  localDownloadsPopoverOpen = Boolean(nextOpen);
+  localDownloadsPopover.classList.toggle('hidden', !localDownloadsPopoverOpen);
+  localDownloadsTrigger.setAttribute('aria-expanded', String(localDownloadsPopoverOpen));
+}
+
+function toggleLocalDownloadsPopover() {
+  setLocalDownloadsPopoverOpen(!localDownloadsPopoverOpen);
+}
+
+async function loadCloudManagerCacheBrowser(programId = cmProgramSelect?.value || '', environmentId = cmEnvironmentSelect?.value || '', { silent = false } = {}) {
+  if (!programId || !environmentId) {
+    cloudManagerCacheData = {
+      cacheRoot: cmOutputDirectoryInput?.value.trim() || '',
+      environmentDirectory: '',
+      tiers: [],
+      summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+    selectedLocalDownloadFiles = [];
+    renderLocalDownloadsList();
+    return;
+  }
+
+  if (localDownloadsList && !silent) {
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">Loading cached Cloud Manager logs...</div>';
+  }
+
+  try {
+    const params = new URLSearchParams({ programId, environmentId });
+    const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Unable to load cached Cloud Manager logs');
+    }
+    cloudManagerCacheData = {
+      cacheRoot: data.cacheRoot || cmOutputDirectoryInput?.value.trim() || '',
+      environmentDirectory: data.environmentDirectory || '',
+      tiers: Array.isArray(data.tiers) ? data.tiers : [],
+      summary: data.summary || { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+  } catch (error) {
+    cloudManagerCacheData = {
+      cacheRoot: cmOutputDirectoryInput?.value.trim() || '',
+      environmentDirectory: '',
+      tiers: [],
+      summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+    if (!silent) showError(error.message);
+  }
+
+  const tiers = new Set((cloudManagerCacheData.tiers || []).map((group) => group.tier));
+  const availableTiers = cloudManagerLogOptions.map((entry) => normalizeCloudManagerTier(entry.service));
+  availableTiers.forEach((tier) => tiers.add(tier));
+  if (!tiers.has(currentCloudManagerTier)) {
+    currentCloudManagerTier = tiers.values().next().value || '';
+  }
+  renderLocalDownloadsList();
+}
+
+async function syncPopoverProgramDropdown() {
+  if (!popoverCmProgramSelect || !popoverCmEnvironmentSelect) return;
+  const programOptions = cmProgramSelect?.innerHTML || '<option value="">Program</option>';
+  popoverCmProgramSelect.innerHTML = programOptions;
+  popoverCmProgramSelect.value = cmProgramSelect?.value || '';
+  popoverProgramId = popoverCmProgramSelect.value || '';
+  popoverEnvironmentId = '';
+
+  if (!popoverCmProgramSelect.value) {
+    popoverCmEnvironmentSelect.innerHTML = '<option value="">Environment</option>';
+    popoverCmEnvironmentSelect.disabled = true;
+    return;
+  }
+
+  const programId = popoverCmProgramSelect.value;
+
+  if (cloudManagerEnvironments.length > 0 && cmProgramSelect?.value === programId) {
+    populatePopoverEnvironmentsFromCache(cloudManagerEnvironments, programId);
+    if (cmEnvironmentSelect?.value && cloudManagerEnvironments.some((e) => e.id === cmEnvironmentSelect.value)) {
+      popoverCmEnvironmentSelect.value = cmEnvironmentSelect.value;
+      popoverEnvironmentId = cmEnvironmentSelect.value;
+      if (cloudManagerCacheData.tiers?.length > 0) {
+        popoverCacheData = JSON.parse(JSON.stringify(cloudManagerCacheData));
+        activeLogTypeFilter = 'all';
+        selectedLocalDownloadFiles = [];
+        renderLocalDownloadsList();
+      } else {
+        await loadPopoverCache(popoverProgramId, popoverEnvironmentId);
+      }
+    } else {
+      popoverCacheData = {
+        cacheRoot: '',
+        environmentDirectory: '',
+        tiers: [],
+        summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+      };
+      selectedLocalDownloadFiles = [];
+      activeLogTypeFilter = 'all';
+      renderLocalDownloadsList();
+    }
+  } else {
+    await loadPopoverEnvironments(programId);
+  }
+}
+
+function populatePopoverEnvironmentsFromCache(environments, programId) {
+  if (!popoverCmEnvironmentSelect) return;
+  popoverCmEnvironmentSelect.innerHTML = '<option value="">Environment</option>';
+  environments.forEach((env) => {
+    const option = document.createElement('option');
+    option.value = env.id;
+    option.textContent = env.name + (env.type ? ` (${env.type})` : '');
+    popoverCmEnvironmentSelect.appendChild(option);
+  });
+  popoverCmEnvironmentSelect.disabled = false;
+}
+
+async function loadPopoverEnvironments(programId) {
+  if (!popoverCmEnvironmentSelect) return;
+  popoverCmEnvironmentSelect.innerHTML = '<option value="">Environment</option>';
+  popoverCmEnvironmentSelect.disabled = true;
+  if (!programId) return;
+
+  const cachedAllEnvironments = safeJsonParse(localStorage.getItem(CM_ENVIRONMENTS_CACHE_KEY), {});
+  const cachedEnvironments = cachedAllEnvironments[programId];
+
+  if (cachedEnvironments && Array.isArray(cachedEnvironments.environments)) {
+    populatePopoverEnvironmentsFromCache(cachedEnvironments.environments, programId);
+    if (cmEnvironmentSelect?.value && cachedEnvironments.environments.some((e) => e.id === cmEnvironmentSelect.value)) {
+      popoverCmEnvironmentSelect.value = cmEnvironmentSelect.value;
+      popoverEnvironmentId = cmEnvironmentSelect.value;
+      if (cloudManagerCacheData.tiers?.length > 0 && cmProgramSelect?.value === programId) {
+        popoverCacheData = JSON.parse(JSON.stringify(cloudManagerCacheData));
+        activeLogTypeFilter = 'all';
+        selectedLocalDownloadFiles = [];
+        renderLocalDownloadsList();
+      } else {
+        await loadPopoverCache(popoverProgramId || programId, popoverEnvironmentId);
+      }
+    } else {
+      popoverCacheData = {
+        cacheRoot: '',
+        environmentDirectory: '',
+        tiers: [],
+        summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+      };
+      selectedLocalDownloadFiles = [];
+      activeLogTypeFilter = 'all';
+      renderLocalDownloadsList();
+    }
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/cloudmanager/programs/${programId}/environments`);
+    const data = await response.json();
+    if (!data.success || !data.environments?.length) return;
+
+    populatePopoverEnvironmentsFromCache(data.environments, programId);
+
+    if (cmEnvironmentSelect?.value && data.environments.some((e) => e.id === cmEnvironmentSelect.value)) {
+      popoverCmEnvironmentSelect.value = cmEnvironmentSelect.value;
+      popoverEnvironmentId = cmEnvironmentSelect.value;
+      await loadPopoverCache(popoverProgramId || programId, popoverEnvironmentId);
+    } else {
+      popoverCacheData = {
+        cacheRoot: '',
+        environmentDirectory: '',
+        tiers: [],
+        summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+      };
+      selectedLocalDownloadFiles = [];
+      activeLogTypeFilter = 'all';
+      renderLocalDownloadsList();
+    }
+  } catch (error) {
+    console.error('[Popover] Failed to load environments:', error);
+  }
+}
+
+async function loadPopoverCache(programId, environmentId, { silent = false } = {}) {
+  if (!programId || !environmentId) {
+    popoverCacheData = {
+      cacheRoot: '',
+      environmentDirectory: '',
+      tiers: [],
+      summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+    selectedLocalDownloadFiles = [];
+    activeLogTypeFilter = 'all';
+    renderLocalDownloadsList();
+    return;
+  }
+
+  if (!silent) {
+    localDownloadsList.innerHTML = `
+      <div class="popover-loading-container">
+        <div class="popover-loading-spinner"></div>
+        <div class="popover-loading-text">Loading cached logs...</div>
+      </div>
+    `;
+  }
+
+  try {
+    const params = new URLSearchParams({ programId, environmentId });
+    const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Unable to load cached logs');
+    }
+    popoverCacheData = {
+      cacheRoot: data.cacheRoot || '',
+      environmentDirectory: data.environmentDirectory || '',
+      tiers: Array.isArray(data.tiers) ? data.tiers : [],
+      summary: data.summary || { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+  } catch (error) {
+    popoverCacheData = {
+      cacheRoot: '',
+      environmentDirectory: '',
+      tiers: [],
+      summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+    };
+    if (!silent) {
+      localDownloadsList.innerHTML = `<div class="cloudmanager-hint">${escapeHtml(error.message)}</div>`;
+    }
+    return;
+  }
+
+  activeLogTypeFilter = 'all';
+  selectedLocalDownloadFiles = [];
+  renderLocalDownloadsList();
+}
+
+function getPopoverEnvironmentLabel() {
+  if (!popoverCmProgramSelect?.value || !popoverCmEnvironmentSelect?.value) return '';
+  const programText = popoverCmProgramSelect.selectedOptions[0]?.textContent || '';
+  const envText = popoverCmEnvironmentSelect.selectedOptions[0]?.textContent || '';
+  return `${programText} / ${envText}`;
+}
+
+function formatLocalDownloadsSize(size) {
+  const value = Number(size || 0);
+  if (!value) return '';
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
+function applySelectedDownloadsToInput() {
+  const candidates = getRecentLocalDownloadCandidates();
+  const selectedFiles = selectedLocalDownloadFiles
+    .map((id) => candidates.find((candidate) => candidate.id === id))
+    .filter(Boolean);
+
+  if (!selectedFiles.length) {
+    filePathInput.value = '';
+    return;
+  }
+
+  if (selectedFiles.length > 1) {
+    const nonErrorSelection = selectedFiles.find((file) => file.logType && file.logType !== 'error');
+    if (nonErrorSelection) {
+      showToast('Multiple-file analysis is only supported for error logs', 'warning');
+      return;
+    }
+  }
+
+  filePathInput.value = selectedFiles.map((file) => file.filePath).join(',');
+}
+
+function renderLocalDownloadsList() {
+  if (!localDownloadsList) return;
+
+  const usePopoverData = localDownloadsPopoverOpen && popoverCmProgramSelect?.value && popoverCmEnvironmentSelect?.value;
+  const activeCacheData = usePopoverData ? popoverCacheData : cloudManagerCacheData;
+  const activeProgramId = usePopoverData ? popoverCmProgramSelect.value : cmProgramSelect?.value;
+  const activeEnvironmentId = usePopoverData ? popoverCmEnvironmentSelect.value : cmEnvironmentSelect?.value;
+
+  const candidates = [];
+  (activeCacheData.tiers || []).forEach((tierGroup) => {
+    (tierGroup.dates || []).forEach((dateGroup) => {
+      (dateGroup.files || []).forEach((file) => {
+        candidates.push({
+          id: file.filePath,
+          tier: file.tier || tierGroup.tier || '',
+          logName: file.logName || file.fileName || '',
+          filePath: file.filePath,
+          fileName: file.fileName || (file.filePath ? file.filePath.split('/').pop() : ''),
+          supported: file.supported !== false,
+          unsupportedReason: file.unsupportedReason || '',
+          logFamily: file.logFamily || '',
+          logType: file.logType || '',
+          modifiedAt: file.modifiedAt || '',
+          extractedDate: file.extractedDate || dateGroup.date || '',
+          size: file.size || 0
+        });
+      });
+    });
+  });
+
+  selectedLocalDownloadFiles = selectedLocalDownloadFiles.filter((id) => candidates.some((candidate) => candidate.id === id));
+  updateLocalDownloadsTrigger(candidates);
+
+  if (!activeProgramId || !activeEnvironmentId) {
+    const hint = usePopoverData
+      ? 'Select a program and environment to browse the cache.'
+      : 'Select a program and environment in the Cloud Manager tab to browse the cache.';
+    localDownloadsList.innerHTML = `<div class="cloudmanager-hint">${hint}</div>`;
+    if (cmLogTypeTabs) cmLogTypeTabs.innerHTML = '';
+    return;
+  }
+
+  const typeGroups = {};
+  candidates.forEach((file) => {
+    const logType = file.logType || 'unknown';
+    if (!typeGroups[logType]) {
+      typeGroups[logType] = [];
+    }
+    typeGroups[logType].push(file);
+  });
+
+  const sortedTypes = Object.keys(typeGroups).sort((a, b) => getLogTypeOrder(a) - getLogTypeOrder(b));
+
+  if (cmLogTypeTabs) {
+    const totalCount = candidates.length;
+    cmLogTypeTabs.innerHTML = `
+      <button class="cm-log-type-tab ${activeLogTypeFilter === 'all' ? 'active' : ''}" type="button" data-type="all">
+        All Logs
+        <span class="tab-count">${totalCount}</span>
+      </button>
+      ${sortedTypes.map((type) => `
+        <button class="cm-log-type-tab ${activeLogTypeFilter === type ? 'active' : ''}" type="button" data-type="${escapeHtml(type)}">
+          ${getLogTypeIcon(type)} ${getLogTypeLabel(type)}
+          <span class="tab-count">${typeGroups[type].length}</span>
+        </button>
+      `).join('')}
+    `;
+  }
+
+  const filteredTypes = activeLogTypeFilter === 'all'
+    ? sortedTypes
+    : sortedTypes.filter((t) => t === activeLogTypeFilter);
+
+  if (!filteredTypes.length) {
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">No cached logs found for this environment.</div>';
+    return;
+  }
+
+  const environmentLabel = usePopoverData ? getPopoverEnvironmentLabel() : getCloudManagerSelectedEnvironmentLabel();
+  const totalCached = activeCacheData.summary?.totalFiles || 0;
+
+  let html = `
+    <div class="cm-picker-meta-card">
+      <div>
+        <strong>${escapeHtml(environmentLabel || 'Cloud Manager environment')}</strong>
+        <span>${escapeHtml(activeCacheData.environmentDirectory || activeCacheData.cacheRoot || 'Cache path not available')}</span>
+      </div>
+      <div class="cm-picker-stat">
+        <strong>${escapeHtml(String(totalCached))}</strong>
+        <span>cached logs</span>
+      </div>
+    </div>
+  `;
+
+  filteredTypes.forEach((logType) => {
+    const files = typeGroups[logType];
+
+    const tierGroups = {};
+    files.forEach((file) => {
+      const tier = file.tier || 'other';
+      if (!tierGroups[tier]) {
+        tierGroups[tier] = [];
+      }
+      tierGroups[tier].push(file);
+    });
+
+    const sortedTiers = Object.keys(tierGroups).sort((a, b) => {
+      const tierOrder = { author: 0, publish: 1, dispatcher: 2 };
+      return (tierOrder[a] ?? 99) - (tierOrder[b] ?? 99) || a.localeCompare(b);
+    });
+
+    html += `
+      <div class="cm-type-group">
+        <div class="cm-type-group-header">
+          <h4>
+            <span class="type-icon">${getLogTypeIcon(logType)}</span>
+            ${getLogTypeLabel(logType)}
+          </h4>
+          <span class="group-meta">${files.length} file${files.length !== 1 ? 's' : ''}</span>
+        </div>
+    `;
+
+    sortedTiers.forEach((tier) => {
+      const tierFiles = tierGroups[tier];
+
+      const dateGroups = {};
+      tierFiles.forEach((file) => {
+        const date = file.extractedDate || 'unknown';
+        if (!dateGroups[date]) {
+          dateGroups[date] = [];
+        }
+        dateGroups[date].push(file);
+      });
+
+      const sortedDates = Object.keys(dateGroups).sort().reverse();
+
+      html += `
+        <div class="cm-tier-subgroup">
+          <div class="cm-tier-subgroup-label">${escapeHtml(tier)}</div>
+      `;
+
+      sortedDates.forEach((date) => {
+        const dateFiles = dateGroups[date];
+
+        html += `
+          <div class="cm-date-subgroup">
+            <div class="cm-date-subgroup-header">${escapeHtml(date)}</div>
+        `;
+
+        dateFiles.forEach((file) => {
+          const checked = selectedLocalDownloadFiles.includes(file.filePath) ? 'checked' : '';
+          const selectable = isLocalDownloadSelectable(file);
+          const supportLabel = selectable
+            ? (file.logFamily || file.logType || 'Ready for analysis')
+            : (file.unsupportedReason || 'Unsupported');
+
+          html += `
+            <div class="cm-picker-cache-item ${checked ? 'selected' : ''} ${selectable ? '' : 'disabled'}">
+              <label class="cm-picker-cache-copy">
+                <input type="checkbox" data-local-download-id="${escapeHtml(file.filePath)}" ${checked} ${selectable ? '' : 'disabled'}>
+                <div>
+                  <strong>${escapeHtml(file.fileName)}</strong>
+                  <span>${escapeHtml(supportLabel)}</span>
+                  <span>${escapeHtml(formatLocalDownloadsSize(file.size))}</span>
+                  <code>${escapeHtml(file.filePath)}</code>
+                </div>
+              </label>
+              <div class="cm-picker-cache-actions">
+                <button class="upload-btn secondary compact" type="button" data-cache-analyze-path="${escapeHtml(file.filePath)}" ${selectable ? '' : 'disabled'}>Analyze</button>
+              </div>
+            </div>
+          `;
+        });
+
+        html += `</div>`;
+      });
+
+      html += `</div>`;
+    });
+
+    html += `</div>`;
+  });
+
+  localDownloadsList.innerHTML = html;
+}
+
+function normalizeCloudManagerTier(service = '') {
+  const value = String(service || '').toLowerCase();
+  if (value.includes('author')) return 'author';
+  if (value.includes('publish')) return 'publish';
+  if (value.includes('dispatcher')) return 'dispatcher';
+  return value || 'other';
+}
+
+function getCloudManagerTierOrder(tier) {
+  const order = { author: 0, publish: 1, dispatcher: 2 };
+  return order[tier] ?? 99;
+}
+
+function getCloudManagerTierGroups() {
+  const groups = {};
+  cloudManagerLogOptions.forEach((entry) => {
+    const tier = normalizeCloudManagerTier(entry.service);
+    if (!groups[tier]) groups[tier] = [];
+    groups[tier].push(entry);
+  });
+  return Object.entries(groups)
+    .sort((a, b) => getCloudManagerTierOrder(a[0]) - getCloudManagerTierOrder(b[0]) || a[0].localeCompare(b[0]))
+    .map(([tier, entries]) => ({ tier, entries }));
+}
+
+function renderCloudManagerTierTabs() {
+  if (!cmTierTabs) return;
+  const groups = getCloudManagerTierGroups();
+  if (!groups.length) {
+    cmTierTabs.innerHTML = '';
+    currentCloudManagerTier = '';
+    return;
+  }
+
+  const hasCurrentTier = groups.some((group) => group.tier === currentCloudManagerTier);
+  if (!hasCurrentTier) {
+    currentCloudManagerTier = groups[0].tier;
+  }
+
+  cmTierTabs.innerHTML = groups.map((group) => `
+    <button class="cloudmanager-tier-tab ${group.tier === currentCloudManagerTier ? 'active' : ''}" type="button" data-tier="${group.tier}">
+      ${escapeHtml(group.tier)}
+    </button>
+  `).join('');
+}
+
+function renderCloudManagerLogOptions() {
+  if (!cmLogOptionList) return;
+  renderCloudManagerTierTabs();
+  const groups = getCloudManagerTierGroups();
+  const activeGroup = groups.find((group) => group.tier === currentCloudManagerTier);
+
+  if (!activeGroup) {
+    cmLogOptionList.innerHTML = '<div class="cloudmanager-hint">No log options loaded yet.</div>';
+    cmLogOptionList.classList.add('disabled');
+    return;
+  }
+
+  const selectedKeys = new Set(selectedCloudManagerLogs.map((entry) => `${entry.service}::${entry.logName}`));
+  cmLogOptionList.innerHTML = activeGroup.entries.map((entry) => {
+    const key = `${entry.service}::${entry.name}`;
+    const checked = selectedKeys.has(key) ? 'checked' : '';
+    return `
+      <label class="cloudmanager-log-option">
+        <input type="checkbox" data-log-key="${escapeHtml(key)}" ${checked}>
+        <span>
+          <strong>${escapeHtml(entry.service)}</strong>
+          <span>${escapeHtml(entry.name)}</span>
+        </span>
+      </label>
+    `;
+  }).join('');
+  cmLogOptionList.classList.remove('disabled');
+  syncCloudManagerWorkspace();
+}
+
+function getSelectedCloudManagerLogOptions() {
+  return cloudManagerLogOptions.filter((entry) => {
+    const key = `${entry.service}::${entry.name}`;
+    return selectedCloudManagerLogs.some((selected) => `${selected.service}::${selected.logName}` === key);
+  });
+}
+
+async function refreshCloudManagerCommandPreview() {
+  if (!cmCommandPreview) return;
+  const state = getCloudManagerSelectionState();
+  if (!state.days) state.days = '1';
+  if (cmEstimatedDateRange) {
+    const parsedDays = Math.max(Number(state.days || 1), 1);
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - Math.max(parsedDays - 1, 0));
+    cmEstimatedDateRange.textContent = `Estimated range: ${startDate.toISOString().slice(0, 10)} to ${endDate.toISOString().slice(0, 10)}`;
+  }
+
+  if (!state.programId || !state.environmentId || !state.selections.length) {
+    cmCommandPreview.innerHTML = '';
+    cmCommandPreview.classList.add('hidden');
+    return;
+  }
+
+  cloudManagerCommandPreviewPending = true;
+  try {
+    const response = await fetch('/api/cloudmanager/command-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+    const data = await response.json();
+    if (!data.success) return;
+
+    const commands = (data.commands || []).map((entry) => `<code>${escapeHtml(entry.command)}</code>`).join('');
+    cmCommandPreview.innerHTML = `
+      <div><strong>Command preview</strong></div>
+      <div>${escapeHtml(data.estimatedDateRange?.label || '')}</div>
+      ${commands}
+    `;
+    cmCommandPreview.classList.remove('hidden');
+  } catch {
+    // Best-effort preview.
+  } finally {
+    cloudManagerCommandPreviewPending = false;
+  }
+}
+
+async function validateCloudManagerOutputDirectory() {
+  if (!cmOutputDirectoryInput) return false;
+  const outputDirectory = cmOutputDirectoryInput.value.trim();
+  if (cmOutputDirectoryHint) {
+    cmOutputDirectoryHint.textContent = outputDirectory
+      ? `Persistent cache root: ${outputDirectory}`
+      : 'Cloud Manager downloads are cached automatically for browsing and analysis.';
+  }
+  updateCloudManagerActionState(Boolean(outputDirectory));
+  return Boolean(outputDirectory);
+}
+
+function updateCloudManagerActionState(outputDirectoryValid) {
+  const hasSelection = Boolean(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
+  const outputReady = typeof outputDirectoryValid === 'boolean'
+    ? outputDirectoryValid
+    : Boolean(cmOutputDirectoryInput?.value.trim());
+  if (cmAnalyzeBtn) {
+    cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(hasSelection && outputReady);
+  }
+  updateCloudManagerHintState();
+}
+
+function restoreCloudManagerSelections() {
+  const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+  if (cmDaysInput && saved.days) cmDaysInput.value = String(saved.days);
+  currentCloudManagerTier = saved.tier || '';
+  syncCloudManagerWorkspace();
+}
+
+function setSourceMode(mode, { persist = true } = {}) {
+  currentSourceMode = mode === 'cloudmanager' ? 'cloudmanager' : 'local';
+  if (currentSourceMode !== 'local') {
+    setLocalDownloadsPopoverOpen(false);
+  }
+
+  sourceModeButtons.forEach((button) => {
+    const isActive = button.dataset.sourceMode === currentSourceMode;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  if (localSourcePanel) localSourcePanel.classList.toggle('hidden', currentSourceMode !== 'local');
+  if (cloudManagerPanel) cloudManagerPanel.classList.toggle('hidden', currentSourceMode !== 'cloudmanager');
+  if (tailBtn) {
+    tailBtn.disabled = currentSourceMode !== 'local';
+    tailBtn.title = currentSourceMode === 'local'
+      ? 'Watch a log file for new entries in real-time'
+      : 'Tail is only available for local file paths';
+  }
+
+  if (persist) {
+    localStorage.setItem(SOURCE_MODE_STORAGE_KEY, currentSourceMode);
+  }
+
+  if (currentSourceMode === 'local') {
+    currentCloudManagerRunContext = null;
+    renderLocalDownloadsList();
+  }
+
+  if (currentSourceMode === 'cloudmanager') {
+    resetCloudManagerSummary();
+    setCloudManagerStatus('');
+    restoreCloudManagerSelections();
+    updateCloudManagerCacheStatus();
+    updateCloudManagerActionState();
+    renderCloudManagerHistory();
+    ensureCloudManagerProgramsLoaded();
+  }
+}
+
+function renderCloudManagerResultBadges() {}
+
+async function ensureCloudManagerProgramsLoaded({ force = false, silent = false } = {}) {
+  const previousMarkup = cmProgramSelect.innerHTML;
+  const hadExistingOptions = cmProgramSelect.options.length > 1;
+
+  const cachedPrograms = !force ? safeJsonParse(localStorage.getItem(CM_PROGRAMS_CACHE_KEY), null) : null;
+  if (cachedPrograms && Array.isArray(cachedPrograms.programs)) {
+    cloudManagerPrograms = cachedPrograms.programs;
+    cloudManagerLiveMetadata = {
+      lastLoadedAt: cachedPrograms.loadedAt || new Date().toISOString(),
+      programsAvailable: cloudManagerPrograms.length > 0
+    };
+    if (cmOutputDirectoryInput && cachedPrograms.cacheRoot) {
+      cmOutputDirectoryInput.value = cachedPrograms.cacheRoot;
+      cloudManagerCacheData.cacheRoot = cachedPrograms.cacheRoot;
+      if (!silent) await validateCloudManagerOutputDirectory();
+    }
+    if (!silent) updateCloudManagerCacheStatus();
+    cmProgramSelect.innerHTML = '<option value="">Select program</option>';
+    cloudManagerPrograms.forEach((program) => {
+      const option = document.createElement('option');
+      option.value = program.id;
+      option.textContent = program.name;
+      cmProgramSelect.appendChild(option);
+    });
+
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.programId && Array.from(cmProgramSelect.options).some((option) => option.value === saved.programId)) {
+      cmProgramSelect.value = saved.programId;
+      await loadCloudManagerEnvironments(saved.programId, { force, silent });
+    }
+    cmProgramSelect.disabled = false;
+    cloudManagerProgramsLoaded = true;
+    if (!silent) {
+      updateCloudManagerActionState();
+      syncCloudManagerWorkspace();
+    }
+    return;
+  }
+
+  if (!silent) {
+    cmProgramSelect.disabled = true;
+    cmProgramSelect.innerHTML = '<option value="">Loading programs...</option>';
+    setCloudManagerStatus('Loading Cloud Manager programs...');
+  }
+
+  try {
+    const response = await fetch('/api/cloudmanager/programs');
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load Cloud Manager programs');
+    }
+
+    localStorage.setItem(CM_PROGRAMS_CACHE_KEY, JSON.stringify({
+      programs: data.programs || [],
+      loadedAt: data.loadedAt || new Date().toISOString(),
+      cacheRoot: data.cacheRoot
+    }));
+
+    cloudManagerLiveMetadata = {
+      lastLoadedAt: data.loadedAt || new Date().toISOString(),
+      programsAvailable: Array.isArray(data.programs) && data.programs.length > 0
+    };
+    cloudManagerPrograms = data.programs || [];
+    if (cmOutputDirectoryInput && data.cacheRoot) {
+      cmOutputDirectoryInput.value = data.cacheRoot;
+      cloudManagerCacheData.cacheRoot = data.cacheRoot;
+      if (!silent) await validateCloudManagerOutputDirectory();
+    }
+    if (!silent) updateCloudManagerCacheStatus();
+    cmProgramSelect.innerHTML = '<option value="">Select program</option>';
+    (data.programs || []).forEach((program) => {
+      const option = document.createElement('option');
+      option.value = program.id;
+      option.textContent = program.name;
+      cmProgramSelect.appendChild(option);
+    });
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.programId && Array.from(cmProgramSelect.options).some((option) => option.value === saved.programId)) {
+      cmProgramSelect.value = saved.programId;
+      await loadCloudManagerEnvironments(saved.programId, { force, silent });
+    }
+    cmProgramSelect.disabled = false;
+    cloudManagerProgramsLoaded = true;
+    if (!silent) {
+      setCloudManagerStatus((data.programs || []).length ? '' : 'No Cloud Manager programs were returned.');
+      updateCloudManagerActionState();
+      syncCloudManagerWorkspace();
+    }
+  } catch (error) {
+    cloudManagerLiveMetadata = { lastLoadedAt: '', programsAvailable: false };
+    cloudManagerPrograms = [];
+    if (!silent) updateCloudManagerCacheStatus();
+    cmProgramSelect.innerHTML = hadExistingOptions
+      ? previousMarkup
+      : '<option value="">Unable to load programs</option>';
+    cmProgramSelect.disabled = false;
+    if (!silent) {
+      setCloudManagerStatus('');
+      showError(error.message);
+    }
+  }
+}
+
+async function loadCloudManagerEnvironments(programId, { force = false, silent = false } = {}) {
+  const cachedAllEnvironments = !force ? safeJsonParse(localStorage.getItem(CM_ENVIRONMENTS_CACHE_KEY), {}) : {};
+  const cachedEnvironments = cachedAllEnvironments[programId];
+
+  if (cachedEnvironments && Array.isArray(cachedEnvironments.environments)) {
+    cloudManagerEnvironments = cachedEnvironments.environments;
+    cloudManagerLiveMetadata.lastLoadedAt = cachedEnvironments.loadedAt || cloudManagerLiveMetadata.lastLoadedAt;
+    if (!silent) updateCloudManagerCacheStatus();
+    cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
+    cloudManagerEnvironments.forEach((environment) => {
+      const option = document.createElement('option');
+      option.value = environment.id;
+      option.textContent = environment.type
+        ? `${environment.name} (${environment.type})`
+        : environment.name;
+      cmEnvironmentSelect.appendChild(option);
+    });
+    cmEnvironmentSelect.disabled = false;
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.environmentId && Array.from(cmEnvironmentSelect.options).some((option) => option.value === saved.environmentId)) {
+      cmEnvironmentSelect.value = saved.environmentId;
+      await loadCloudManagerLogOptions(programId, saved.environmentId, { force });
+      await loadCloudManagerCacheBrowser(programId, saved.environmentId, { silent: true });
+    }
+    if (!silent) syncCloudManagerWorkspace();
+    return;
+  }
+
+  if (!silent) {
+    cmEnvironmentSelect.disabled = true;
+    cmEnvironmentSelect.innerHTML = '<option value="">Loading environments...</option>';
+  }
+  cloudManagerLogOptions = [];
+  selectedCloudManagerLogs = [];
+  if (!silent) {
+    renderCloudManagerLogOptions();
+    setCloudManagerStatus('Loading environments for the selected program...');
+  }
+
+  try {
+    const response = await fetch(`/api/cloudmanager/programs/${encodeURIComponent(programId)}/environments`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load environments');
+    }
+
+    const nextAllEnvironments = safeJsonParse(localStorage.getItem(CM_ENVIRONMENTS_CACHE_KEY), {});
+    nextAllEnvironments[programId] = {
+      environments: data.environments || [],
+      loadedAt: data.loadedAt || new Date().toISOString()
+    };
+    localStorage.setItem(CM_ENVIRONMENTS_CACHE_KEY, JSON.stringify(nextAllEnvironments));
+
+    cloudManagerLiveMetadata.lastLoadedAt = data.loadedAt || cloudManagerLiveMetadata.lastLoadedAt;
+    cloudManagerEnvironments = data.environments || [];
+    updateCloudManagerCacheStatus();
+    cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
+    (data.environments || []).forEach((environment) => {
+      const option = document.createElement('option');
+      option.value = environment.id;
+      option.textContent = environment.type
+        ? `${environment.name} (${environment.type})`
+        : environment.name;
+      cmEnvironmentSelect.appendChild(option);
+    });
+    cmEnvironmentSelect.disabled = false;
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    if (saved.environmentId && Array.from(cmEnvironmentSelect.options).some((option) => option.value === saved.environmentId)) {
+      cmEnvironmentSelect.value = saved.environmentId;
+      await loadCloudManagerLogOptions(programId, saved.environmentId, { force });
+      await loadCloudManagerCacheBrowser(programId, saved.environmentId, { silent: true });
+    }
+    if (!silent) {
+      setCloudManagerStatus((data.environments || []).length ? '' : 'No environments were returned for the selected program.');
+      syncCloudManagerWorkspace();
+    }
+  } catch (error) {
+    cloudManagerEnvironments = [];
+    if (!silent) {
+      cmEnvironmentSelect.innerHTML = '<option value="">Unable to load environments</option>';
+      setCloudManagerStatus('');
+      showError(error.message);
+    }
+  }
+}
+
+async function loadCloudManagerLogOptions(programId, environmentId, { force = false } = {}) {
+  const cachedAllOptions = !force ? safeJsonParse(localStorage.getItem(CM_LOG_OPTIONS_CACHE_KEY), {}) : {};
+  const cacheKey = `${programId}::${environmentId}`;
+  const cachedOptions = cachedAllOptions[cacheKey];
+
+  if (cachedOptions && Array.isArray(cachedOptions.logOptions)) {
+    cloudManagerLogOptions = cachedOptions.logOptions;
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    currentCloudManagerTier = saved.tier || currentCloudManagerTier;
+    selectedCloudManagerLogs = Array.isArray(saved.selections)
+      ? saved.selections.filter((entry) =>
+          cloudManagerLogOptions.some((option) => option.service === entry.service && option.name === entry.logName)
+        )
+      : [];
+    renderCloudManagerLogOptions();
+    await refreshCloudManagerCommandPreview();
+    await loadCloudManagerCacheBrowser(programId, environmentId, { silent: true });
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+    return;
+  }
+
+  cloudManagerLogOptions = [];
+  selectedCloudManagerLogs = [];
+  currentCloudManagerTier = '';
+  renderCloudManagerLogOptions();
+  setCloudManagerStatus('Loading available service and log options...');
+
+  try {
+    const params = new URLSearchParams({ programId });
+    const response = await fetch(`/api/cloudmanager/environments/${encodeURIComponent(environmentId)}/log-options?${params.toString()}`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to load log options');
+    }
+
+    const nextAllOptions = safeJsonParse(localStorage.getItem(CM_LOG_OPTIONS_CACHE_KEY), {});
+    nextAllOptions[cacheKey] = {
+      logOptions: data.logOptions || [],
+      loadedAt: data.loadedAt || new Date().toISOString()
+    };
+    localStorage.setItem(CM_LOG_OPTIONS_CACHE_KEY, JSON.stringify(nextAllOptions));
+
+    cloudManagerLogOptions = data.logOptions || [];
+    const saved = safeJsonParse(localStorage.getItem(CM_SELECTIONS_STORAGE_KEY), {});
+    currentCloudManagerTier = saved.tier || currentCloudManagerTier;
+    selectedCloudManagerLogs = Array.isArray(saved.selections)
+      ? saved.selections.filter((entry) =>
+          cloudManagerLogOptions.some((option) => option.service === entry.service && option.name === entry.logName)
+        )
+      : [];
+    renderCloudManagerLogOptions();
+    setCloudManagerStatus((data.logOptions || []).length ? '' : 'No downloadable log options were returned for the selected environment.');
+    await refreshCloudManagerCommandPreview();
+    await loadCloudManagerCacheBrowser(programId, environmentId, { silent: true });
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  } catch (error) {
+    cloudManagerLogOptions = [];
+    selectedCloudManagerLogs = [];
+    renderCloudManagerLogOptions();
+    setCloudManagerStatus('');
+    showError(error.message);
+  }
 }
 
 if (themeMediaQuery && typeof themeMediaQuery.addEventListener === 'function') {
@@ -158,6 +1548,300 @@ themeButtons.forEach(button => {
   button.addEventListener('click', () => {
     setThemePreference(button.dataset.themeOption);
   });
+});
+
+sourceModeButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setSourceMode(button.dataset.sourceMode);
+  });
+});
+
+if (cmProgramSelect) {
+  cmProgramSelect.addEventListener('change', async () => {
+    resetCloudManagerSummary();
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+    cmEnvironmentSelect.innerHTML = '<option value="">Select environment</option>';
+    cloudManagerLogOptions = [];
+    selectedCloudManagerLogs = [];
+    renderCloudManagerLogOptions();
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+
+    if (!cmProgramSelect.value) {
+      cmEnvironmentSelect.disabled = true;
+      persistCloudManagerSelectionState();
+      await loadCloudManagerCacheBrowser('', '', { silent: true });
+      return;
+    }
+
+    await loadCloudManagerEnvironments(cmProgramSelect.value);
+    persistCloudManagerSelectionState();
+  });
+}
+
+if (cmEnvironmentSelect) {
+  cmEnvironmentSelect.addEventListener('change', async () => {
+    resetCloudManagerSummary();
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+    if (!cmEnvironmentSelect.value || !cmProgramSelect.value) {
+      cloudManagerLogOptions = [];
+      selectedCloudManagerLogs = [];
+      renderCloudManagerLogOptions();
+      await loadCloudManagerCacheBrowser('', '', { silent: true });
+      persistCloudManagerSelectionState();
+      await refreshCloudManagerCommandPreview();
+      updateCloudManagerActionState();
+      return;
+    }
+
+    await loadCloudManagerLogOptions(cmProgramSelect.value, cmEnvironmentSelect.value);
+    persistCloudManagerSelectionState();
+  });
+}
+
+if (cmLogOptionList) {
+  cmLogOptionList.addEventListener('change', async (event) => {
+    const input = event.target.closest('input[type="checkbox"][data-log-key]');
+    if (!input) return;
+    const selected = cloudManagerLogOptions.find((entry) => `${entry.service}::${entry.name}` === input.dataset.logKey);
+    if (!selected) return;
+
+    const key = `${selected.service}::${selected.name}`;
+    if (input.checked) {
+      if (!selectedCloudManagerLogs.some((entry) => `${entry.service}::${entry.logName}` === key)) {
+        selectedCloudManagerLogs.push({ service: selected.service, logName: selected.name });
+      }
+    } else {
+      selectedCloudManagerLogs = selectedCloudManagerLogs.filter((entry) => `${entry.service}::${entry.logName}` !== key);
+    }
+
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  });
+}
+
+if (cmTierTabs) {
+  cmTierTabs.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-tier]');
+    if (!button) return;
+    currentCloudManagerTier = button.dataset.tier || '';
+    persistCloudManagerSelectionState();
+    renderCloudManagerLogOptions();
+    renderLocalDownloadsList();
+    await refreshCloudManagerCommandPreview();
+  });
+}
+
+if (cmDaysInput) {
+  cmDaysInput.addEventListener('input', async () => {
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  });
+}
+
+if (cmOutputDirectoryInput) {
+  cmOutputDirectoryInput.addEventListener('blur', async () => {
+    await validateCloudManagerOutputDirectory();
+  });
+}
+
+/* === Cloud Manager Tab Navigation === */
+document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
+  tabBtn.addEventListener('click', () => {
+    const tabName = tabBtn.dataset.tab;
+    switchCloudManagerTab(tabName);
+  });
+});
+
+if (cmHistorySearchInput) {
+  cmHistorySearchInput.addEventListener('input', () => {
+    cloudManagerHistoryFilters.search = cmHistorySearchInput.value || '';
+    renderCloudManagerHistory();
+  });
+}
+
+if (localDownloadsList) {
+  localDownloadsList.addEventListener('change', async (event) => {
+    const selectionInput = event.target.closest('[data-local-download-id]');
+    if (selectionInput) {
+      const fileId = selectionInput.dataset.localDownloadId || '';
+      if (!fileId) return;
+
+      if (selectionInput.checked) {
+        if (!selectedLocalDownloadFiles.includes(fileId)) {
+          selectedLocalDownloadFiles.push(fileId);
+        }
+      } else {
+        selectedLocalDownloadFiles = selectedLocalDownloadFiles.filter((id) => id !== fileId);
+      }
+
+      renderLocalDownloadsList();
+      return;
+    }
+
+    const cacheLogInput = event.target.closest('[data-cache-log-key]');
+    if (!cacheLogInput) return;
+    const selected = cloudManagerLogOptions.find((entry) => `${entry.service}::${entry.name}` === cacheLogInput.dataset.cacheLogKey);
+    if (!selected) return;
+    const key = `${selected.service}::${selected.name}`;
+    if (cacheLogInput.checked) {
+      if (!selectedCloudManagerLogs.some((entry) => `${entry.service}::${entry.logName}` === key)) {
+        selectedCloudManagerLogs.push({ service: selected.service, logName: selected.name });
+      }
+    } else {
+      selectedCloudManagerLogs = selectedCloudManagerLogs.filter((entry) => `${entry.service}::${entry.logName}` !== key);
+    }
+    persistCloudManagerSelectionState();
+    await refreshCloudManagerCommandPreview();
+    updateCloudManagerActionState();
+    syncCloudManagerWorkspace();
+  });
+
+  localDownloadsList.addEventListener('click', async (event) => {
+    const analyzeButton = event.target.closest('[data-cache-analyze-path]');
+    if (analyzeButton) {
+      const filePath = analyzeButton.dataset.cacheAnalyzePath || '';
+      if (!filePath) return;
+      setLocalDownloadsPopoverOpen(false);
+      if (currentSourceMode !== 'local') setSourceMode('local');
+      filePathInput.value = filePath;
+      localStorage.setItem('aem_lastPath', filePath);
+      await analyzeFilePath(filePath);
+    }
+  });
+}
+
+if (localDownloadsTrigger) {
+  localDownloadsTrigger.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    if (!localDownloadsPopoverOpen) {
+      if (!cloudManagerProgramsLoaded) {
+        await ensureCloudManagerProgramsLoaded({ silent: true });
+      }
+      await syncPopoverProgramDropdown();
+    }
+    toggleLocalDownloadsPopover();
+  });
+}
+
+if (closeLocalDownloadsPopoverBtn) {
+  closeLocalDownloadsPopoverBtn.addEventListener('click', () => {
+    setLocalDownloadsPopoverOpen(false);
+  });
+}
+
+if (clearSelectedDownloadsBtn) {
+  clearSelectedDownloadsBtn.addEventListener('click', () => {
+    selectedLocalDownloadFiles = [];
+    renderLocalDownloadsList();
+    filePathInput.value = '';
+  });
+}
+
+if (appendSelectedToLocalBtn) {
+  appendSelectedToLocalBtn.addEventListener('click', () => {
+    if (!selectedLocalDownloadFiles.length) {
+      showToast('Select one or more log files first', 'warning');
+      return;
+    }
+    applySelectedDownloadsToInput();
+    setLocalDownloadsPopoverOpen(false);
+  });
+}
+
+if (cmLogTypeTabs) {
+  cmLogTypeTabs.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-type]');
+    if (!tab) return;
+    activeLogTypeFilter = tab.dataset.type;
+    renderLocalDownloadsList();
+  });
+}
+
+if (refreshLocalDownloadsBtn) {
+  refreshLocalDownloadsBtn.addEventListener('click', async () => {
+    try {
+      setCloudManagerDownloadStatus('Refreshing local logs...', { pending: true });
+      await ensureCloudManagerProgramsLoaded({ force: true });
+      await syncPopoverProgramDropdown();
+      if (popoverCmProgramSelect?.value && popoverCmEnvironmentSelect?.value) {
+        await loadPopoverCache(popoverCmProgramSelect.value, popoverCmEnvironmentSelect.value);
+      }
+      setCloudManagerDownloadStatus('Local logs refreshed.');
+    } catch (error) {
+      setCloudManagerDownloadStatus('');
+      showError(error.message);
+    }
+  });
+}
+
+if (localDownloadsBackdrop) {
+  localDownloadsBackdrop.addEventListener('click', () => {
+    if (!localDownloadsPopoverOpen) return;
+    setLocalDownloadsPopoverOpen(false);
+  });
+}
+
+if (popoverCmProgramSelect) {
+  popoverCmProgramSelect.addEventListener('change', async () => {
+    popoverProgramId = popoverCmProgramSelect.value || '';
+    popoverEnvironmentId = '';
+    if (popoverCmEnvironmentSelect) {
+      popoverCmEnvironmentSelect.innerHTML = '<option value="">Environment</option>';
+      popoverCmEnvironmentSelect.disabled = !popoverProgramId;
+    }
+    if (popoverProgramId) {
+      await loadPopoverEnvironments(popoverProgramId);
+    } else {
+      popoverCacheData = {
+        cacheRoot: '',
+        environmentDirectory: '',
+        tiers: [],
+        summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+      };
+      selectedLocalDownloadFiles = [];
+      activeLogTypeFilter = 'all';
+      renderLocalDownloadsList();
+    }
+  });
+}
+
+if (popoverCmEnvironmentSelect) {
+  popoverCmEnvironmentSelect.addEventListener('change', async () => {
+    popoverEnvironmentId = popoverCmEnvironmentSelect.value || '';
+    popoverProgramId = popoverCmProgramSelect?.value || '';
+    if (popoverEnvironmentId && popoverProgramId) {
+      await loadPopoverCache(popoverProgramId, popoverEnvironmentId);
+    } else {
+      popoverCacheData = {
+        cacheRoot: '',
+        environmentDirectory: '',
+        tiers: [],
+        summary: { totalFiles: 0, supportedFiles: 0, tierCount: 0 }
+      };
+      selectedLocalDownloadFiles = [];
+      activeLogTypeFilter = 'all';
+      renderLocalDownloadsList();
+    }
+  });
+}
+
+if (cmHistoryEnvironmentFilter) {
+  cmHistoryEnvironmentFilter.addEventListener('change', () => {
+    cloudManagerHistoryFilters.environment = cmHistoryEnvironmentFilter.value || '';
+    renderCloudManagerHistory();
+  });
+}
+
+document.addEventListener('keydown', (event) => {
+  void event;
 });
 
 function isSidebarCollapseSupported() {
@@ -616,6 +2300,45 @@ analyzeBtn.addEventListener('click', async () => {
   }
 });
 
+async function downloadSelectedCloudManagerLogs(options = {}) {
+  const { openPopover = false } = options;
+  const programId = cmProgramSelect?.value || '';
+  const environmentId = cmEnvironmentSelect?.value || '';
+  const outputDirectory = cmOutputDirectoryInput?.value.trim() || '';
+  const days = cmDaysInput?.value.trim() || '1';
+
+  if (!programId || !environmentId || !selectedCloudManagerLogs.length) {
+    showToast('Select a program, environment, and at least one log option', 'warning');
+    return;
+  }
+
+  if (!outputDirectory || !(await validateCloudManagerOutputDirectory())) {
+    showToast('Cloud Manager cache root is not ready yet', 'warning');
+    return;
+  }
+
+  await analyzeCloudManagerSelection({
+    programId,
+    environmentId,
+    selections: [...selectedCloudManagerLogs],
+    days,
+    outputDirectory,
+    openPopover
+  });
+}
+
+if (cmAnalyzeBtn) {
+  cmAnalyzeBtn.addEventListener('click', async () => {
+    await downloadSelectedCloudManagerLogs();
+  });
+}
+
+filePathInput.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  analyzeBtn.click();
+});
+
 async function analyzeBatchInput(input) {
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
@@ -647,6 +2370,11 @@ async function analyzeBatchInput(input) {
 }
 
 async function analyzeFilePath(filePath) {
+  resetCloudManagerSummary();
+  if (currentSourceMode === 'local') {
+    currentCloudManagerRunContext = null;
+    renderCloudManagerResultBadges();
+  }
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
   progressText.classList.remove('hidden');
@@ -670,7 +2398,7 @@ async function analyzeFilePath(filePath) {
 
     if (data.type === 'complete') {
       ws.close();
-      handleAnalysisComplete(data);
+      handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
       analyzeBtn.textContent = 'Analyze';
       analyzeBtn.disabled = false;
       progressText.classList.add('hidden');
@@ -704,10 +2432,240 @@ async function analyzeFilePath(filePath) {
 
 }
 
-function handleAnalysisComplete(data) {
+async function analyzeCloudManagerSelection(options) {
+  let finishedSuccessfully = false;
+
+  console.log('[AEM] Starting Cloud Manager download with options:', options);
+
+  setCloudManagerDownloadStatus('Caching log files from Cloud Manager...', { pending: true });
+  setCloudManagerStatus('Caching log files from Cloud Manager...');
+  document.getElementById('emptyState').classList.add('hidden');
+  resetCloudManagerSummary();
+
+  if (cmAnalyzeBtn) {
+    cmAnalyzeBtn.disabled = true;
+    cmAnalyzeBtn.textContent = 'Caching...';
+  }
+
+  showCloudManagerDownloadProgress(options.selections || []);
+
+  try {
+    console.log('[AEM] Sending fetch request to /api/cloudmanager/download');
+    const response = await fetch('/api/cloudmanager/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options)
+    });
+    console.log('[AEM] Response received, status:', response.status);
+    const data = await response.json();
+    console.log('[AEM] Response data:', data);
+
+    if (!data.success) {
+      setCloudManagerStatus('');
+      hideCloudManagerDownloadProgress();
+      showError(data.error || 'Cloud Manager download failed');
+      return;
+    }
+
+    setCloudManagerDownloadStatus('Cache updated.');
+    setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+    const labels = buildCloudManagerSelectionLabels();
+    const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
+    currentCloudManagerRunContext = {
+      source: 'cloudmanager',
+      runId: `cm-${Date.now()}`,
+      programId: options.programId,
+      environmentId: options.environmentId,
+      programName: labels.programName,
+      environmentName: labels.environmentName,
+      environmentType: environmentMeta?.type || '',
+      selections: options.selections || [],
+      days: options.days,
+      outputDirectory: data.environmentDirectory || data.outputDirectory,
+      commandPreview: data.commandPreview,
+      fileDates: data.fileDates || [],
+      downloadedFiles: data.downloadedFiles || [],
+      downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+      downloads: data.downloads || []
+    };
+    renderCloudManagerSummary(data);
+    pushCloudManagerHistoryEntry({
+      timestamp: new Date().toISOString(),
+      ...currentCloudManagerRunContext,
+      downloadedFiles: data.downloadedFiles || [],
+      downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+      downloads: data.downloads || []
+    });
+    await loadCloudManagerCacheBrowser(options.programId, options.environmentId, { silent: true });
+    if (currentSourceMode !== 'local') {
+      setSourceMode('local');
+    } else {
+      renderLocalDownloadsList();
+    }
+    if (options.openPopover) {
+      setLocalDownloadsPopoverOpen(true);
+    }
+    finishedSuccessfully = true;
+    hideCloudManagerDownloadProgress();
+    showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+    persistCloudManagerSelectionState();
+  } catch (error) {
+    console.error('[AEM] Catch block error:', error);
+    setCloudManagerDownloadStatus('');
+    setCloudManagerStatus('');
+    hideCloudManagerDownloadProgress();
+    showError('Cloud Manager download failed: ' + error.message);
+  } finally {
+    if (cmAnalyzeBtn) {
+      cmAnalyzeBtn.disabled = false;
+      cmAnalyzeBtn.textContent = 'Cache Selected Logs';
+    }
+    if (!finishedSuccessfully) {
+      setCloudManagerDownloadStatus('');
+    }
+  }
+}
+
+async function handleCloudManagerDownloadComplete(data, options) {
+  if (!data.success) {
+    setCloudManagerStatus('');
+    showError(data.error || 'Cloud Manager download failed');
+    return;
+  }
+
+  setCloudManagerDownloadStatus('Cache updated.');
+  setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+  const labels = buildCloudManagerSelectionLabels();
+  const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
+  currentCloudManagerRunContext = {
+    source: 'cloudmanager',
+    runId: `cm-${Date.now()}`,
+    programId: options.programId,
+    environmentId: options.environmentId,
+    programName: labels.programName,
+    environmentName: labels.environmentName,
+    environmentType: environmentMeta?.type || '',
+    selections: options.selections || [],
+    days: options.days,
+    outputDirectory: data.environmentDirectory || data.outputDirectory,
+    commandPreview: data.commandPreview,
+    fileDates: data.fileDates || [],
+    downloadedFiles: data.downloadedFiles || [],
+    downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+    downloads: data.downloads || []
+  };
+  renderCloudManagerSummary(data);
+  pushCloudManagerHistoryEntry({
+    timestamp: new Date().toISOString(),
+    ...currentCloudManagerRunContext,
+    downloadedFiles: data.downloadedFiles || [],
+    downloadedFilesDetailed: data.downloadedFilesDetailed || [],
+    downloads: data.downloads || []
+  });
+  await loadCloudManagerCacheBrowser(options.programId, options.environmentId, { silent: true });
+  if (currentSourceMode !== 'local') {
+    setSourceMode('local');
+  } else {
+    renderLocalDownloadsList();
+  }
+  if (options.openPopover) {
+    setLocalDownloadsPopoverOpen(true);
+  }
+  hideCloudManagerDownloadProgress();
+  showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+  persistCloudManagerSelectionState();
+}
+
+function showCloudManagerDownloadProgress(selections) {
+  if (!cmDownloadProgressPanel) return;
+
+  const items = selections.map((entry, index) => `
+    <div class="cm-download-progress-item" data-index="${index}">
+      <span class="cm-download-progress-icon pending">&#9711;</span>
+      <span class="cm-download-progress-item-name">${escapeHtml(entry.logName || 'Unknown')}</span>
+      <span class="cm-download-progress-item-status">Pending</span>
+    </div>
+  `).join('');
+
+  if (cmDownloadProgressList) {
+    cmDownloadProgressList.innerHTML = items;
+  }
+
+  if (cmDownloadProgressCount) {
+    cmDownloadProgressCount.textContent = `0/${selections.length} files`;
+  }
+
+  if (cmDownloadProgressTitle) {
+    cmDownloadProgressTitle.textContent = 'Downloading logs from Cloud Manager...';
+  }
+
+  if (cmDownloadProgressStatus) {
+    cmDownloadProgressStatus.textContent = 'Starting...';
+  }
+
+  cmDownloadProgressPanel.classList.remove('hidden');
+  if (cmDownloadSummary) cmDownloadSummary.classList.add('hidden');
+}
+
+function updateCloudManagerDownloadProgress(progress) {
+  if (!cmDownloadProgressPanel) return;
+
+  const { currentIndex, totalFiles, currentFile, message, status } = progress;
+
+  if (cmDownloadProgressCount) {
+    cmDownloadProgressCount.textContent = `${currentIndex}/${totalFiles} files`;
+  }
+
+  if (cmDownloadProgressStatus) {
+    cmDownloadProgressStatus.textContent = message;
+  }
+
+  const items = cmDownloadProgressList?.querySelectorAll('.cm-download-progress-item');
+  items?.forEach((item, index) => {
+    const icon = item.querySelector('.cm-download-progress-icon');
+    const statusEl = item.querySelector('.cm-download-progress-item-status');
+
+    if (index < currentIndex - 1) {
+      item.classList.add('completed');
+      item.classList.remove('downloading');
+      if (icon) {
+        icon.className = 'cm-download-progress-icon completed';
+        icon.innerHTML = '&#10003;';
+      }
+      if (statusEl) statusEl.textContent = 'Completed';
+    } else if (index === currentIndex - 1) {
+      item.classList.add('downloading');
+      item.classList.remove('completed');
+      if (icon) {
+        icon.className = 'cm-download-progress-icon downloading';
+        icon.innerHTML = '&#8635;';
+      }
+      if (statusEl) statusEl.textContent = 'Downloading...';
+    } else {
+      item.classList.remove('completed', 'downloading');
+      if (icon) {
+        icon.className = 'cm-download-progress-icon pending';
+        icon.innerHTML = '&#9711;';
+      }
+      if (statusEl) statusEl.textContent = 'Pending';
+    }
+  });
+}
+
+function hideCloudManagerDownloadProgress() {
+  if (cmDownloadProgressPanel) {
+    cmDownloadProgressPanel.classList.add('hidden');
+  }
+  if (cmDownloadSummary) {
+    cmDownloadSummary.classList.remove('hidden');
+  }
+}
+
+function handleAnalysisComplete(data, context = {}) {
   currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
+  setCurrentAnalyzedFilePath(context.analyzedFile || data.analyzedFile || '');
   chartsToggleBtn.disabled = false;
 
   // Store the log type
@@ -715,6 +2673,10 @@ function handleAnalysisComplete(data) {
 
   if (currentLogType === 'error') {
     resetErrorFilterState({ preserveDates: true });
+  }
+
+  if (context.source === 'cloudmanager' || currentCloudManagerRunContext) {
+    renderCloudManagerResultBadges(data, currentCloudManagerRunContext || context);
   }
 
   // Constrain date range inputs to actual log file dates
@@ -729,6 +2691,10 @@ function handleAnalysisComplete(data) {
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
   document.getElementById('exportAllBtn').disabled = true;
+  if (exportRow) {
+    exportRow.classList.add('export-row-hidden');
+    exportRow.setAttribute('aria-hidden', 'true');
+  }
 
   // Update level counts for error logs
   if (data.levelCounts) {
@@ -786,6 +2752,7 @@ function handleAnalysisComplete(data) {
 function handleMultiErrorAnalysisComplete(data, input) {
   currentAnalysisMode = 'multi-error';
   currentLogType = 'error';
+  setCurrentAnalyzedFilePath('');
   currentBatchInput = input;
   currentBatchSummary = data.summary || null;
   chartsToggleBtn.disabled = true;
@@ -793,6 +2760,10 @@ function handleMultiErrorAnalysisComplete(data, input) {
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
   document.getElementById('exportAllBtn').disabled = true;
+  if (exportRow) {
+    exportRow.classList.add('export-row-hidden');
+    exportRow.setAttribute('aria-hidden', 'true');
+  }
 
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
   const filterPanel = document.getElementById('errorFilters');
@@ -840,7 +2811,7 @@ chartsToggleBtn.addEventListener('click', () => {
 
 async function fetchChartsData() {
   const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
   if (!isMultiError && !filePath) return;
 
   const body = isMultiError
@@ -1314,7 +3285,7 @@ async function refreshErrorFilterOptions() {
   if (currentLogType !== 'error') return;
 
   const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
   if (!isMultiError && !filePath) return;
 
   const seq = ++errorFilterRefreshSeq;
@@ -1690,6 +3661,12 @@ document.addEventListener('keydown', (e) => {
     rawSearchInput.focus();
   }
   if (e.key === 'Escape') {
+    if (localDownloadsPopoverOpen) {
+      e.preventDefault();
+      setLocalDownloadsPopoverOpen(false);
+      localDownloadsTrigger?.focus();
+      return;
+    }
     document.activeElement.blur();
     clearFiltersBtn.click();
   }
@@ -1702,6 +3679,11 @@ document.addEventListener('keydown', (e) => {
 let ws = null;
 
 tailBtn.addEventListener('click', () => {
+  if (currentSourceMode !== 'local') {
+    showToast('Tail is only available for local file paths', 'warning');
+    return;
+  }
+
   const tailPathInput = document.getElementById('tailPath');
   const filePath = tailPathInput ? tailPathInput.value.trim() : filePathInput.value.trim();
   if (!filePath) { showToast('Enter a file path to tail', 'warning'); return; }
@@ -1813,7 +3795,7 @@ async function fetchRawEvents(page = 1, options = {}) {
     return;
   }
 
-  const filePath = filePathInput.value.trim();
+  const filePath = getActiveAnalysisFilePath();
 
   if (!filePath) {
     showToast('Enter a file path to view events', 'warning');
@@ -1911,6 +3893,16 @@ function extractedExceptionBadge(evt) {
 }
 
 function renderRawEvents(events, total, page, perPage, logType = 'error') {
+  if (exportRow) {
+    exportRow.classList.toggle('export-row-hidden', total <= 0);
+    exportRow.setAttribute('aria-hidden', total > 0 ? 'false' : 'true');
+  }
+  const exportDisabled = total <= 0;
+  exportCsvBtn.disabled = exportDisabled;
+  exportJsonBtn.disabled = exportDisabled;
+  exportPdfBtn.disabled = exportDisabled;
+  document.getElementById('exportAllBtn').disabled = exportDisabled;
+
   const totalPages = Math.ceil(total / perPage);
   const start = total > 0 ? ((page - 1) * perPage + 1) : 0;
   const end = Math.min(page * perPage, total);
@@ -2202,6 +4194,10 @@ window.fetchRawEvents = fetchRawEvents;
 window.changeRawEventsPage = changeRawEventsPage;
 window.changeRawEventsPerPage = changeRawEventsPerPage;
 
+if (cmHistoryList) {
+  cmHistoryList.addEventListener('click', () => {});
+}
+
 // Single-select searchable dropdown behavior
 function initSearchableDropdown(dropdownId, searchInputId, selectId, filterInputId, onChangeCallback = null) {
   const dropdown = document.getElementById(dropdownId);
@@ -2407,6 +4403,19 @@ updateCascadeCountBadges();
 renderSelectionHints();
 applyThemePreference();
 applySidebarState();
+restoreCloudManagerSelections();
+restoreCloudManagerTabState();
+ensureCloudManagerProgramsLoaded().catch((error) => {
+  console.warn('[AEM] Failed to initialize Cloud Manager on load:', error);
+});
+renderCloudManagerHistory();
+renderLocalDownloadsList();
+updateCloudManagerHintState();
+renderCloudManagerLogOptions();
+setSourceMode(currentSourceMode, { persist: false });
+refreshCloudManagerCommandPreview();
+updateCloudManagerActionState();
+syncCloudManagerWorkspace();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');

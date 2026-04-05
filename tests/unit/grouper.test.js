@@ -1,7 +1,9 @@
 const {
   normalizeMessage,
   groupEntries,
-  getSummaryFromEntries
+  groupEntriesStream,
+  getSummaryFromEntries,
+  getSummaryStream
 } = require('../../src/grouper');
 
 describe('grouper - normalizeMessage', () => {
@@ -58,6 +60,10 @@ describe('grouper - normalizeMessage', () => {
   test('handles message with no variables', () => {
     const input = 'Simple error message';
     expect(normalizeMessage(input)).toBe('Simple error message');
+  });
+
+  test('handles empty input', () => {
+    expect(normalizeMessage('')).toBe('');
   });
 });
 
@@ -130,6 +136,42 @@ describe('grouper - groupEntries', () => {
     const grouped = groupEntries([]);
     expect(grouped).toEqual([]);
   });
+
+  test('includes category from categorizer', () => {
+    const entries = [{
+      timestamp: '29.03.2026 14:30:15.123',
+      level: 'ERROR',
+      logger: 'org.apache.sling.api.SlingException',
+      thread: 'qtp-1',
+      message: 'Sling error occurred',
+      stackTrace: ''
+    }];
+    const grouped = groupEntries(entries);
+    expect(grouped[0].category).toBe('Sling');
+  });
+
+  test('groups entries with same normalized message', () => {
+    const entries = [
+      { level: 'ERROR', message: 'Same error 192.168.1.1', timestamp: '2024-01-01', logger: 'com.test', thread: 't1' },
+      { level: 'ERROR', message: 'Same error 192.168.1.2', timestamp: '2024-01-01', logger: 'com.test', thread: 't2' }
+    ];
+    const result = groupEntries(entries);
+    expect(result).toHaveLength(1);
+    expect(result[0].count).toBe(2);
+  });
+
+  test('stores stack trace in examples', () => {
+    const entries = [{
+      level: 'ERROR',
+      message: 'NullPointerException',
+      timestamp: '2024-01-01',
+      logger: 'com.test',
+      thread: 't1',
+      stackTrace: 'at java.base/java.lang.NullPointerException'
+    }];
+    const result = groupEntries(entries);
+    expect(result[0].examples[0].stackTrace).toBe('at java.base/java.lang.NullPointerException');
+  });
 });
 
 describe('grouper - getSummaryFromEntries', () => {
@@ -146,10 +188,28 @@ describe('grouper - getSummaryFromEntries', () => {
     expect(summary.totalWarnings).toBe(1);
   });
 
+  test('counts unique errors and warnings', () => {
+    const entries = [
+      { level: 'ERROR', message: 'Same error' },
+      { level: 'ERROR', message: 'Same error' },
+      { level: 'ERROR', message: 'Different error' }
+    ];
+    const summary = getSummaryFromEntries(entries);
+    expect(summary.uniqueErrors).toBe(2);
+  });
+
+  test('counts total lines', () => {
+    const summary = getSummaryFromEntries(sampleEntries);
+    expect(summary.totalLines).toBe(4);
+  });
+
   test('handles empty entries', () => {
     const summary = getSummaryFromEntries([]);
     expect(summary.totalErrors).toBe(0);
     expect(summary.totalWarnings).toBe(0);
+    expect(summary.uniqueErrors).toBe(0);
+    expect(summary.uniqueWarnings).toBe(0);
+    expect(summary.totalLines).toBe(0);
   });
 
   test('handles entries without logger', () => {
@@ -158,5 +218,117 @@ describe('grouper - getSummaryFromEntries', () => {
     ];
     const summary = getSummaryFromEntries(entriesWithNull);
     expect(summary.totalErrors).toBe(1);
+  });
+});
+
+describe('grouper - getSummaryStream', () => {
+  async function createMockStream(entries) {
+    return {
+      [Symbol.asyncIterator]() {
+        let index = 0;
+        return {
+          next() {
+            if (index >= entries.length) {
+              return Promise.resolve({ done: true });
+            }
+            return Promise.resolve({ value: entries[index++], done: false });
+          }
+        };
+      }
+    };
+  }
+
+  test('processes stream and returns summary', async () => {
+    const entries = [
+      { level: 'ERROR', message: 'e1' },
+      { level: 'ERROR', message: 'e2' },
+      { level: 'WARN', message: 'w1' }
+    ];
+    const stream = await createMockStream(entries);
+    const result = await getSummaryStream(stream);
+    expect(result.totalErrors).toBe(2);
+    expect(result.totalWarnings).toBe(1);
+  });
+
+  test('counts unique messages in stream', async () => {
+    const entries = [
+      { level: 'ERROR', message: 'Same' },
+      { level: 'ERROR', message: 'Same' },
+      { level: 'ERROR', message: 'Different' }
+    ];
+    const stream = await createMockStream(entries);
+    const result = await getSummaryStream(stream);
+    expect(result.uniqueErrors).toBe(2);
+  });
+
+  test('handles empty stream', async () => {
+    const stream = await createMockStream([]);
+    const result = await getSummaryStream(stream);
+    expect(result.totalErrors).toBe(0);
+    expect(result.totalWarnings).toBe(0);
+  });
+});
+
+describe('grouper - groupEntriesStream', () => {
+  async function createMockStream(entries) {
+    return {
+      [Symbol.asyncIterator]() {
+        let index = 0;
+        return {
+          next() {
+            if (index >= entries.length) {
+              return Promise.resolve({ done: true });
+            }
+            return Promise.resolve({ value: entries[index++], done: false });
+          }
+        };
+      }
+    };
+  }
+
+  test('groups entries from stream', async () => {
+    const entries = [
+      { level: 'ERROR', message: 'Same 192.168.1.1', timestamp: '2024-01-01', logger: 'com.test', thread: 't1' },
+      { level: 'ERROR', message: 'Same 192.168.1.2', timestamp: '2024-01-01', logger: 'com.test', thread: 't2' }
+    ];
+    const stream = await createMockStream(entries);
+    const generator = groupEntriesStream(stream);
+    const result = (await generator.next()).value;
+    expect(result).toHaveLength(1);
+    expect(result[0].count).toBe(2);
+  });
+
+  test('sorts by count descending', async () => {
+    const entries = [
+      { level: 'ERROR', message: 'Less common', timestamp: '2024-01-01', logger: 'com.test', thread: 't1' },
+      { level: 'ERROR', message: 'More common', timestamp: '2024-01-01', logger: 'com.test', thread: 't1' },
+      { level: 'ERROR', message: 'More common', timestamp: '2024-01-01', logger: 'com.test', thread: 't1' }
+    ];
+    const stream = await createMockStream(entries);
+    const generator = groupEntriesStream(stream);
+    const result = (await generator.next()).value;
+    expect(result[0].count).toBe(2);
+    expect(result[0].message).toContain('More common');
+  });
+
+  test('handles empty stream', async () => {
+    const stream = await createMockStream([]);
+    const generator = groupEntriesStream(stream);
+    const result = (await generator.next()).value;
+    expect(result).toEqual([]);
+  });
+
+  test('limits examples to 3', async () => {
+    const entries = Array(5).fill(null).map((_, i) => ({
+      level: 'ERROR',
+      message: 'Same',
+      timestamp: `2024-01-${String(i + 1).padStart(2, '0')}`,
+      logger: 'com.test',
+      thread: 't1'
+    }));
+    const stream = await createMockStream(entries);
+    const generator = groupEntriesStream(stream);
+    const result = (await generator.next()).value;
+    expect(result[0].examples.length).toBe(3);
   });
 });

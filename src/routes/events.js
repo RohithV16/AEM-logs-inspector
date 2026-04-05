@@ -1,9 +1,9 @@
 /* === Imports === */
 const express = require('express');
-const { detectLogType } = require('../parser');
-const { buildEntryFilter, extractPage } = require('../services/errorLogService');
-const { buildRequestFilter, countAndExtractRequestEntries } = require('../services/requestLogService');
-const { buildCDNFilter, countAndExtractCDNEntries } = require('../services/cdnLogService');
+const { detectLogTypeAndCreateStream } = require('../parser');
+const { buildEntryFilter, extractPageWithBaseCounts } = require('../services/errorLogService');
+const { buildRequestFilter, countAndExtractRequestEntries, countAndExtractRequestEntriesFromStream } = require('../services/requestLogService');
+const { buildCDNFilter, countAndExtractCDNEntries, countAndExtractCDNEntriesFromStream } = require('../services/cdnLogService');
 const { validateFilePath, sanitizeErrorMessage } = require('../utils/files');
 const { isSafeRegex } = require('../utils/regex');
 
@@ -41,14 +41,16 @@ function createEventsRouter() {
       }
 
       /* Detect log type to apply appropriate filter and extraction logic */
-      const logType = await detectLogType(targetPath);
+      const { logType, stream } = await detectLogTypeAndCreateStream(targetPath, {
+        logOptions: { levels: 'all' }
+      });
 
       /* Request log: filter by method, status, response time, pod */
       if (logType === 'request') {
-        const filter = buildRequestFilter({ search, from, to, method, status: httpStatus, minTime: minResponseTime, maxTime: maxResponseTime, pod });
-        /* Calculate skip for pagination: (page-1) * perPage */
-        const skip = (page - 1) * perPage;
-        const { total, entries: events } = await countAndExtractRequestEntries(targetPath, filter, skip, perPage);
+        const requestFilters = { search, from, to, method, status: httpStatus, minTime: minResponseTime, maxTime: maxResponseTime, pod };
+        const { total, entries: events } = stream
+          ? await countAndExtractRequestEntriesFromStream(stream, requestFilters, Number(page), Number(perPage))
+          : await countAndExtractRequestEntries(targetPath, requestFilters, Number(page), Number(perPage));
 
         return res.json({
           success: true,
@@ -63,9 +65,10 @@ function createEventsRouter() {
 
       /* CDN log: filter by cache status, country, PoP, host, TTFB */
       if (logType === 'cdn') {
-        const filter = buildCDNFilter({ search, from, to, method, status: httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb });
-        const skip = (page - 1) * perPage;
-        const { total, entries: events } = await countAndExtractCDNEntries(targetPath, filter, skip, perPage);
+        const cdnFilters = { search, from, to, method, status: httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb };
+        const { total, entries: events } = stream
+          ? await countAndExtractCDNEntriesFromStream(stream, cdnFilters, Number(page), Number(perPage))
+          : await countAndExtractCDNEntries(targetPath, cdnFilters, Number(page), Number(perPage));
 
         return res.json({
           success: true,
@@ -88,10 +91,12 @@ function createEventsRouter() {
 
       /* Build filter with support for level, logger, thread, package, exception, category */
       const activeFilters = { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath };
-      const filter = buildEntryFilter(activeFilters);
-      const skip = (page - 1) * perPage;
-      const { entries: events, total } = await extractPage(targetPath, filter, skip, perPage);
-      const { levelCounts } = await extractPage(targetPath, withoutLevelFilter(activeFilters), 1, 0);
+      const { entries: events, total, levelCounts } = await extractPageWithBaseCounts(
+        targetPath,
+        activeFilters,
+        Number(page),
+        Number(perPage)
+      );
 
       /* Return paginated results with total count and level counts for filter chips */
       res.json({

@@ -4,6 +4,12 @@
 
 const { categorizeError } = require('./categorizer');
 
+const RX_DAM_PATH = /\/content\/dam\/[^/]+\//g;
+const RX_DATE = /\d{4}-\d{2}-\d{2}/g;
+const RX_TIME = /\d{2}:\d{2}:\d{2}/g;
+const RX_IP = /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g;
+const RX_UUID = /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi;
+
 /**
  * Normalizes log message by replacing variable data with placeholders
  * Groups similar errors despite timestamps, paths, UUIDs, IPs
@@ -13,15 +19,15 @@ const { categorizeError } = require('./categorizer');
 function normalizeMessage(message) {
   return message
     // Normalize DAM paths - asset names vary but structure is consistent
-    .replace(/\/content\/dam\/[^/]+\//g, '/content/dam/{path}/')
+    .replace(RX_DAM_PATH, '/content/dam/{path}/')
     // Normalize dates in ISO format
-    .replace(/\d{4}-\d{2}-\d{2}/g, '{date}')
+    .replace(RX_DATE, '{date}')
     // Normalize times
-    .replace(/\d{2}:\d{2}:\d{2}/g, '{time}')
+    .replace(RX_TIME, '{time}')
     // Normalize IP addresses
-    .replace(/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/g, '{ip}')
+    .replace(RX_IP, '{ip}')
     // Normalize UUIDs (correlation IDs, request IDs)
-    .replace(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, '{uuid}')
+    .replace(RX_UUID, '{uuid}')
     .trim();
 }
 

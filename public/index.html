@@ -27,9 +27,6 @@
 </head>
 <body>
 
-  <!-- Removed app-header for cleaner UI -->
-
-
   <!-- Main Grid -->
   <div class="main-grid">
 
@@ -265,7 +262,7 @@
         <div class="upload-card-header">
           <div>
             <p class="filter-section-label">Analyze source</p>
-            <h2>Load one or more error log files</h2>
+            <h2>Analyze local logs or pull them from Cloud Manager</h2>
           </div>
           <div class="theme-switcher upload-theme-switcher" role="group" aria-label="Color theme">
             <button class="theme-option" type="button" data-theme-option="system">Auto</button>
@@ -273,11 +270,151 @@
             <button class="theme-option" type="button" data-theme-option="dark">Dark</button>
           </div>
         </div>
-        <div class="upload-row">
-          <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/error.log">
-          <button id="analyzeBtn" class="upload-btn">Analyze</button>
-          <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
-          <span id="progressText" class="hidden"></span>
+
+        <div class="source-mode-row">
+          <div class="source-mode-switch" role="tablist" aria-label="Analysis source mode">
+            <button id="sourceModeLocal" class="source-mode-btn active" type="button" data-source-mode="local" aria-selected="true">Local Path</button>
+            <button id="sourceModeCloudManager" class="source-mode-btn" type="button" data-source-mode="cloudmanager" aria-selected="false">Cloud Manager</button>
+          </div>
+          <div class="local-downloads-picker">
+            <button
+              id="localDownloadsTrigger"
+              class="local-downloads-trigger"
+              type="button"
+              aria-expanded="false"
+              aria-controls="localDownloadsPopover"
+            >
+              <span class="local-downloads-trigger-copy">
+                <span class="local-downloads-trigger-label">Cloud Manager Logs</span>
+                <span id="localDownloadsTriggerMeta" class="local-downloads-trigger-meta">Choose an environment</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div id="localSourcePanel" class="source-panel">
+          <div class="upload-row">
+            <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/error.log">
+            <button id="analyzeBtn" class="upload-btn">Analyze</button>
+            <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
+            <span id="progressText" class="hidden"></span>
+          </div>
+          <p class="upload-hint">Use one path for standard analysis or comma-separated error logs for merged error analysis.</p>
+        </div>
+
+        <div id="localDownloadsPopover" class="local-downloads-overlay hidden" role="dialog" aria-modal="true" aria-label="Cloud Manager log picker">
+          <div id="localDownloadsBackdrop" class="local-downloads-backdrop"></div>
+          <div class="local-downloads-dialog">
+            <div class="local-downloads-popover-header">
+              <div>
+                <p class="filter-section-label">Cloud Manager Cache</p>
+                <h3>Browse cached logs</h3>
+              </div>
+              <div class="local-downloads-environment-selects">
+                <select id="popoverCmProgramSelect" class="popover-filter-select">
+                  <option value="">Program</option>
+                </select>
+                <select id="popoverCmEnvironmentSelect" class="popover-filter-select" disabled>
+                  <option value="">Environment</option>
+                </select>
+              </div>
+              <div class="local-downloads-actions">
+                <button id="refreshLocalDownloadsBtn" class="upload-btn secondary" type="button">Refresh local logs</button>
+                <button id="appendSelectedToLocalBtn" class="upload-btn" type="button">Append to Local Path</button>
+                <button id="clearSelectedDownloadsBtn" class="upload-btn secondary" type="button">Clear selection</button>
+                <button id="closeLocalDownloadsPopoverBtn" class="local-downloads-close-btn" type="button" aria-label="Close recent downloads">&times;</button>
+              </div>
+            </div>
+            <div id="localDownloadsOverlayStatus" class="local-downloads-overlay-status hidden" aria-live="polite"></div>
+            <div id="cmLogTypeTabs" class="cm-log-type-tabs"></div>
+            <div id="localDownloadsList" class="local-downloads-list"></div>
+          </div>
+        </div>
+
+        <div id="cloudManagerPanel" class="source-panel hidden">
+          <!-- Tab Navigation -->
+          <div class="cloudmanager-tabs">
+            <button class="cloudmanager-tab active" data-tab="download" type="button">Download Logs</button>
+            <button class="cloudmanager-tab" data-tab="history" type="button">History</button>
+          </div>
+
+          <!-- Download & Analyze Tab -->
+          <div class="cloudmanager-tab-pane active" id="cmTab-download">
+            <div id="cmStatusBanner" class="cloudmanager-status hidden" aria-live="polite"></div>
+            <div id="cmCacheStatus" class="cloudmanager-cache-status">Programs and environments load live from aio when Cloud Manager is selected.</div>
+            <div class="cloudmanager-grid">
+              <label class="cloudmanager-field">
+                <span>Program</span>
+                <select id="cmProgramSelect" class="filter-select">
+                  <option value="">Select program</option>
+                </select>
+                <small id="cmProgramHint" class="cloudmanager-hint">Programs load live from aio.</small>
+              </label>
+              <label class="cloudmanager-field">
+                <span>Environment</span>
+                <select id="cmEnvironmentSelect" class="filter-select" disabled>
+                  <option value="">Select environment</option>
+                </select>
+                <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
+              </label>
+              <label class="cloudmanager-field">
+                <span>Days</span>
+                <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
+                <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
+              </label>
+              <label class="cloudmanager-field cloudmanager-field-wide">
+                <span>Cache root</span>
+                <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="~/.aem-logs" readonly>
+                <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Cloud Manager downloads are cached automatically for browsing and analysis.</small>
+              </label>
+              <div class="cloudmanager-field cloudmanager-field-wide">
+                <span>Tier / Logs</span>
+                <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
+                <div id="cmLogOptionList" class="cloudmanager-log-list disabled" aria-live="polite"></div>
+                <small id="cmLogHint" class="cloudmanager-hint">Choose one or more logs to download.</small>
+              </div>
+            </div>
+
+            <div id="cmCommandPreview" class="cloudmanager-command-preview hidden" aria-live="polite"></div>
+            <div class="upload-row">
+              <button id="cmAnalyzeBtn" class="upload-btn">Cache Selected Logs</button>
+              <span id="cmProgressText" class="hidden"></span>
+            </div>
+            <div id="cmDownloadSummary" class="cloudmanager-summary hidden" aria-live="polite"></div>
+            <p class="upload-hint">Downloads land in the Cloud Manager cache. Analyze cached files from the picker in Local Path mode.</p>
+          </div>
+
+          <!-- History Tab -->
+          <div class="cloudmanager-tab-pane" id="cmTab-history">
+            <div class="cloudmanager-history-header">
+              <div>
+                <p class="filter-section-label">Cloud Manager History</p>
+                <h3>Recent runs</h3>
+              </div>
+            </div>
+            <div class="cloudmanager-history-filters">
+              <input type="text" id="cmHistorySearchInput" class="filter-input" placeholder="Search program, environment, log, or file">
+              <select id="cmHistoryEnvironmentFilter" class="filter-select">
+                <option value="">All environments</option>
+              </select>
+            </div>
+            <div id="cmHistoryList" class="cloudmanager-history-list"></div>
+          </div>
+        </div>
+
+        <!-- Cloud Manager Download Progress Panel -->
+        <div id="cmDownloadProgressPanel" class="cm-download-progress-panel hidden">
+          <div class="cm-download-progress-header">
+            <div>
+              <p class="filter-section-label">Downloading</p>
+              <h3 id="cmDownloadProgressTitle">Downloading logs from Cloud Manager...</h3>
+            </div>
+            <div class="cm-download-progress-stats">
+              <span id="cmDownloadProgressCount">0/0 files</span>
+            </div>
+          </div>
+          <div id="cmDownloadProgressList" class="cm-download-progress-list"></div>
+          <div id="cmDownloadProgressStatus" class="cm-download-progress-status"></div>
         </div>
       </div>
 
@@ -285,7 +422,7 @@
       <div id="emptyState" class="empty-state">
         <div class="empty-icon">&#128269;</div>
         <h2>No log file loaded</h2>
-        <p>Enter one or more error log file paths, then click <strong>Analyze</strong>.</p>
+        <p>Select a source, then analyze a local log path or download a Cloud Manager log.</p>
         <p class="empty-hint">&#128161; Pro tip: You can also watch a log file in real-time for new entries</p>
       </div>
 

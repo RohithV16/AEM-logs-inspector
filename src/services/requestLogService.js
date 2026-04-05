@@ -1,5 +1,9 @@
 const fs = require('fs');
+const path = require('path');
+const { Worker } = require('worker_threads');
 const { createRequestLogStream } = require('../parser');
+const { getCached, setCached } = require('../utils/analysisCache');
+const { STREAM_THRESHOLD } = require('../utils/constants');
 
 /* === Core Analysis === */
 
@@ -10,8 +14,42 @@ const { createRequestLogStream } = require('../parser');
  * @param {function} onProgress - Optional callback for progress updates
  * @returns {Promise<Object>} Analysis results with summary, filter options, results, and timelines
  */
-async function analyzeRequestLog(filePath, onProgress) {
-  const stream = createRequestLogStream(filePath);
+function shouldUseWorkerForAnalysis(filePath, options = {}) {
+  if (options.disableWorker) return false;
+  return fs.statSync(filePath).size > STREAM_THRESHOLD;
+}
+
+function runAnalysisWorker(filePath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, '../workers/analyzeWorker.js'), {
+      workerData: { service: 'request', filePath }
+    });
+
+    worker.on('message', (message) => {
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'progress' && onProgress) {
+        onProgress(message.payload || {});
+        return;
+      }
+      if (message.type === 'result') {
+        resolve(message.payload);
+      }
+    });
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Analysis worker exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function analyzeRequestLogFromStream(stream, filePath, onProgress) {
+  if (!onProgress) {
+    const cached = getCached(filePath);
+    if (cached) return cached;
+  }
+
   const fileSize = fs.statSync(filePath).size;
 
   const methods = {};
@@ -33,9 +71,10 @@ async function analyzeRequestLog(filePath, onProgress) {
 
     if (entry.status) {
       statuses[entry.status] = (statuses[entry.status] || 0) + 1;
-      responseTimes.push(entry.responseTime);
-      totalResponseTime += entry.responseTime;
-      if (entry.responseTime > 1000) slowRequests++;
+      const responseTime = Number(entry.responseTime || 0);
+      responseTimes.push(responseTime);
+      totalResponseTime += responseTime;
+      if (responseTime > 1000) slowRequests++;
     }
 
     if (entry.pod) {
@@ -54,7 +93,7 @@ async function analyzeRequestLog(filePath, onProgress) {
       if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, slow: 0 };
       timeline[hour].requests++;
       if (entry.status >= 400) timeline[hour].errors++;
-      if (entry.responseTime > 1000) timeline[hour].slow++;
+      if (Number(entry.responseTime || 0) > 1000) timeline[hour].slow++;
     }
 
     if (onProgress && totalRequests % 10000 === 0) {
@@ -73,7 +112,7 @@ async function analyzeRequestLog(filePath, onProgress) {
   const p95 = responseTimes.length > 0 ? responseTimes[Math.floor(responseTimes.length * 0.95)] : 0;
   const p99 = responseTimes.length > 0 ? responseTimes[Math.floor(responseTimes.length * 0.99)] : 0;
 
-  return {
+  const result = {
     summary: {
       totalRequests,
       avgResponseTime,
@@ -93,6 +132,21 @@ async function analyzeRequestLog(filePath, onProgress) {
     pods,
     timeline
   };
+
+  if (!onProgress) {
+    setCached(filePath, result);
+  }
+
+  return result;
+}
+
+async function analyzeRequestLog(filePath, onProgress, options = {}) {
+  if (shouldUseWorkerForAnalysis(filePath, options)) {
+    return runAnalysisWorker(filePath, onProgress);
+  }
+
+  const stream = createRequestLogStream(filePath);
+  return analyzeRequestLogFromStream(stream, filePath, onProgress);
 }
 
 /* === Filter Functions === */
@@ -177,6 +231,10 @@ async function extractRequestPage(filePath, filters = {}, page = 1, pageSize = 5
  */
 async function countAndExtractRequestEntries(filePath, filters = {}, page = 1, pageSize = 50) {
   const stream = createRequestLogStream(filePath);
+  return countAndExtractRequestEntriesFromStream(stream, filters, page, pageSize);
+}
+
+async function countAndExtractRequestEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildRequestFilter(filters);
   const entries = [];
   let skipped = (page - 1) * pageSize;
@@ -198,8 +256,10 @@ async function countAndExtractRequestEntries(filePath, filters = {}, page = 1, p
 
 module.exports = {
   analyzeRequestLog,
+  analyzeRequestLogFromStream,
   buildRequestFilter,
   countMatchingRequestEntries,
   extractRequestPage,
-  countAndExtractRequestEntries
+  countAndExtractRequestEntries,
+  countAndExtractRequestEntriesFromStream
 };

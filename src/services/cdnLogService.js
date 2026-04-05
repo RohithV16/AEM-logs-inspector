@@ -1,5 +1,9 @@
 const fs = require('fs');
+const path = require('path');
+const { Worker } = require('worker_threads');
 const { createCDNLogStream } = require('../parser');
+const { getCached, setCached } = require('../utils/analysisCache');
+const { STREAM_THRESHOLD } = require('../utils/constants');
 
 /* === Core Analysis === */
 
@@ -10,8 +14,42 @@ const { createCDNLogStream } = require('../parser');
  * @param {function} onProgress - Optional callback for progress updates
  * @returns {Promise<Object>} Analysis results with summary, filter options, and detailed metrics
  */
-async function analyzeCDNLog(filePath, onProgress) {
-  const stream = createCDNLogStream(filePath);
+function shouldUseWorkerForAnalysis(filePath, options = {}) {
+  if (options.disableWorker) return false;
+  return fs.statSync(filePath).size > STREAM_THRESHOLD;
+}
+
+function runAnalysisWorker(filePath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, '../workers/analyzeWorker.js'), {
+      workerData: { service: 'cdn', filePath }
+    });
+
+    worker.on('message', (message) => {
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'progress' && onProgress) {
+        onProgress(message.payload || {});
+        return;
+      }
+      if (message.type === 'result') {
+        resolve(message.payload);
+      }
+    });
+    worker.on('error', reject);
+    worker.on('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Analysis worker exited with code ${code}`));
+      }
+    });
+  });
+}
+
+async function analyzeCDNLogFromStream(stream, filePath, onProgress) {
+  if (!onProgress) {
+    const cached = getCached(filePath);
+    if (cached) return cached;
+  }
+
   const fileSize = fs.statSync(filePath).size;
 
   const methods = {};
@@ -96,7 +134,7 @@ async function analyzeCDNLog(filePath, onProgress) {
   const cacheMisses = (cacheStatuses['MISS'] || 0) + (cacheStatuses['TCP_MISS'] || 0);
   const cacheHitRatio = totalRequests > 0 ? ((cacheHits / totalRequests) * 100).toFixed(1) : 0;
 
-  return {
+  const result = {
     summary: {
       totalRequests,
       avgTtfb,
@@ -121,6 +159,21 @@ async function analyzeCDNLog(filePath, onProgress) {
     hosts,
     timeline
   };
+
+  if (!onProgress) {
+    setCached(filePath, result);
+  }
+
+  return result;
+}
+
+async function analyzeCDNLog(filePath, onProgress, options = {}) {
+  if (shouldUseWorkerForAnalysis(filePath, options)) {
+    return runAnalysisWorker(filePath, onProgress);
+  }
+
+  const stream = createCDNLogStream(filePath);
+  return analyzeCDNLogFromStream(stream, filePath, onProgress);
 }
 
 /* === Filter Functions === */
@@ -215,6 +268,10 @@ async function extractCDNPage(filePath, filters = {}, page = 1, pageSize = 50) {
  */
 async function countAndExtractCDNEntries(filePath, filters = {}, page = 1, pageSize = 50) {
   const stream = createCDNLogStream(filePath);
+  return countAndExtractCDNEntriesFromStream(stream, filters, page, pageSize);
+}
+
+async function countAndExtractCDNEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildCDNFilter(filters);
   const entries = [];
   let skipped = (page - 1) * pageSize;
@@ -236,8 +293,10 @@ async function countAndExtractCDNEntries(filePath, filters = {}, page = 1, pageS
 
 module.exports = {
   analyzeCDNLog,
+  analyzeCDNLogFromStream,
   buildCDNFilter,
   countMatchingCDNEntries,
   extractCDNPage,
-  countAndExtractCDNEntries
+  countAndExtractCDNEntries,
+  countAndExtractCDNEntriesFromStream
 };

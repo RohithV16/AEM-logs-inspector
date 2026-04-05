@@ -1,7 +1,8 @@
 const { categorizeError } = require('../../src/categorizer');
-const { extractExceptionNames } = require('../../src/services/errorLogService');
+const { analyzeAllInOnePass, buildEntryFilter, extractExceptionNames } = require('../../src/services/errorLogService');
 const requestLogService = require('../../src/services/requestLogService');
 const cdnLogService = require('../../src/services/cdnLogService');
+const { clearCache } = require('../../src/utils/analysisCache');
 
 describe('categorizer - categorizeError', () => {
   test('categorizes JCR errors', () => {
@@ -106,6 +107,10 @@ describe('requestLogService', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-request-'));
   });
 
+  beforeEach(() => {
+    clearCache();
+  });
+
   afterAll(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
@@ -148,6 +153,20 @@ describe('requestLogService', () => {
     expect(result.summary.p95ResponseTime).toBeGreaterThanOrEqual(result.summary.p50ResponseTime);
     expect(result.summary.p99ResponseTime).toBeGreaterThanOrEqual(result.summary.p95ResponseTime);
   });
+
+  test('analyzeRequestLog reuses cached results for unchanged files', async () => {
+    tempRequestLog = path.join(tempDir, 'request-cache.log');
+    const content = [
+      '29/Mar/2026:14:30:15 +0000 [12345] -> GET /content/site.html HTTP/1.1 [author-pod]',
+      '29/Mar/2026:14:30:16 +0000 [12346] <- 200 text/html 150ms [author-pod]'
+    ].join('\n');
+    fs.writeFileSync(tempRequestLog, content, 'utf8');
+
+    const first = await requestLogService.analyzeRequestLog(tempRequestLog);
+    const second = await requestLogService.analyzeRequestLog(tempRequestLog);
+
+    expect(second).toBe(first);
+  });
 });
 
 describe('cdnLogService', () => {
@@ -160,6 +179,10 @@ describe('cdnLogService', () => {
 
   beforeAll(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-cdn-'));
+  });
+
+  beforeEach(() => {
+    clearCache();
   });
 
   afterAll(() => {
@@ -221,5 +244,267 @@ describe('cdnLogService', () => {
     expect(result.pops).toBeDefined();
     expect(result.pops.sfo).toBe(2);
     expect(result.pops.lax).toBe(1);
+  });
+
+  test('analyzeCDNLog reuses cached results for unchanged files', async () => {
+    tempCDNLog = path.join(tempDir, 'cdn-cache.log');
+    const content = JSON.stringify({
+      timestamp: '2026-03-29T14:30:15.000Z',
+      status: 200,
+      method: 'GET',
+      url: '/1',
+      cache: 'HIT',
+      host: 'ex.com',
+      pop: 'sfo',
+      ttfb: 50,
+      ttlb: 100
+    });
+    fs.writeFileSync(tempCDNLog, `${content}\n`, 'utf8');
+
+    const first = await cdnLogService.analyzeCDNLog(tempCDNLog);
+    const second = await cdnLogService.analyzeCDNLog(tempCDNLog);
+
+    expect(second).toBe(first);
+  });
+});
+
+describe('errorLogService', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  let tempDir;
+
+  beforeAll(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-error-service-'));
+  });
+
+  beforeEach(() => {
+    clearCache();
+  });
+
+  afterAll(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('analyzeAllInOnePass reuses cached results for unchanged files', async () => {
+    const errorFile = path.join(tempDir, 'error-cache.log');
+    fs.writeFileSync(errorFile, '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Failed request\n', 'utf8');
+
+    const first = await analyzeAllInOnePass(errorFile);
+    const second = await analyzeAllInOnePass(errorFile);
+
+    expect(second).toBe(first);
+  });
+
+  test('buildEntryFilter supports combined from/to filtering with one matching timestamp', () => {
+    const filter = buildEntryFilter({
+      from: '2026-03-16T14:00:00',
+      to: '2026-03-16T15:00:00'
+    });
+
+    expect(filter({
+      level: 'ERROR',
+      message: 'Failed request',
+      timestamp: '16.03.2026 14:30:15.123'
+    })).toBe(true);
+  });
+});
+
+describe('requestLogService - Filter Functions', () => {
+  const { buildRequestFilter, countMatchingRequestEntries, extractRequestPage, countAndExtractRequestEntries } = require('../../src/services/requestLogService');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  let tempDir;
+  let tempRequestLog;
+
+  beforeAll(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-request-filter-'));
+    tempRequestLog = path.join(tempDir, 'request.log');
+    const content = [
+      '04/Apr/2026:00:00:06 +0000 [1] -> GET /api/users HTTP/1.1 [pod-1]',
+      '04/Apr/2026:00:00:07 +0000 [2] <- 200 text/html 100ms [pod-1]',
+      '04/Apr/2026:00:00:08 +0000 [3] -> POST /api/users HTTP/1.1 [pod-2]',
+      '04/Apr/2026:00:00:09 +0000 [4] <- 404 text/html 50ms [pod-2]',
+      '04/Apr/2026:00:00:10 +0000 [5] -> GET /api/users/123 HTTP/1.1 [pod-1]',
+      '04/Apr/2026:00:00:11 +0000 [6] <- 200 text/html 200ms [pod-1]'
+    ].join('\n');
+    fs.writeFileSync(tempRequestLog, content, 'utf8');
+  });
+
+  afterAll(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('buildRequestFilter filters by method', () => {
+    const filter = buildRequestFilter({ method: 'GET' });
+    expect(filter({ method: 'GET', status: 200 })).toBe(true);
+    expect(filter({ method: 'POST', status: 200 })).toBe(false);
+  });
+
+  test('buildRequestFilter filters by status', () => {
+    const filter = buildRequestFilter({ status: 200 });
+    expect(filter({ status: 200 })).toBe(true);
+    expect(filter({ status: 404 })).toBe(false);
+  });
+
+  test('buildRequestFilter filters by pod', () => {
+    const filter = buildRequestFilter({ pod: 'pod-1' });
+    expect(filter({ pod: 'pod-1' })).toBe(true);
+    expect(filter({ pod: 'pod-2' })).toBe(false);
+  });
+
+  test('buildRequestFilter filters by minTime', () => {
+    const filter = buildRequestFilter({ minTime: 100 });
+    expect(filter({ responseTime: 150 })).toBe(true);
+    expect(filter({ responseTime: 50 })).toBe(false);
+  });
+
+  test('buildRequestFilter filters by maxTime', () => {
+    const filter = buildRequestFilter({ maxTime: 100 });
+    expect(filter({ responseTime: 50 })).toBe(true);
+    expect(filter({ responseTime: 150 })).toBe(false);
+  });
+
+  test('countMatchingRequestEntries counts filtered entries', async () => {
+    const count = await countMatchingRequestEntries(tempRequestLog, { method: 'GET' });
+    expect(count).toBe(2);
+  });
+
+  test('countMatchingRequestEntries with no filters counts all', async () => {
+    const count = await countMatchingRequestEntries(tempRequestLog, {});
+    expect(count).toBe(6);
+  });
+
+  test('extractRequestPage returns paginated results', async () => {
+    const result = await extractRequestPage(tempRequestLog, {}, 1, 2);
+    expect(result.entries.length).toBeLessThanOrEqual(2);
+    expect(result.total).toBe(6);
+  });
+
+  test('extractRequestPage returns second page', async () => {
+    const result = await extractRequestPage(tempRequestLog, {}, 2, 2);
+    expect(result.entries.length).toBeLessThanOrEqual(2);
+  });
+
+  test('extractRequestPage filters entries', async () => {
+    const result = await extractRequestPage(tempRequestLog, { method: 'GET' }, 1, 10);
+    expect(result.total).toBe(2);
+  });
+
+  test('countAndExtractRequestEntries returns count and entries', async () => {
+    const result = await countAndExtractRequestEntries(tempRequestLog, { method: 'POST' }, 1, 10);
+    expect(result.entries.length).toBe(1);
+    expect(result.total).toBe(1);
+  });
+});
+
+describe('cdnLogService - Filter Functions', () => {
+  const { buildCDNFilter, countMatchingCDNEntries, extractCDNPage, countAndExtractCDNEntries } = require('../../src/services/cdnLogService');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  let tempDir;
+  let tempCDNLog;
+
+  beforeAll(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-cdn-filter-'));
+    tempCDNLog = path.join(tempDir, 'cdn.log');
+    const content = [
+      JSON.stringify({ method: 'GET', status: 200, cache: 'HIT', pop: 'DFW', url: '/1', host: 'ex.com', timestamp: '2026-04-04T00:00:00Z', ttfb: 10, ttlb: 20 }),
+      JSON.stringify({ method: 'GET', status: 200, cache: 'MISS', pop: 'LAX', url: '/2', host: 'ex.com', timestamp: '2026-04-04T00:00:01Z', ttfb: 20, ttlb: 30 }),
+      JSON.stringify({ method: 'POST', status: 200, cache: 'HIT', pop: 'DFW', url: '/3', host: 'ex.com', timestamp: '2026-04-04T00:00:02Z', ttfb: 15, ttlb: 25 }),
+      JSON.stringify({ method: 'GET', status: 404, cache: 'MISS', pop: 'JFK', url: '/4', host: 'ex.com', timestamp: '2026-04-04T00:00:03Z', ttfb: 5, ttlb: 10 })
+    ].join('\n');
+    fs.writeFileSync(tempCDNLog, content, 'utf8');
+  });
+
+  afterAll(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('buildCDNFilter filters by method', () => {
+    const filter = buildCDNFilter({ method: 'GET' });
+    expect(filter({ method: 'GET' })).toBe(true);
+    expect(filter({ method: 'POST' })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by status', () => {
+    const filter = buildCDNFilter({ status: 200 });
+    expect(filter({ status: 200 })).toBe(true);
+    expect(filter({ status: 404 })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by cache', () => {
+    const filter = buildCDNFilter({ cache: 'HIT' });
+    expect(filter({ cache: 'HIT' })).toBe(true);
+    expect(filter({ cache: 'MISS' })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by country', () => {
+    const filter = buildCDNFilter({ country: 'US' });
+    expect(filter({ clientCountry: 'US' })).toBe(true);
+    expect(filter({ clientCountry: 'UK' })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by pop', () => {
+    const filter = buildCDNFilter({ pop: 'DFW' });
+    expect(filter({ pop: 'DFW' })).toBe(true);
+    expect(filter({ pop: 'LAX' })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by host', () => {
+    const filter = buildCDNFilter({ host: 'example.com' });
+    expect(filter({ host: 'example.com' })).toBe(true);
+    expect(filter({ host: 'other.com' })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by minTtfb', () => {
+    const filter = buildCDNFilter({ minTtfb: 15 });
+    expect(filter({ ttfb: 20 })).toBe(true);
+    expect(filter({ ttfb: 10 })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by maxTtfb', () => {
+    const filter = buildCDNFilter({ maxTtfb: 15 });
+    expect(filter({ ttfb: 10 })).toBe(true);
+    expect(filter({ ttfb: 20 })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by minTtlb', () => {
+    const filter = buildCDNFilter({ minTtlb: 25 });
+    expect(filter({ ttlb: 30 })).toBe(true);
+    expect(filter({ ttlb: 20 })).toBe(false);
+  });
+
+  test('buildCDNFilter filters by maxTtlb', () => {
+    const filter = buildCDNFilter({ maxTtlb: 25 });
+    expect(filter({ ttlb: 20 })).toBe(true);
+    expect(filter({ ttlb: 30 })).toBe(false);
+  });
+
+  test('countMatchingCDNEntries counts filtered entries', async () => {
+    const count = await countMatchingCDNEntries(tempCDNLog, { cache: 'HIT' });
+    expect(count).toBe(2);
+  });
+
+  test('countMatchingCDNEntries with no filters counts all', async () => {
+    const count = await countMatchingCDNEntries(tempCDNLog, {});
+    expect(count).toBe(4);
+  });
+
+  test('extractCDNPage returns paginated results', async () => {
+    const result = await extractCDNPage(tempCDNLog, {}, 1, 2);
+    expect(result.entries.length).toBeLessThanOrEqual(2);
+    expect(result.total).toBe(4);
+  });
+
+  test('countAndExtractCDNEntries returns count and entries', async () => {
+    const result = await countAndExtractCDNEntries(tempCDNLog, { pop: 'DFW' }, 1, 10);
+    expect(result.entries.length).toBe(2);
+    expect(result.total).toBe(2);
   });
 });

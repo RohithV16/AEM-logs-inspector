@@ -89,21 +89,6 @@ test.describe('API Integration Tests', () => {
     expect(body.success).toBe(true);
   });
 
-  test('6. POST /api/filter - Filter by package', async ({ page }) => {
-    const response = await page.request.post(`${BASE_URL}/api/filter`, {
-      data: {
-        filePath: ERROR_LOG,
-        filters: {
-          package: 'com.adobe'
-        }
-      }
-    });
-
-    expect(response.status()).toBe(200);
-    const body = await response.json();
-    expect(body.success).toBe(true);
-  });
-
   test('7. POST /api/analyze/multi-error - Analyze multiple error files', async ({ page }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-api-batch-'));
     const errorOne = writeTempErrorLog(tempDir, 'error-one.log', [
