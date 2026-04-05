@@ -16,6 +16,7 @@ const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
 const createCloudManagerRouter = require('./routes/cloudManager');
+const { performCloudManagerDownload } = require('./routes/cloudManager');
 
 /* === Express App Setup === */
 const app = express();
@@ -66,6 +67,32 @@ async function handleAnalyzeAction(ws, filePath) {
   }
 }
 
+/**
+ * Handles Cloud Manager download with progress updates
+ * @param {WebSocket} ws - WebSocket connection to send results to
+ * @param {Object} options - Download options
+ */
+async function handleCloudManagerDownloadAction(ws, options) {
+  try {
+    console.log('[CM] Starting download with options:', JSON.stringify(options, null, 2));
+    ws.send(JSON.stringify({ type: 'status', message: 'Starting download from Cloud Manager...', status: 'starting' }));
+
+    const onProgress = (progress) => {
+      console.log('[CM] Progress:', JSON.stringify(progress));
+      ws.send(JSON.stringify({ type: 'progress', ...progress }));
+    };
+
+    console.log('[CM] Calling performCloudManagerDownload...');
+    const result = await performCloudManagerDownload(options, onProgress);
+    console.log('[CM] Download complete, result keys:', Object.keys(result));
+
+    ws.send(JSON.stringify({ type: 'complete', ...result, status: 'complete' }));
+  } catch (err) {
+    console.error('[CM] Download error:', err.message);
+    ws.send(JSON.stringify({ type: 'error', error: sanitizeErrorMessage(err.message), status: 'error' }));
+  }
+}
+
 function attachWebSocketHandlers(server) {
   const socketServer = new WebSocketServer({ server });
 
@@ -79,7 +106,11 @@ function attachWebSocketHandlers(server) {
         /* Handle analyze action - full file analysis */
         if (data.action === 'analyze' && data.filePath) {
           await handleAnalyzeAction(ws, data.filePath);
-        } 
+        }
+        /* Handle Cloud Manager download action */
+        else if (data.action === 'cloudmanager-download') {
+          await handleCloudManagerDownloadAction(ws, data.options);
+        }
         /* Handle tail action - real-time file watching */
         else if (data.type === 'tail') {
           const { filePath } = data;

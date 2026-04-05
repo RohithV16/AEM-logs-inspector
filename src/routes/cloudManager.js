@@ -14,7 +14,7 @@ const {
 } = require('../services/cloudManagerService');
 const { sanitizeErrorMessage } = require('../utils/files');
 
-async function performCloudManagerDownload(request = {}) {
+async function performCloudManagerDownload(request = {}, onProgress = null) {
   const {
     programId,
     environmentId,
@@ -33,8 +33,19 @@ async function performCloudManagerDownload(request = {}) {
     throw new Error('Program, environment, and at least one service/log selection are required.');
   }
 
+  const totalSelections = normalizedSelections.length;
   const downloads = [];
-  for (const entry of normalizedSelections) {
+  for (let i = 0; i < normalizedSelections.length; i++) {
+    const entry = normalizedSelections[i];
+    if (onProgress) {
+      onProgress({
+        currentIndex: i + 1,
+        totalFiles: totalSelections,
+        currentFile: `${entry.logName} (${entry.service})`,
+        message: `Downloading ${entry.logName} from ${entry.service}...`,
+        status: 'downloading'
+      });
+    }
     const download = await downloadLogs({
       programId,
       environmentId,
@@ -52,7 +63,8 @@ async function performCloudManagerDownload(request = {}) {
 
   const primaryDownload = downloads[0];
   const downloadedFilesDetailed = [];
-  for (const entry of downloads) {
+  for (let i = 0; i < downloads.length; i++) {
+    const entry = downloads[i];
     const describedFiles = await describeDownloadedFiles(entry);
     downloadedFilesDetailed.push(...describedFiles.map((file) => ({
       ...file,

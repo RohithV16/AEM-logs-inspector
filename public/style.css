@@ -377,7 +377,7 @@ body.sidebar-collapsed .main-grid {
   padding: 1.25rem;
   box-shadow: var(--shadow-soft);
   position: relative;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .filter-card::before {
@@ -957,9 +957,65 @@ body.sidebar-collapsed .main-grid {
   margin-bottom: 0.8rem;
 }
 
+.local-downloads-environment-selects {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.popover-filter-select {
+  min-width: 150px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.popover-filter-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.popover-filter-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
 .local-downloads-popover-header h3 {
   margin: 0.1rem 0 0;
   font-size: 16px;
+}
+
+.popover-loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  gap: 1rem;
+}
+
+.popover-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border-tertiary);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: popover-spinner-rotate 0.8s linear infinite;
+}
+
+@keyframes popover-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+.popover-loading-text {
+  color: var(--color-text-secondary);
+  font-size: 14px;
 }
 
 .local-downloads-actions {
@@ -1065,6 +1121,130 @@ body.sidebar-collapsed .main-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+.cm-picker-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.cm-log-type-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--color-border-tertiary);
+}
+
+.cm-log-type-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cm-log-type-tab:hover {
+  border-color: var(--color-primary);
+}
+
+.cm-log-type-tab.active {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary-soft) 65%, var(--color-background-primary));
+  color: var(--color-text-primary);
+}
+
+.cm-log-type-tab .tab-count {
+  font-size: 11px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-secondary) 15%, transparent);
+  font-weight: 700;
+}
+
+.cm-log-type-tab.active .tab-count {
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.cm-type-group {
+  margin-bottom: 1rem;
+}
+
+.cm-type-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border-radius: 10px;
+  background: var(--color-background-tertiary);
+}
+
+.cm-type-group-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.cm-type-group-header .group-meta {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.cm-tier-subgroup {
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-secondary);
+}
+
+.cm-tier-subgroup-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  margin-bottom: 0.4rem;
+}
+
+.cm-date-subgroup {
+  margin-bottom: 0.4rem;
+}
+
+.cm-date-subgroup-header {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  padding: 0.25rem 0;
+  margin-bottom: 0.25rem;
+}
+
+.cm-picker-filter {
+  flex: 1;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-tertiary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.cm-picker-filter:focus {
+  outline: none;
+  border-color: var(--color-primary);
 }
 
 .cm-picker-tier-tab {
@@ -1762,6 +1942,124 @@ body.sidebar-collapsed .main-grid {
 .cloudmanager-summary code {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.cm-download-progress-panel {
+  padding: 1rem;
+  border-radius: 16px;
+  background: var(--color-background-secondary);
+  border: 1px solid var(--color-border-tertiary);
+  margin: 0.5rem 0;
+}
+
+.cm-download-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.cm-download-progress-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.cm-download-progress-stats {
+  padding: 0.35rem 0.65rem;
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.cm-download-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 0.75rem;
+}
+
+.cm-download-progress-item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  background: var(--color-background-primary);
+  border: 1px solid var(--color-border-tertiary);
+}
+
+.cm-download-progress-item.completed {
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-background-primary));
+}
+
+.cm-download-progress-item.downloading {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-background-primary));
+}
+
+.cm-download-progress-item.error {
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--color-background-primary));
+}
+
+.cm-download-progress-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.cm-download-progress-icon.completed {
+  color: var(--color-success);
+}
+
+.cm-download-progress-icon.downloading {
+  color: var(--color-primary);
+  animation: spin 1s linear infinite;
+}
+
+.cm-download-progress-icon.pending {
+  color: var(--color-text-tertiary);
+}
+
+.cm-download-progress-icon.error {
+  color: var(--color-error);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.cm-download-progress-item-name {
+  flex: 1;
+  font-size: 0.85rem;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cm-download-progress-item-status {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.cm-download-progress-status {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border-tertiary);
 }
 
 .cloudmanager-download-files {
@@ -2616,6 +2914,13 @@ body.sidebar-collapsed .main-grid {
   .local-downloads-popover-header {
     flex-direction: column;
   }
+  .local-downloads-environment-selects {
+    width: 100%;
+  }
+  .popover-filter-select {
+    flex: 1;
+    min-width: 0;
+  }
   .local-downloads-overlay {
     padding: 0.7rem;
   }
@@ -2626,6 +2931,14 @@ body.sidebar-collapsed .main-grid {
   }
   .cm-picker-sections {
     grid-template-columns: 1fr;
+  }
+  .cm-log-type-tabs {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .cm-log-type-tab {
+    padding: 0.4rem 0.65rem;
+    font-size: 12px;
   }
   .source-mode-switch {
     width: 100%;
