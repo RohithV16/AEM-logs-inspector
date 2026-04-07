@@ -1,8 +1,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
-const { detectLogSignature } = require('../parser');
+const { execFile, spawn } = require('child_process');
+const readline = require('readline');
+const { detectLogSignature, detectLogTypeFromLine, parseLine, parseRequestLine, parseCDNLine } = require('../parser');
 const { isAllowedLogFile } = require('../utils/files');
 
 const AIO_BINARY = 'aio';
@@ -294,6 +295,38 @@ function getAioCommandPreview(args) {
   return ['aio', ...args].join(' ');
 }
 
+function parseTailEntry(rawLine) {
+  const line = String(rawLine || '').trim();
+  if (!line) return null;
+
+  const detectedLogType = detectLogTypeFromLine(line);
+  let parsed = null;
+
+  if (detectedLogType === 'error') {
+    parsed = parseLine(line);
+  } else if (detectedLogType === 'request') {
+    parsed = parseRequestLine(line);
+  } else if (detectedLogType === 'cdn') {
+    parsed = parseCDNLine(line);
+  }
+
+  if (parsed) {
+    return {
+      ...parsed,
+      parsed: true,
+      logType: detectedLogType || 'unknown',
+      rawLine: line
+    };
+  }
+
+  return {
+    parsed: false,
+    logType: detectedLogType || 'unknown',
+    rawLine: line,
+    message: line
+  };
+}
+
 function extractDatesFromDownloadedFiles(files = []) {
   return files.map((filePath) => {
     const fileName = path.basename(filePath);
@@ -466,6 +499,25 @@ function buildDownloadCommand(options = {}) {
   ];
 }
 
+function buildTailCommand(options = {}) {
+  const args = [
+    'cloudmanager:environment:tail-log',
+    String(options.environmentId),
+    String(options.service),
+    String(options.logName)
+  ];
+
+  if (options.programId) {
+    args.push('--programId', String(options.programId));
+  }
+
+  if (options.imsContextName) {
+    args.push('--imsContextName', String(options.imsContextName));
+  }
+
+  return args;
+}
+
 async function downloadLogs(options) {
   const environmentDirectory = getCloudManagerEnvironmentDirectory(options.programId, options.environmentId);
   fs.mkdirSync(environmentDirectory, { recursive: true });
@@ -558,6 +610,112 @@ async function describeDownloadedFiles(download) {
   return items;
 }
 
+function createCloudManagerTailSession(options = {}, handlers = {}) {
+  const commandArgs = buildTailCommand(options);
+  let child = null;
+  let stopped = false;
+  let stopEmitted = false;
+
+  const emitStatus = (status, message = '') => {
+    if (typeof handlers.onStatus === 'function') {
+      handlers.onStatus({
+        status,
+        message,
+        source: 'cloudmanager',
+        commandPreview: getAioCommandPreview(commandArgs)
+      });
+    }
+  };
+
+  const emitEntry = (entry) => {
+    if (entry && typeof handlers.onEntry === 'function') {
+      handlers.onEntry(entry);
+    }
+  };
+
+  const emitError = (error) => {
+    if (typeof handlers.onError === 'function') {
+      handlers.onError(error);
+    }
+  };
+
+  const emitStopped = () => {
+    if (stopEmitted) return;
+    stopEmitted = true;
+    if (typeof handlers.onStopped === 'function') {
+      handlers.onStopped({ source: 'cloudmanager' });
+    }
+  };
+
+  const parseAndEmit = (line) => {
+    const entry = parseTailEntry(line);
+    if (entry) emitEntry(entry);
+  };
+
+  return {
+    commandArgs,
+    commandPreview: getAioCommandPreview(commandArgs),
+    start() {
+      if (child) return;
+
+      emitStatus('starting', 'Starting Cloud Manager live tail...');
+      child = spawn(AIO_BINARY, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const stdoutRl = readline.createInterface({ input: child.stdout });
+      stdoutRl.on('line', parseAndEmit);
+
+      let stderrOutput = '';
+      const stderrRl = readline.createInterface({ input: child.stderr });
+      stderrRl.on('line', (line) => {
+        const text = String(line || '').trim();
+        if (!text) return;
+        stderrOutput += `${stderrOutput ? '\n' : ''}${text}`;
+        emitStatus('running', text);
+      });
+
+      child.once('spawn', () => {
+        emitStatus('running', 'Cloud Manager live tail connected.');
+      });
+
+      child.once('error', (error) => {
+        if (stopped) {
+          emitStopped();
+          return;
+        }
+        emitError(createCloudManagerError(error, stderrOutput));
+        emitStopped();
+      });
+
+      child.once('close', (code, signal) => {
+        child = null;
+        stdoutRl.close();
+        stderrRl.close();
+
+        if (stopped) {
+          emitStopped();
+          return;
+        }
+
+        if (code === 0 || signal === 'SIGTERM' || signal === 'SIGINT') {
+          emitStopped();
+          return;
+        }
+
+        emitError(createCloudManagerError({ message: `Process exited with code ${code}` }, stderrOutput));
+        emitStopped();
+      });
+    },
+    stop() {
+      stopped = true;
+      if (child && !child.killed) {
+        child.kill('SIGTERM');
+      } else {
+        emitStopped();
+      }
+    }
+  };
+}
+
 function getEstimatedDateRange(days = 1) {
   const parsedDays = Number(days || 1);
   const now = new Date();
@@ -572,12 +730,14 @@ function getEstimatedDateRange(days = 1) {
 
 module.exports = {
   buildDownloadCommand,
+  buildTailCommand,
   getAioCommandPreview,
   getEstimatedDateRange,
   fetchProgramsFromCloudManager,
   fetchEnvironmentsFromCloudManager,
   listAvailableLogOptions,
   downloadLogs,
+  createCloudManagerTailSession,
   describeDownloadedFiles,
   validateOutputDirectory,
   getCloudManagerCacheRoot,

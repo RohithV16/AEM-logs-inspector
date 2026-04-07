@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   buildDownloadCommand,
+  buildTailCommand,
   getAioCommandPreview,
   getEstimatedDateRange,
   fetchProgramsFromCloudManager,
@@ -121,7 +122,7 @@ function createCloudManagerRouter() {
     }
   });
 
-  router.post('/cloudmanager/validate-output-directory', async (req, res) => {
+  router.post('/cloudmanager/validate-output-directory', async (_req, res) => {
     try {
       const cacheRoot = getCloudManagerCacheRoot();
       res.json({ success: true, resolved: validateOutputDirectory(cacheRoot), cacheRoot });
@@ -141,10 +142,12 @@ function createCloudManagerRouter() {
   router.post('/cloudmanager/command-preview', async (req, res) => {
     try {
       const {
+        mode = 'download',
         programId,
         environmentId,
         days,
         outputDirectory,
+        imsContextName,
         selections = [],
         service,
         logName
@@ -155,14 +158,22 @@ function createCloudManagerRouter() {
         : (service && logName ? [{ service, logName }] : []);
 
       const commands = normalizedSelections.map((entry) => {
-        const args = buildDownloadCommand({
-          programId,
-          environmentId,
-          service: entry.service,
-          logName: entry.logName,
-          days,
-          outputDirectory: outputDirectory || '<output-directory>'
-        });
+        const args = mode === 'tail'
+          ? buildTailCommand({
+            programId,
+            environmentId,
+            service: entry.service,
+            logName: entry.logName,
+            imsContextName
+          })
+          : buildDownloadCommand({
+            programId,
+            environmentId,
+            service: entry.service,
+            logName: entry.logName,
+            days,
+            outputDirectory: outputDirectory || '<output-directory>'
+          });
         return {
           service: entry.service,
           logName: entry.logName,
@@ -172,8 +183,9 @@ function createCloudManagerRouter() {
 
       res.json({
         success: true,
+        mode,
         commands,
-        estimatedDateRange: getEstimatedDateRange(days || 1)
+        estimatedDateRange: mode === 'tail' ? null : getEstimatedDateRange(days || 1)
       });
     } catch (error) {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
@@ -254,4 +266,7 @@ function createCloudManagerRouter() {
   return router;
 }
 
-module.exports = createCloudManagerRouter;
+module.exports = {
+  createCloudManagerRouter,
+  performCloudManagerDownload
+};

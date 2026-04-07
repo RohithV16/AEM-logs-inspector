@@ -59,9 +59,9 @@ function createMockDownload(files = []) {
 function createMockCommandPreview(command = 'aio cloudmanager:logs:download') {
   return {
     success: true,
-    command,
-    estimatedSize: '50MB',
-    estimatedDuration: '2 minutes'
+    mode: 'download',
+    commands: [{ service: 'author', logName: 'aemerror', command }],
+    estimatedDateRange: { label: 'Estimated range: 2026-04-06 to 2026-04-07' }
   };
 }
 

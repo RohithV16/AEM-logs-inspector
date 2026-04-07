@@ -28,8 +28,14 @@ const cmEnvironmentHint = document.getElementById('cmEnvironmentHint');
 const cmLogHint = document.getElementById('cmLogHint');
 const cmOutputDirectoryHint = document.getElementById('cmOutputDirectoryHint');
 const cmAnalyzeBtn = document.getElementById('cmAnalyzeBtn');
+const cmTailBtn = document.getElementById('cmTailBtn');
 const cmProgressText = document.getElementById('cmProgressText');
 const cmDownloadSummary = document.getElementById('cmDownloadSummary');
+const cmTailPanel = document.getElementById('cmTailPanel');
+const cmTailTitle = document.getElementById('cmTailTitle');
+const cmTailStatus = document.getElementById('cmTailStatus');
+const cmTailFeed = document.getElementById('cmTailFeed');
+const cmTailStopBtn = document.getElementById('cmTailStopBtn');
 const cmDownloadProgressPanel = document.getElementById('cmDownloadProgressPanel');
 const cmDownloadProgressTitle = document.getElementById('cmDownloadProgressTitle');
 const cmDownloadProgressCount = document.getElementById('cmDownloadProgressCount');
@@ -76,6 +82,29 @@ const runSearchBuilderBtn = document.getElementById('runSearchBuilderBtn');
 const sidebar = document.getElementById('sidebar');
 const sidebarBody = document.getElementById('sidebarBody');
 const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+const tailPanel = document.getElementById('tailPanel');
+const tailTitle = document.getElementById('tailTitle');
+const tailSource = document.getElementById('tailSource');
+const tailStopBtn = document.getElementById('tailStopBtn');
+const tailLevelFilters = document.getElementById('tailLevelFilters');
+const tailSearchInput = document.getElementById('tailSearchInput');
+const tailRegexToggle = document.getElementById('tailRegexToggle');
+const tailPackageFilter = document.getElementById('tailPackageFilter');
+const tailPackageResults = document.getElementById('tailPackageResults');
+const tailPackageTags = document.getElementById('tailPackageTags');
+const tailLoggerFilter = document.getElementById('tailLoggerFilter');
+const tailLoggerResults = document.getElementById('tailLoggerResults');
+const tailLoggerTags = document.getElementById('tailLoggerTags');
+const tailAutoScrollBtn = document.getElementById('tailAutoScrollBtn');
+const tailClearBtn = document.getElementById('tailClearBtn');
+const tailExportBtn = document.getElementById('tailExportBtn');
+const tailExportMenu = document.getElementById('tailExportMenu');
+const tailExportJson = document.getElementById('tailExportJson');
+const tailExportCsv = document.getElementById('tailExportCsv');
+const tailStatus = document.getElementById('tailStatus');
+const tailFeed = document.getElementById('tailFeed');
+const tailNewIndicator = document.getElementById('tailNewIndicator');
+const tailScrollToNew = document.getElementById('tailScrollToNew');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
 const THEME_STORAGE_KEY = 'aem_themePreference';
 const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
@@ -131,6 +160,10 @@ let popoverEnvironmentId = '';
 let selectedLocalDownloadFiles = [];
 let localDownloadsPopoverOpen = false;
 let cloudManagerDownloadPending = false;
+let tailSocket = null;
+let activeTailSource = '';
+let cloudManagerTailSession = null;
+let cloudManagerTailEntries = [];
 let cloudManagerDownloadStatusMessage = '';
 let selectedLoggers = [];
 let selectedPackages = [];
@@ -146,6 +179,17 @@ let advancedRulesState = [];
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'aem_sidebarCollapsed';
 const SIDEBAR_COLLAPSE_BREAKPOINT = 768;
 let sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+
+let tailEntries = [];
+let tailFilterLevel = 'ALL';
+let tailFilterSearch = '';
+let tailFilterRegex = false;
+let tailFilterPackages = [];
+let tailFilterLoggers = [];
+let tailAutoScroll = true;
+let tailHasNewEntries = false;
+let tailAllPackages = {};
+let tailAllLoggers = {};
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
 
@@ -239,6 +283,23 @@ function getCloudManagerSelectionState() {
     days: cmDaysInput?.value.trim() || '1',
     outputDirectory: cmOutputDirectoryInput?.value.trim() || ''
   };
+}
+
+function getActiveCloudManagerTailSelection() {
+  return selectedCloudManagerLogs.length === 1 ? selectedCloudManagerLogs[0] : null;
+}
+
+function getCloudManagerCommandPreviewState(mode = 'download') {
+  const state = getCloudManagerSelectionState();
+  if (mode === 'tail') {
+    const selection = getActiveCloudManagerTailSelection();
+    state.selections = selection ? [selection] : [];
+    state.mode = 'tail';
+    return state;
+  }
+
+  state.mode = 'download';
+  return state;
 }
 
 function persistCloudManagerSelectionState() {
@@ -616,6 +677,91 @@ function setCloudManagerDownloadStatus(message = '', { pending = false } = {}) {
   if (localDownloadsOverlayStatus) {
     localDownloadsOverlayStatus.textContent = cloudManagerDownloadStatusMessage;
     localDownloadsOverlayStatus.classList.toggle('hidden', !cloudManagerDownloadStatusMessage);
+  }
+
+  updateTailControls();
+}
+
+function formatTailEntryMarkup(entry = {}) {
+  const level = entry.level || entry.type || entry.logType || 'raw';
+  const timestamp = entry.timestamp || '';
+  const body = entry.rawLine || entry.message || JSON.stringify(entry);
+  const severityClass = level === 'ERROR' ? 'error' : (level === 'WARN' ? 'warn' : '');
+  return `
+    <div class="cloudmanager-tail-entry ${severityClass}">
+      <div class="cloudmanager-tail-entry-meta">
+        <span>${escapeHtml(String(level))}</span>
+        <span>${escapeHtml(String(timestamp))}</span>
+      </div>
+      <code>${escapeHtml(String(body))}</code>
+    </div>
+  `;
+}
+
+function renderCloudManagerTailPanel() {
+  if (!cmTailPanel || !cmTailFeed || !cmTailStatus || !cmTailTitle) return;
+
+  const hasSession = Boolean(cloudManagerTailSession);
+  const hasEntries = cloudManagerTailEntries.length > 0;
+  cmTailPanel.classList.toggle('hidden', !(hasSession || hasEntries));
+
+  if (!hasSession && !hasEntries) {
+    cmTailFeed.innerHTML = '';
+    cmTailStatus.textContent = 'Select a Cloud Manager log and start tailing.';
+    cmTailTitle.textContent = 'No active Cloud Manager tail';
+    updateTailControls();
+    return;
+  }
+
+  cmTailTitle.textContent = cloudManagerTailSession
+    ? `Tailing ${cloudManagerTailSession.logName} on ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId}`
+    : 'Recent live tail output';
+  cmTailFeed.innerHTML = cloudManagerTailEntries.map(formatTailEntryMarkup).join('');
+  cmTailFeed.scrollTop = 0;
+  updateTailControls();
+}
+
+function setCloudManagerTailStatus(message = '') {
+  if (!cmTailStatus) return;
+  cmTailStatus.textContent = message || 'Select a Cloud Manager log and start tailing.';
+  renderCloudManagerTailPanel();
+}
+
+function pushCloudManagerTailEntry(entry) {
+  cloudManagerTailEntries = [entry, ...cloudManagerTailEntries].slice(0, 100);
+  renderCloudManagerTailPanel();
+}
+
+function resetCloudManagerTailState({ preserveEntries = false } = {}) {
+  cloudManagerTailSession = null;
+  if (!preserveEntries) {
+    cloudManagerTailEntries = [];
+  }
+  activeTailSource = activeTailSource === 'cloudmanager' ? '' : activeTailSource;
+  renderCloudManagerTailPanel();
+}
+
+function updateTailControls() {
+  const localTailActive = activeTailSource === 'local';
+  if (tailBtn) {
+    tailBtn.disabled = activeTailSource === 'cloudmanager' || (currentSourceMode !== 'local' && !localTailActive);
+    tailBtn.textContent = localTailActive ? 'Stop Tail' : '\u25B6 Tail';
+    tailBtn.classList.toggle('active', localTailActive);
+    tailBtn.title = currentSourceMode === 'local' || localTailActive
+      ? 'Watch a local log file for new entries in real-time'
+      : 'Switch to Local Path mode to tail a local log file';
+  }
+
+  const tailSelection = getActiveCloudManagerTailSelection();
+  const cloudManagerTailActive = activeTailSource === 'cloudmanager';
+  if (cmTailBtn) {
+    cmTailBtn.disabled = cloudManagerDownloadPending || (!cloudManagerTailActive && !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && tailSelection));
+    cmTailBtn.textContent = cloudManagerTailActive ? 'Tailing…' : 'Tail Logs';
+    cmTailBtn.classList.toggle('active', cloudManagerTailActive);
+  }
+
+  if (cmTailStopBtn) {
+    cmTailStopBtn.disabled = !cloudManagerTailActive;
   }
 }
 
@@ -1160,9 +1306,9 @@ function getSelectedCloudManagerLogOptions() {
   });
 }
 
-async function refreshCloudManagerCommandPreview() {
+async function refreshCloudManagerCommandPreview(mode = cloudManagerTailSession ? 'tail' : 'download') {
   if (!cmCommandPreview) return;
-  const state = getCloudManagerSelectionState();
+  const state = getCloudManagerCommandPreviewState(mode);
   if (!state.days) state.days = '1';
   if (cmEstimatedDateRange) {
     const parsedDays = Math.max(Number(state.days || 1), 1);
@@ -1189,9 +1335,13 @@ async function refreshCloudManagerCommandPreview() {
     if (!data.success) return;
 
     const commands = (data.commands || []).map((entry) => `<code>${escapeHtml(entry.command)}</code>`).join('');
+    const title = mode === 'tail' ? 'Tail command preview' : 'Command preview';
+    const detail = mode === 'tail'
+      ? 'Live tail streams entries directly from Cloud Manager and does not cache them.'
+      : escapeHtml(data.estimatedDateRange?.label || '');
     cmCommandPreview.innerHTML = `
-      <div><strong>Command preview</strong></div>
-      <div>${escapeHtml(data.estimatedDateRange?.label || '')}</div>
+      <div><strong>${title}</strong></div>
+      <div>${detail}</div>
       ${commands}
     `;
     cmCommandPreview.classList.remove('hidden');
@@ -1223,6 +1373,7 @@ function updateCloudManagerActionState(outputDirectoryValid) {
     cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(hasSelection && outputReady);
   }
   updateCloudManagerHintState();
+  updateTailControls();
 }
 
 function restoreCloudManagerSelections() {
@@ -1246,12 +1397,7 @@ function setSourceMode(mode, { persist = true } = {}) {
 
   if (localSourcePanel) localSourcePanel.classList.toggle('hidden', currentSourceMode !== 'local');
   if (cloudManagerPanel) cloudManagerPanel.classList.toggle('hidden', currentSourceMode !== 'cloudmanager');
-  if (tailBtn) {
-    tailBtn.disabled = currentSourceMode !== 'local';
-    tailBtn.title = currentSourceMode === 'local'
-      ? 'Watch a log file for new entries in real-time'
-      : 'Tail is only available for local file paths';
-  }
+  updateTailControls();
 
   if (persist) {
     localStorage.setItem(SOURCE_MODE_STORAGE_KEY, currentSourceMode);
@@ -3326,12 +3472,17 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function highlightText(text, searchTerm) {
+function highlightText(text, searchTerm, isRegex = false) {
   if (!searchTerm || !text) return escapeHtml(text || '');
   const escaped = escapeHtml(text);
   try {
-    const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
-    return escaped.replace(regex, '<mark>$1</mark>');
+    if (isRegex) {
+      const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
+      return escaped.replace(regex, '<mark>$1</mark>');
+    } else {
+      const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
+      return escaped.replace(regex, '<mark>$1</mark>');
+    }
   } catch {
     return escaped;
   }
@@ -3676,9 +3827,114 @@ document.addEventListener('keydown', (e) => {
    WebSocket Tail
    ============================================================ */
 
-let ws = null;
+function closeTailSocket({ sendStop = false } = {}) {
+  if (!tailSocket) return;
 
-tailBtn.addEventListener('click', () => {
+  if (sendStop && tailSocket.readyState === WebSocket.OPEN) {
+    tailSocket.send(JSON.stringify({ action: 'tail-stop', source: activeTailSource || 'local' }));
+    return;
+  }
+
+  if (tailSocket.readyState === WebSocket.OPEN || tailSocket.readyState === WebSocket.CONNECTING) {
+    tailSocket.close();
+  }
+
+  tailSocket = null;
+}
+
+function handleTailSocketMessage(data) {
+  if (data.type === 'tail-status') {
+    if (data.source === 'cloudmanager') {
+      setCloudManagerTailStatus(data.message || 'Cloud Manager live tail connected.');
+    } else if (data.message) {
+      showToast(data.message, 'info');
+    }
+    if (activeTailSource === 'local' || data.source === 'cloudmanager') {
+      if (tailStatus) {
+        tailStatus.textContent = data.message || 'Tailing in progress...';
+      }
+    }
+    return;
+  }
+
+  if (data.type === 'tail-entry') {
+    if (data.source === 'cloudmanager') {
+      pushCloudManagerTailEntry(data.entry || {});
+      pushTailEntry({ ...data.entry, source: 'cloudmanager' });
+    } else if (data.entry) {
+      pushTailEntry(data.entry);
+    }
+    return;
+  }
+
+  if (data.type === 'tail-error') {
+    if (data.source === 'cloudmanager') {
+      setCloudManagerTailStatus(data.error || 'Cloud Manager live tail failed.');
+      cloudManagerTailSession = null;
+    }
+    activeTailSource = '';
+    updateTailControls();
+    closeTailSocket();
+    showToast(`Tail error: ${data.error || 'Unknown error'}`, 'error');
+    refreshCloudManagerCommandPreview('download');
+    if (tailStatus) {
+      tailStatus.textContent = `Error: ${data.error || 'Unknown error'}`;
+    }
+    hideTailPanel();
+    return;
+  }
+
+  if (data.type === 'tail-stopped') {
+    if (data.source === 'cloudmanager') {
+      cloudManagerTailSession = null;
+      activeTailSource = '';
+      setCloudManagerTailStatus('Cloud Manager live tail stopped.');
+      renderCloudManagerTailPanel();
+      refreshCloudManagerCommandPreview('download');
+    } else {
+      activeTailSource = '';
+      updateTailControls();
+      showToast('Stopped tailing', 'info');
+    }
+    if (tailStatus) {
+      tailStatus.textContent = 'Tail stopped';
+    }
+    if (tailStopBtn) {
+      tailStopBtn.disabled = true;
+    }
+    closeTailSocket();
+  }
+}
+
+function openTailSocket(onOpen) {
+  closeTailSocket();
+  tailSocket = new WebSocket(`ws://${location.host}`);
+  tailSocket.onopen = onOpen;
+  tailSocket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    handleTailSocketMessage(data);
+  };
+  tailSocket.onerror = () => {
+    showToast('WebSocket connection error', 'error');
+    activeTailSource = '';
+    cloudManagerTailSession = null;
+    updateTailControls();
+  };
+  tailSocket.onclose = () => {
+    tailSocket = null;
+    if (activeTailSource === 'local') {
+      activeTailSource = '';
+    } else if (activeTailSource === 'cloudmanager') {
+      activeTailSource = '';
+      cloudManagerTailSession = null;
+      setCloudManagerTailStatus('Cloud Manager live tail disconnected.');
+      refreshCloudManagerCommandPreview('download');
+    }
+    updateTailControls();
+  };
+}
+
+function startLocalTail() {
   if (currentSourceMode !== 'local') {
     showToast('Tail is only available for local file paths', 'warning');
     return;
@@ -3686,47 +3942,110 @@ tailBtn.addEventListener('click', () => {
 
   const tailPathInput = document.getElementById('tailPath');
   const filePath = tailPathInput ? tailPathInput.value.trim() : filePathInput.value.trim();
-  if (!filePath) { showToast('Enter a file path to tail', 'warning'); return; }
-
-  // Save path to localStorage for persistence
-  localStorage.setItem('aem_lastPath', filePath);
-  console.log('[AEM] Saved path on tail:', filePath);
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ action: 'stop' }));
-    ws.close();
-    ws = null;
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
-    showToast('Stopped tailing', 'info');
+  if (!filePath) {
+    showToast('Enter a file path to tail', 'warning');
     return;
   }
 
-  ws = new WebSocket(`ws://${location.host}`);
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ action: 'watch', filePath }));
-    tailBtn.textContent = 'Stop Tail';
-    tailBtn.classList.add('active');
+  if (activeTailSource === 'local') {
+    closeTailSocket({ sendStop: true });
+    return;
+  }
+
+  tailEntries = [];
+  tailAllPackages = {};
+  tailAllLoggers = {};
+  tailFilterLevel = 'ALL';
+  tailFilterSearch = '';
+  tailFilterPackages = [];
+  tailFilterLoggers = [];
+  renderTailFilterTags();
+  updateTailCounts();
+
+  activeTailSource = 'local';
+  updateTailControls();
+  localStorage.setItem('aem_lastPath', filePath);
+  showTailPanel('local', filePath);
+  openTailSocket(() => {
+    tailSocket.send(JSON.stringify({ action: 'tail-start', source: 'local', filePath }));
     showToast(`Tailing ${filePath}`, 'success');
+  });
+}
+
+function startCloudManagerTail() {
+  const selection = getActiveCloudManagerTailSelection();
+  const programId = cmProgramSelect?.value || '';
+  const environmentId = cmEnvironmentSelect?.value || '';
+
+  if (!programId || !environmentId || !selection) {
+    showToast('Select exactly one Cloud Manager log to tail', 'warning');
+    return;
+  }
+
+  if (activeTailSource === 'cloudmanager') {
+    closeTailSocket({ sendStop: true });
+    return;
+  }
+
+  const labels = buildCloudManagerSelectionLabels();
+  cloudManagerTailEntries = [];
+  tailEntries = [];
+  tailAllPackages = {};
+  tailAllLoggers = {};
+  tailFilterLevel = 'ALL';
+  tailFilterSearch = '';
+  tailFilterPackages = [];
+  tailFilterLoggers = [];
+  renderTailFilterTags();
+  updateTailCounts();
+
+  cloudManagerTailSession = {
+    ...selection,
+    programId,
+    environmentId,
+    programName: labels.programName,
+    environmentName: labels.environmentName
   };
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.error) {
-      showToast('Tail error: ' + data.error, 'error');
-    } else {
-      showToast(`[${data.level}] ${data.message.substring(0, 80)}`, data.level === 'ERROR' ? 'error' : 'warning');
-    }
-  };
-  ws.onerror = () => {
-    showToast('WebSocket connection error', 'error');
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
-  };
-  ws.onclose = () => {
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
-  };
-});
+  activeTailSource = 'cloudmanager';
+  setCloudManagerTailStatus('Starting Cloud Manager live tail...');
+  renderCloudManagerTailPanel();
+  refreshCloudManagerCommandPreview('tail');
+
+  const cmSource = `${labels.programName} / ${labels.environmentName} - ${selection.service}/${selection.logName}`;
+  showTailPanel('cloudmanager', cmSource);
+
+  openTailSocket(() => {
+    tailSocket.send(JSON.stringify({
+      action: 'tail-start',
+      source: 'cloudmanager',
+      programId,
+      environmentId,
+      service: selection.service,
+      logName: selection.logName
+    }));
+  });
+}
+
+if (tailBtn) {
+  tailBtn.addEventListener('click', startLocalTail);
+}
+
+if (cmTailBtn) {
+  cmTailBtn.addEventListener('click', startCloudManagerTail);
+}
+
+if (cmTailStopBtn) {
+  cmTailStopBtn.addEventListener('click', () => {
+    closeTailSocket({ sendStop: true });
+  });
+}
+
+if (tailStopBtn) {
+  tailStopBtn.addEventListener('click', () => {
+    closeTailSocket({ sendStop: true });
+    hideTailPanel();
+  });
+}
 
 /* ============================================================
    Raw Events View
@@ -4412,9 +4731,11 @@ renderCloudManagerHistory();
 renderLocalDownloadsList();
 updateCloudManagerHintState();
 renderCloudManagerLogOptions();
+renderCloudManagerTailPanel();
 setSourceMode(currentSourceMode, { persist: false });
 refreshCloudManagerCommandPreview();
 updateCloudManagerActionState();
+updateTailControls();
 syncCloudManagerWorkspace();
 
 // Restore last used file path on page load
@@ -4448,3 +4769,488 @@ filePathInput.addEventListener('blur', () => {
     localStorage.setItem('aem_lastPath', val);
   }
 });
+
+// ============================================================
+// New Tail Panel - Initialization & Event Handlers
+// ============================================================
+
+function initTailPanel() {
+  setupTailLevelFilters();
+  setupTailSearch();
+  setupTailFilters();
+  setupTailActions();
+}
+
+function setupTailLevelFilters() {
+  if (!tailLevelFilters) return;
+  tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      tailFilterLevel = chip.dataset.level || 'ALL';
+      filterTailEntries();
+    });
+  });
+}
+
+function setupTailSearch() {
+  if (tailSearchInput) {
+    tailSearchInput.addEventListener('input', () => {
+      tailFilterSearch = tailSearchInput.value;
+      filterTailEntries();
+    });
+  }
+  if (tailRegexToggle) {
+    tailRegexToggle.addEventListener('click', () => {
+      tailFilterRegex = !tailFilterRegex;
+      tailRegexToggle.classList.toggle('active', tailFilterRegex);
+      filterTailEntries();
+    });
+  }
+}
+
+function setupTailFilters() {
+  if (tailPackageFilter) {
+    tailPackageFilter.addEventListener('input', () => {
+      filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
+    });
+    tailPackageFilter.addEventListener('focus', () => {
+      if (tailPackageFilter.value) {
+        filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
+      }
+    });
+  }
+  if (tailLoggerFilter) {
+    tailLoggerFilter.addEventListener('input', () => {
+      filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
+    });
+    tailLoggerFilter.addEventListener('focus', () => {
+      if (tailLoggerFilter.value) {
+        filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
+      }
+    });
+  }
+}
+
+function setupTailActions() {
+  if (tailAutoScrollBtn) {
+    tailAutoScrollBtn.addEventListener('click', () => {
+      tailAutoScroll = !tailAutoScroll;
+      tailAutoScrollBtn.classList.toggle('active', tailAutoScroll);
+      if (tailAutoScroll && tailHasNewEntries) {
+        scrollTailToTop();
+      }
+    });
+  }
+  if (tailClearBtn) {
+    tailClearBtn.addEventListener('click', () => {
+      tailEntries = [];
+      tailAllPackages = {};
+      tailAllLoggers = {};
+      renderTailFeed();
+      updateTailCounts();
+    });
+  }
+  if (tailExportBtn) {
+    tailExportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tailExportMenu.classList.toggle('hidden');
+    });
+  }
+  if (tailExportJson) {
+    tailExportJson.addEventListener('click', () => {
+      exportTailBuffer('json');
+      tailExportMenu.classList.add('hidden');
+    });
+  }
+  if (tailExportCsv) {
+    tailExportCsv.addEventListener('click', () => {
+      exportTailBuffer('csv');
+      tailExportMenu.classList.add('hidden');
+    });
+  }
+  if (tailScrollToNew) {
+    tailScrollToNew.addEventListener('click', () => {
+      scrollTailToTop();
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (tailExportBtn && tailExportMenu && !tailExportBtn.contains(e.target) && !tailExportMenu.contains(e.target)) {
+      tailExportMenu.classList.add('hidden');
+    }
+  });
+}
+
+function renderTailPackageOptions(filter = '') {
+  if (!tailPackageResults) return;
+  const filterLower = filter.toLowerCase();
+  const options = Object.keys(tailAllPackages).filter(p => p.toLowerCase().includes(filterLower)).slice(0, 50);
+  if (!options.length) {
+    tailPackageResults.innerHTML = '<div class="token-picker-empty">No packages found</div>';
+    return;
+  }
+  tailPackageResults.innerHTML = options.map(pkg => `
+    <label class="token-picker-option">
+      <input type="checkbox" value="${escapeHtml(pkg)}" ${tailFilterPackages.includes(pkg) ? 'checked' : ''}>
+      <span>${escapeHtml(pkg)}</span>
+      <span class="token-count">${tailAllPackages[pkg]}</span>
+    </label>
+  `).join('');
+  tailPackageResults.querySelectorAll('input').forEach(input => {
+    input.addEventListener('change', () => {
+      tailFilterPackages = Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value);
+      renderTailFilterTags();
+      filterTailEntries();
+    });
+  });
+}
+
+function renderTailLoggerOptions(filter = '') {
+  if (!tailLoggerResults) return;
+  const filterLower = filter.toLowerCase();
+  const options = Object.keys(tailAllLoggers).filter(l => l.toLowerCase().includes(filterLower)).slice(0, 50);
+  if (!options.length) {
+    tailLoggerResults.innerHTML = '<div class="token-picker-empty">No loggers found</div>';
+    return;
+  }
+  tailLoggerResults.innerHTML = options.map(logger => `
+    <label class="token-picker-option">
+      <input type="checkbox" value="${escapeHtml(logger)}" ${tailFilterLoggers.includes(logger) ? 'checked' : ''}>
+      <span>${escapeHtml(logger)}</span>
+      <span class="token-count">${tailAllLoggers[logger]}</span>
+    </label>
+  `).join('');
+  tailLoggerResults.querySelectorAll('input').forEach(input => {
+    input.addEventListener('change', () => {
+      tailFilterLoggers = Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value);
+      renderTailFilterTags();
+      filterTailEntries();
+    });
+  });
+}
+
+function renderTailFilterTags() {
+  if (tailPackageTags) {
+    tailPackageTags.innerHTML = tailFilterPackages.map(pkg => `
+      <span class="filter-tag" data-package="${escapeHtml(pkg)}">
+        ${escapeHtml(pkg.split('.').pop())}
+        <button type="button" onclick="removeTailPackageFilter('${escapeHtml(pkg)}')">&times;</button>
+      </span>
+    `).join('');
+  }
+  if (tailLoggerTags) {
+    tailLoggerTags.innerHTML = tailFilterLoggers.map(logger => `
+      <span class="filter-tag" data-logger="${escapeHtml(logger)}">
+        ${escapeHtml(logger.split('.').pop())}
+        <button type="button" onclick="removeTailLoggerFilter('${escapeHtml(logger)}')">&times;</button>
+      </span>
+    `).join('');
+  }
+}
+
+function removeTailPackageFilter(pkg) {
+  tailFilterPackages = tailFilterPackages.filter(p => p !== pkg);
+  renderTailFilterTags();
+  if (tailPackageResults) {
+    tailPackageResults.querySelectorAll(`input[value="${cssEscape(pkg)}"]`).forEach(i => i.checked = false);
+  }
+  filterTailEntries();
+}
+
+function removeTailLoggerFilter(logger) {
+  tailFilterLoggers = tailFilterLoggers.filter(l => l !== logger);
+  renderTailFilterTags();
+  if (tailLoggerResults) {
+    tailLoggerResults.querySelectorAll(`input[value="${cssEscape(logger)}"]`).forEach(i => i.checked = false);
+  }
+  filterTailEntries();
+}
+
+function showTailPanel(source = 'local', path = '') {
+  if (!tailPanel) return;
+  tailPanel.classList.remove('hidden');
+  if (tailTitle) {
+    tailTitle.textContent = source === 'cloudmanager' ? 'Cloud Manager Tail' : 'Local Tail';
+  }
+  if (tailSource) {
+    tailSource.textContent = path;
+  }
+  if (tailStopBtn) {
+    tailStopBtn.disabled = false;
+  }
+  if (tailStatus) {
+    tailStatus.textContent = 'Tailing in progress...';
+  }
+}
+
+function hideTailPanel() {
+  if (!tailPanel) return;
+  tailPanel.classList.add('hidden');
+}
+
+function pushTailEntry(entry) {
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
+
+  if (packageName && packageName !== 'null') {
+    tailAllPackages[packageName] = (tailAllPackages[packageName] || 0) + 1;
+  }
+  if (loggerName) {
+    tailAllLoggers[loggerName] = (tailAllLoggers[loggerName] || 0) + 1;
+  }
+
+  entry._index = tailEntries.length;
+  tailEntries.push(entry);
+
+  if (tailEntries.length > 500) {
+    tailEntries = tailEntries.slice(-500);
+  }
+
+  const shouldShow = checkTailEntryShouldShow(entry);
+  
+  if (shouldShow) {
+    addTailEntryToFeed(entry);
+  }
+
+  updateTailCounts();
+  updateTailDropdownOptions();
+
+  if (tailAutoScroll) {
+    scrollTailToTop();
+  } else {
+    tailHasNewEntries = true;
+    if (tailNewIndicator) tailNewIndicator.classList.remove('hidden');
+  }
+}
+
+function addTailEntryToFeed(entry) {
+  if (!tailFeed) return;
+  const html = renderTailEntryHtml(entry);
+  tailFeed.insertAdjacentHTML('beforeend', html);
+  
+  const lastEntry = tailFeed.lastElementChild;
+  if (lastEntry) {
+    setupTailEntryEvents(lastEntry);
+  }
+}
+
+function renderTailEntryHtml(entry) {
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const messageText = entry.message || entry.rawLine || '';
+  const hasStack = entry.stackTrace && entry.stackTrace.trim();
+  const timestamp = entry.timestamp || '';
+
+  return `
+    <div class="tail-entry ${String(level).toLowerCase()}" data-index="${entry._index}" style="animation-delay: ${(entry._index % 20) * 30}ms">
+      <div class="tail-entry-header">
+        <span class="level-badge ${level}">${level}</span>
+        <span class="entry-time">${escapeHtml(timestamp)}</span>
+        <span class="entry-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop() || loggerName)}</span>
+        <span class="entry-message" title="${escapeHtml(messageText)}">${highlightText(messageText, tailFilterSearch, tailFilterRegex)}</span>
+        <span class="expand-arrow">▶</span>
+      </div>
+      <div class="tail-entry-details">
+        <div class="tail-entry-tabs">
+          ${hasStack ? '<button class="tail-entry-tab active" data-tab="stack">Stack Trace</button>' : ''}
+          <button class="tail-entry-tab ${hasStack ? '' : 'active'}" data-tab="json">JSON</button>
+          <button class="tail-copy-btn" onclick="event.stopPropagation(); copyTailEntry(${entry._index})">Copy</button>
+        </div>
+        ${hasStack ? `<div class="tail-entry-content stack-tab active"><div class="stack-trace">${formatStackTrace(entry.stackTrace)}</div></div>` : ''}
+        <div class="tail-entry-content json-tab ${hasStack ? '' : 'active'}"><pre class="json-view">${highlightText(JSON.stringify(entry, null, 2), tailFilterSearch, tailFilterRegex)}</pre></div>
+      </div>
+    </div>
+  `;
+}
+
+function setupTailEntryEvents(entryEl) {
+  const header = entryEl.querySelector('.tail-entry-header');
+  if (header) {
+    header.addEventListener('click', () => {
+      entryEl.classList.toggle('expanded');
+    });
+  }
+  entryEl.querySelectorAll('.tail-entry-tab').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      entryEl.querySelectorAll('.tail-entry-tab').forEach(t => t.classList.remove('active'));
+      entryEl.querySelectorAll('.tail-entry-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const tabName = tab.dataset.tab;
+      entryEl.querySelector(`.${tabName}-tab`).classList.add('active');
+    });
+  });
+}
+
+function checkTailEntryShouldShow(entry) {
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
+  const messageText = entry.message || entry.rawLine || '';
+
+  if (tailFilterLevel !== 'ALL' && level !== tailFilterLevel) {
+    return false;
+  }
+
+  if (tailFilterPackages.length > 0) {
+    const matches = tailFilterPackages.some(pkg => packageName && packageName.startsWith(pkg));
+    if (!matches) return false;
+  }
+
+  if (tailFilterLoggers.length > 0) {
+    const matches = tailFilterLoggers.some(logger => loggerName === logger);
+    if (!matches) return false;
+  }
+
+  if (tailFilterSearch) {
+    try {
+      if (tailFilterRegex) {
+        const regex = new RegExp(tailFilterSearch, 'i');
+        if (!regex.test(messageText) && !regex.test(loggerName)) return false;
+      } else {
+        const searchLower = tailFilterSearch.toLowerCase();
+        if (!messageText.toLowerCase().includes(searchLower) && !loggerName.toLowerCase().includes(searchLower)) return false;
+      }
+    } catch (e) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function filterTailEntries() {
+  if (!tailFeed) return;
+  const entries = tailFeed.querySelectorAll('.tail-entry');
+  let visibleCount = 0;
+  entries.forEach(entryEl => {
+    const index = parseInt(entryEl.dataset.index, 10);
+    const entry = tailEntries.find(e => e._index === index);
+    if (entry && checkTailEntryShouldShow(entry)) {
+      entryEl.classList.remove('filtered-out');
+      visibleCount++;
+    } else {
+      entryEl.classList.add('filtered-out');
+    }
+  });
+}
+
+function updateTailCounts() {
+  const counts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
+  tailEntries.forEach(entry => {
+    const level = entry.level || entry.logType || 'INFO';
+    counts[level] = (counts[level] || 0) + 1;
+    counts.ALL++;
+  });
+  if (document.getElementById('tailCountALL')) document.getElementById('tailCountALL').textContent = counts.ALL;
+  if (document.getElementById('tailCountERROR')) document.getElementById('tailCountERROR').textContent = counts.ERROR;
+  if (document.getElementById('tailCountWARN')) document.getElementById('tailCountWARN').textContent = counts.WARN;
+  if (document.getElementById('tailCountINFO')) document.getElementById('tailCountINFO').textContent = counts.INFO;
+  if (document.getElementById('tailCountDEBUG')) document.getElementById('tailCountDEBUG').textContent = counts.DEBUG;
+}
+
+function updateTailDropdownOptions() {
+  if (tailPackageFilter && tailPackageFilter.value) {
+    renderTailPackageOptions(tailPackageFilter.value);
+  }
+  if (tailLoggerFilter && tailLoggerFilter.value) {
+    renderTailLoggerOptions(tailLoggerFilter.value);
+  }
+}
+
+function renderTailFeed() {
+  if (!tailFeed) return;
+  tailFeed.innerHTML = '';
+  tailEntries.forEach(entry => {
+    if (checkTailEntryShouldShow(entry)) {
+      addTailEntryToFeed(entry);
+    }
+  });
+}
+
+function scrollTailToTop() {
+  if (tailFeed) {
+    tailFeed.scrollTop = 0;
+  }
+  tailHasNewEntries = false;
+  if (tailNewIndicator) tailNewIndicator.classList.add('hidden');
+}
+
+function exportTailBuffer(format) {
+  const entriesToExport = Array.from(tailFeed.querySelectorAll('.tail-entry:not(.filtered-out)')).map(el => {
+    const index = parseInt(el.dataset.index, 10);
+    return tailEntries.find(e => e._index === index);
+  }).filter(Boolean);
+
+  if (!entriesToExport.length) {
+    showToast('No entries to export', 'warning');
+    return;
+  }
+
+  if (format === 'json') {
+    downloadJson(entriesToExport, 'tail-export.json');
+    showToast(`Exported ${entriesToExport.length} entries to JSON`, 'success');
+  } else if (format === 'csv') {
+    const csv = convertToCSV(entriesToExport);
+    downloadText(csv, 'tail-export.csv', 'text/csv');
+    showToast(`Exported ${entriesToExport.length} entries to CSV`, 'success');
+  }
+}
+
+function copyTailEntry(index) {
+  const entry = tailEntries.find(e => e._index === index);
+  if (entry) {
+    navigator.clipboard.writeText(JSON.stringify(entry, null, 2)).then(() => {
+      showToast('Copied to clipboard', 'success');
+    });
+  }
+}
+
+function cssEscape(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function filterDropdown(input, resultsContainer, dataMap, renderFn) {
+  const filter = input.value;
+  renderFn(filter);
+  if (resultsContainer) {
+    resultsContainer.style.display = 'block';
+  }
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(text, filename, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function convertToCSV(entries) {
+  if (!entries.length) return '';
+  const headers = ['timestamp', 'level', 'logger', 'message', 'thread', 'sourceFile'];
+  const rows = entries.map(entry => {
+    return headers.map(h => {
+      const val = entry[h] || '';
+      const escaped = String(val).replace(/"/g, '""');
+      return `"${escaped}"`;
+    }).join(',');
+  });
+  return [headers.join(','), ...rows].join('\n');
+}
+
+// Initialize tail panel
+initTailPanel();
