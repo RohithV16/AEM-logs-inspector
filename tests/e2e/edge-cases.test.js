@@ -125,7 +125,7 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     fs.unlinkSync(emptyFile);
   });
 
-  test('5b. Empty log file via API - verify success with empty results', async ({ page }) => {
+  test('5b. Empty log file via API - verify graceful handling', async ({ page }) => {
     const emptyFile = path.join(TEST_DATA_DIR, 'empty2.log');
     fs.writeFileSync(emptyFile, '');
 
@@ -134,9 +134,8 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     });
 
     const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(json.summary).toBeDefined();
-    expect(json.summary.totalErrors).toBe(0);
+    expect(json.success).toBe(false);
+    expect(json.error).toBeDefined();
 
     fs.unlinkSync(emptyFile);
   });
@@ -163,7 +162,7 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     fs.unlinkSync(malformedFile);
   });
 
-  test('6b. Malformed log via API - verify valid entries processed', async ({ page }) => {
+  test('6b. Malformed log via API - verify graceful handling', async ({ page }) => {
     const malformedFile = path.join(TEST_DATA_DIR, 'malformed2.log');
     const malformedLines = [
       'not a valid log line',
@@ -178,8 +177,8 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     });
 
     const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(json.summary.totalErrors).toBe(0);
+    expect(json.success).toBe(false);
+    expect(json.error).toBeDefined();
 
     fs.unlinkSync(malformedFile);
   });

@@ -22,19 +22,57 @@ const { performCloudManagerDownload } = require('./routes/cloudManager');
 const app = express();
 const DASHBOARD_URL = `http://localhost:${PORT}`;
 
+/* === Rate Limiting === */
+const rateLimit = require('express-rate-limit');
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests, please try again later.' }
+});
+
+/* === Request ID Middleware === */
+// Adds unique ID to each request for tracing through logs
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || require('crypto').randomUUID();
+  res.setHeader('x-request-id', req.id);
+  next();
+});
+
 /* Large limit needed for uploading log files up to 500MB */
 app.use(express.json({ limit: '500mb' }));
 
 /* Serve static frontend assets */
 app.use(express.static('public'));
 
-/* Mount API routes */
-app.use('/api', createAnalyzeRouter());
-app.use('/api', createMultiErrorRouter());
-app.use('/api', createFilterRouter());
-app.use('/api', createEventsRouter());
-app.use('/api', createExportRouter());
-app.use('/api', createCloudManagerRouter());
+/* Mount API routes with rate limiting */
+app.use('/api', apiLimiter, createAnalyzeRouter());
+app.use('/api', apiLimiter, createMultiErrorRouter());
+app.use('/api', apiLimiter, createFilterRouter());
+app.use('/api', apiLimiter, createEventsRouter());
+app.use('/api', apiLimiter, createExportRouter());
+app.use('/api', apiLimiter, createCloudManagerRouter());
+
+/* === Error Handling Middleware === */
+// Centralized error handler - prevents unhandled errors from crashing server
+app.use((err, req, res, next) => {
+  console.error(`[${req.id}] Unhandled error:`, err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    error: sanitizeErrorMessage(err.message),
+    requestId: req.id
+  });
+});
+
+/* === 404 Handler === */
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Not found',
+    requestId: req.id
+  });
+});
 
 let httpServer = null;
 let wss = null;
