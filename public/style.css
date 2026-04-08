@@ -2339,7 +2339,6 @@ body.sidebar-collapsed .main-grid {
 }
 
 .tail-feed {
-  max-height: 500px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

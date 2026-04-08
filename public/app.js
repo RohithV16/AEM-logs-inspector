@@ -165,8 +165,7 @@ let activeTailSource = '';
 let cloudManagerTailSession = null;
 let cloudManagerTailEntries = [];
 let cloudManagerDownloadStatusMessage = '';
-let selectedLoggers = [];
-let selectedPackages = [];
+// Unified filter state now in filters object above
 let allLoggers = {};  // Store all loggers for cascading filter
 let allPackages = {};
 let allThreads = {};
@@ -181,15 +180,19 @@ const SIDEBAR_COLLAPSE_BREAKPOINT = 768;
 let sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
 
 let tailEntries = [];
-let tailFilterLevel = 'ALL';
-let tailFilterSearch = '';
-let tailFilterRegex = false;
-let tailFilterPackages = [];
-let tailFilterLoggers = [];
 let tailAutoScroll = true;
 let tailHasNewEntries = false;
 let tailAllPackages = {};
 let tailAllLoggers = {};
+
+let activeView = 'analyzer';
+let filters = {
+  packages: [],
+  loggers: [],
+  level: 'ALL',
+  search: '',
+  regex: false
+};
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
 
@@ -2234,6 +2237,7 @@ function setActiveErrorLevel(level = 'ALL') {
   const chip = document.querySelector(`.level-chip[data-level="${level}"]`) || document.querySelector('.level-chip[data-level="ALL"]');
   if (chip) chip.classList.add('active');
   rawEventsLevel = chip?.dataset.level || 'ALL';
+  filters.level = rawEventsLevel;
 }
 
 function clearDropdownSearchInputs() {
@@ -2256,8 +2260,8 @@ function selectMultiValues(allowedValues, selectedArray, values = []) {
 
 function getCurrentErrorPresetState() {
   return {
-    selectedLoggers: [...selectedLoggers],
-    selectedPackages: [...selectedPackages],
+    selectedLoggers: [...filters.loggers],
+    selectedPackages: [...filters.packages],
     thread: threadSelect?.value || '',
     exception: exceptionSelect?.value || '',
     category: categoryFilter.value || '',
@@ -2270,13 +2274,13 @@ function getCurrentErrorPresetState() {
 function applyLegacyPresetSelections(preset) {
   if (preset.package) {
     const matchingPackage = Object.prototype.hasOwnProperty.call(allPackages, preset.package);
-    if (matchingPackage) selectedPackages.push(preset.package);
+    if (matchingPackage) filters.packages.push(preset.package);
     else packageFilter.value = preset.package;
   }
 
   if (preset.logger) {
     const matchingLogger = Object.prototype.hasOwnProperty.call(allLoggers, preset.logger);
-    if (matchingLogger) selectedLoggers.push(preset.logger);
+    if (matchingLogger) filters.loggers.push(preset.logger);
     else loggerFilter.value = preset.logger;
   }
 
@@ -2303,8 +2307,11 @@ function applyCurrentSelectionsToFilterUI() {
 
 function resetErrorFilterState(options = {}) {
   const { preserveDates = false } = options;
-  selectedLoggers.splice(0, selectedLoggers.length);
-  selectedPackages.splice(0, selectedPackages.length);
+  filters.packages = [];
+  filters.loggers = [];
+  filters.level = 'ALL';
+  filters.search = '';
+  filters.regex = false;
   clearDropdownSearchInputs();
   if (threadSelect) threadSelect.value = '';
   if (exceptionSelect) exceptionSelect.value = '';
@@ -2314,18 +2321,20 @@ function resetErrorFilterState(options = {}) {
     endDate.value = '';
   }
   setActiveErrorLevel('ALL');
+  updateLevelChips('ALL');
 }
 
 function applyErrorPresetState(preset = {}) {
-  selectedPackages.splice(0, selectedPackages.length);
-  selectedLoggers.splice(0, selectedLoggers.length);
+  filters.packages = [];
+  filters.loggers = [];
+  filters.level = 'ALL';
   clearDropdownSearchInputs();
 
-  selectMultiValues(Object.keys(allPackages), selectedPackages, preset.selectedPackages);
+  selectMultiValues(Object.keys(allPackages), filters.packages, preset.filters.packages);
   applyCurrentSelectionsToFilterUI();
 
-  if (preset.selectedLoggers?.length) {
-    selectMultiValues(Object.keys(allLoggers), selectedLoggers, preset.selectedLoggers);
+  if (preset.filters.loggers?.length) {
+    selectMultiValues(Object.keys(allLoggers), filters.loggers, preset.filters.loggers);
     renderLoggerTags();
   } else {
     applyLegacyPresetSelections(preset);
@@ -3072,7 +3081,7 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       onClick: (e, elements) => {
         if (elements.length > 0) {
           const loggerName = sortedLoggers[elements[0].index][0];
-          selectMultiValues(Object.keys(allLoggers), selectedLoggers, [loggerName]);
+          selectMultiValues(Object.keys(allLoggers), filters.loggers, [loggerName]);
           renderLoggerTags();
           renderLoggerPicker();
           scheduleErrorFilterRefresh();
@@ -3176,8 +3185,8 @@ function getScopedCountsByPackage(scopeMap, fallbackCounts = {}) {
     return { ...(fallbackCounts || {}) };
   }
 
-  const activePackages = selectedPackages.length > 0
-    ? selectedPackages
+  const activePackages = filters.packages.length > 0
+    ? filters.packages
     : packageNames;
 
   activePackages.forEach((pkgName) => {
@@ -3244,7 +3253,7 @@ function updateCascadeCountBadges() {
   updateFilterCountBadge(loggerVisibleCount, loggerVisible, loggerTotal, 'logger');
   updateFilterCountBadge(threadVisibleCount, threadVisible, threadTotal, 'pod');
   updateFilterCountBadge(exceptionVisibleCount, exceptionVisible, exceptionTotal, 'exception');
-  updateFilterCountBadge(packageVisibleCount, selectedPackages.length, packageTotal, 'package', 'selected');
+  updateFilterCountBadge(packageVisibleCount, filters.packages.length, packageTotal, 'package', 'selected');
 }
 
 function renderSelectionHint(element, selectedValues, label, searchValue = '') {
@@ -3269,8 +3278,8 @@ function renderSelectionHint(element, selectedValues, label, searchValue = '') {
 }
 
 function renderSelectionHints() {
-  renderSelectionHint(packageSelectionHint, selectedPackages, 'package', packageFilter?.value || '');
-  renderSelectionHint(loggerSelectionHint, selectedLoggers, 'logger', loggerFilter?.value || '');
+  renderSelectionHint(packageSelectionHint, filters.packages, 'package', packageFilter?.value || '');
+  renderSelectionHint(loggerSelectionHint, filters.loggers, 'logger', loggerFilter?.value || '');
 }
 
 function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
@@ -3279,6 +3288,7 @@ function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
       selectedArray.splice(i, 1);
     }
   }
+  filterTailEntries();
 }
 
 function refreshPackageScopedDropdowns() {
@@ -3320,7 +3330,7 @@ function populateFilterDropdowns(loggers, threads, packages, exceptions, package
   packageExceptionsByPackage = packageExceptions || {};
 
   const visiblePackageValues = new Set(Object.keys(allPackages));
-  syncSelectedMultiSelectValues(selectedPackages, visiblePackageValues);
+  syncSelectedMultiSelectValues(filters.packages, visiblePackageValues);
   renderPackagePicker();
   renderPackageTags();
 
@@ -3343,9 +3353,9 @@ function getCurrentErrorFilterPayload() {
   if (startDate.value) filters.startDate = normalizeDateTimeForApi(startDate.value);
   if (endDate.value) filters.endDate = normalizeDateTimeForApi(endDate.value);
   if (rawEventsLevel && rawEventsLevel !== 'ALL') filters.level = rawEventsLevel;
-  if (selectedLoggers.length > 0) filters.logger = [...selectedLoggers];
+  if (filters.loggers.length > 0) filters.logger = [...filters.loggers];
   if (threadSelect?.value) filters.thread = threadSelect.value;
-  if (selectedPackages.length > 0) filters.package = [...selectedPackages];
+  if (filters.packages.length > 0) filters.package = [...filters.packages];
   if (exceptionSelect?.value) filters.exception = exceptionSelect.value;
   if (categoryFilter?.value) filters.category = categoryFilter.value;
 
@@ -3491,7 +3501,7 @@ function highlightText(text, searchTerm, isRegex = false) {
 function renderLoggerTags() {
   const container = document.getElementById('loggerTags');
   if (!container) return;
-  container.innerHTML = selectedLoggers.map(val =>
+  container.innerHTML = filters.loggers.map(val =>
     `<span class="filter-tag"><span title="${escapeHtml(val)}">${escapeHtml(val.split('.').pop())}</span> <button onclick="removeLogger('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
   renderSelectionHints();
@@ -3500,7 +3510,7 @@ function renderLoggerTags() {
 function renderPackageTags() {
   const container = document.getElementById('packageTags');
   if (!container) return;
-  container.innerHTML = selectedPackages.map(val =>
+  container.innerHTML = filters.packages.map(val =>
     `<span class="filter-tag"><span>${escapeHtml(val)}</span> <button onclick="removePackage('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
   renderSelectionHints();
@@ -3508,7 +3518,13 @@ function renderPackageTags() {
 
 function getFilteredPackageEntries() {
   const query = packageFilter.value.trim().toLowerCase();
-  return Object.entries(allPackages || {})
+  let sourcePackages = allPackages || {};
+  
+  if (activeTailSource && tailAllPackages) {
+    sourcePackages = { ...sourcePackages, ...tailAllPackages };
+  }
+  
+  return Object.entries(sourcePackages)
     .sort((a, b) => b[1] - a[1])
     .filter(([name]) => !query || name.toLowerCase().includes(query));
 }
@@ -3532,29 +3548,31 @@ function renderTokenPickerResults(container, entries, selectedArray, { showActio
 function renderPackagePicker() {
   const entries = getFilteredPackageEntries();
   visiblePackageOptionCount = entries.length;
-  renderTokenPickerResults(packageResults, entries, selectedPackages);
+  renderTokenPickerResults(packageResults, entries, filters.packages);
   updateCascadeCountBadges();
   renderSelectionHints();
 }
 
 window.removeLogger = (val) => {
-  const idx = selectedLoggers.indexOf(val);
-  if (idx !== -1) selectedLoggers.splice(idx, 1);
+  const idx = filters.loggers.indexOf(val);
+  if (idx !== -1) filters.loggers.splice(idx, 1);
   renderLoggerTags();
   renderLoggerPicker();
   scheduleErrorFilterRefresh();
   scheduleErrorFilterApply();
+  filterTailEntries();
 };
 
 window.removePackage = (val) => {
-  const idx = selectedPackages.indexOf(val);
-  if (idx !== -1) selectedPackages.splice(idx, 1);
+  const idx = filters.packages.indexOf(val);
+  if (idx !== -1) filters.packages.splice(idx, 1);
   renderPackageTags();
   renderPackagePicker();
   filterAndPopulateLoggers();
   refreshPackageScopedDropdowns();
   scheduleErrorFilterRefresh();
   scheduleErrorFilterApply();
+  filterTailEntries();
 };
 
 /* ============================================================
@@ -3562,12 +3580,18 @@ window.removePackage = (val) => {
    ============================================================ */
 
 function loggerMatchesSelectedPackages(loggerName) {
-  if (!selectedPackages.length) return true;
-  return selectedPackages.some((pkg) => loggerName === pkg || loggerName.startsWith(`${pkg}.`));
+  if (!filters.packages.length) return true;
+  return filters.packages.some((pkg) => loggerName === pkg || loggerName.startsWith(`${pkg}.`));
 }
 
 function getAvailableLoggerEntries() {
-  return Object.entries(allLoggers || {})
+  let sourceLoggers = allLoggers || {};
+  
+  if (activeTailSource && tailAllLoggers) {
+    sourceLoggers = { ...sourceLoggers, ...tailAllLoggers };
+  }
+  
+  return Object.entries(sourceLoggers)
     .sort((a, b) => b[1] - a[1])
     .filter(([name]) => loggerMatchesSelectedPackages(name));
 }
@@ -3581,7 +3605,7 @@ function getFilteredLoggerEntries() {
 function renderLoggerPicker() {
   const entries = getFilteredLoggerEntries();
   visibleLoggerOptionCount = entries.length;
-  renderTokenPickerResults(loggerResults, entries, selectedLoggers, { showActionLabel: false });
+  renderTokenPickerResults(loggerResults, entries, filters.loggers, { showActionLabel: false });
   updateCascadeCountBadges();
   renderSelectionHints();
 }
@@ -3590,9 +3614,9 @@ function filterAndPopulateLoggers() {
   if (!allLoggers) return;
   const availableValues = new Set(getAvailableLoggerEntries().map(([name]) => name));
   // Mutate array in-place instead of reassigning to preserve reference
-  for (let i = selectedLoggers.length - 1; i >= 0; i--) {
-    if (!availableValues.has(selectedLoggers[i])) {
-      selectedLoggers.splice(i, 1);
+  for (let i = filters.loggers.length - 1; i >= 0; i--) {
+    if (!availableValues.has(filters.loggers[i])) {
+      filters.loggers.splice(i, 1);
     }
   }
   renderLoggerTags();
@@ -3955,10 +3979,10 @@ function startLocalTail() {
   tailEntries = [];
   tailAllPackages = {};
   tailAllLoggers = {};
-  tailFilterLevel = 'ALL';
-  tailFilterSearch = '';
-  tailFilterPackages = [];
-  tailFilterLoggers = [];
+  filters.level = 'ALL';
+  filters.search = '';
+  filters.packages = [];
+  filters.loggers = [];
   renderTailFilterTags();
   updateTailCounts();
 
@@ -3992,10 +4016,10 @@ function startCloudManagerTail() {
   tailEntries = [];
   tailAllPackages = {};
   tailAllLoggers = {};
-  tailFilterLevel = 'ALL';
-  tailFilterSearch = '';
-  tailFilterPackages = [];
-  tailFilterLoggers = [];
+  filters.level = 'ALL';
+  filters.search = '';
+  filters.packages = [];
+  filters.loggers = [];
   renderTailFilterTags();
   updateTailCounts();
 
@@ -4135,9 +4159,9 @@ async function fetchRawEvents(page = 1, options = {}) {
   // Error log filters
   if (currentLogType === 'error') {
     body.level = rawEventsLevel;
-    if (selectedLoggers.length > 0) body.logger = selectedLoggers;
+    if (filters.loggers.length > 0) body.logger = filters.loggers;
     if (threadSelect?.value) body.thread = threadSelect.value;
-    if (selectedPackages.length > 0) body.package = selectedPackages;
+    if (filters.packages.length > 0) body.package = filters.packages;
     if (exceptionSelect?.value) body.exception = exceptionSelect.value;
     if (rawSearchInput.value) body.search = rawSearchInput.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
@@ -4484,7 +4508,11 @@ document.querySelectorAll('.level-chip').forEach(chip => {
     });
     chip.classList.add('active');
     rawEventsLevel = chip.dataset.level;
-    fetchRawEvents(1);
+    filters.level = rawEventsLevel;
+    filterTailEntries();
+    if (!activeTailSource) {
+      fetchRawEvents(1);
+    }
   });
 });
 
@@ -4492,6 +4520,10 @@ const rawSearchInput = document.getElementById('rawSearchInput');
 const rawSearchBtn = document.getElementById('rawSearchBtn');
 rawSearchBtn.addEventListener('click', () => {
   rawEventsSearch = rawSearchInput.value;
+  filters.search = rawSearchInput.value;
+  if (activeTailSource) {
+    return;
+  }
   if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
     applyRawEventFilters();
   } else {
@@ -4499,13 +4531,16 @@ rawSearchBtn.addEventListener('click', () => {
   }
 });
 rawSearchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    rawEventsSearch = rawSearchInput.value;
-    if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
-      applyRawEventFilters();
-    } else {
-      fetchRawEvents(1);
-    }
+  if (e.key !== 'Enter') return;
+  rawEventsSearch = rawSearchInput.value;
+  filters.search = rawSearchInput.value;
+  if (activeTailSource) {
+    return;
+  }
+  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+    applyRawEventFilters();
+  } else {
+    fetchRawEvents(1);
   }
 });
 
@@ -4674,7 +4709,7 @@ initMultiSelectDropdown(
   'loggerDropdown',
   'loggerFilter',
   'loggerResults',
-  selectedLoggers,
+  filters.loggers,
   renderLoggerTags,
   renderLoggerPicker,
   () => {
@@ -4688,7 +4723,7 @@ initMultiSelectDropdown(
   'packageDropdown',
   'packageFilter',
   'packageResults',
-  selectedPackages,
+  filters.packages,
   renderPackageTags,
   () => {
     renderPackagePicker();
@@ -4781,13 +4816,31 @@ function initTailPanel() {
   setupTailActions();
 }
 
+function syncLevelChips(source) {
+  const targetSelector = source === 'analyzer' ? '.tail-level-chip' : '.level-chip';
+  document.querySelectorAll(targetSelector).forEach(c => {
+    c.classList.toggle('active', c.dataset.level === filters.level);
+  });
+}
+
+function updateLevelChips(level) {
+  filters.level = level;
+  syncLevelChips('analyzer');
+  syncLevelChips('tail');
+}
+
+function switchToView(view) {
+  activeView = view;
+  syncLevelChips(view);
+}
+
 function setupTailLevelFilters() {
   if (!tailLevelFilters) return;
   tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      tailFilterLevel = chip.dataset.level || 'ALL';
+      filters.level = chip.dataset.level || 'ALL';
       filterTailEntries();
     });
   });
@@ -4796,14 +4849,14 @@ function setupTailLevelFilters() {
 function setupTailSearch() {
   if (tailSearchInput) {
     tailSearchInput.addEventListener('input', () => {
-      tailFilterSearch = tailSearchInput.value;
+      filters.search = tailSearchInput.value;
       filterTailEntries();
     });
   }
   if (tailRegexToggle) {
     tailRegexToggle.addEventListener('click', () => {
-      tailFilterRegex = !tailFilterRegex;
-      tailRegexToggle.classList.toggle('active', tailFilterRegex);
+      filters.regex = !filters.regex;
+      tailRegexToggle.classList.toggle('active', filters.regex);
       filterTailEntries();
     });
   }
@@ -4815,9 +4868,7 @@ function setupTailFilters() {
       filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
     });
     tailPackageFilter.addEventListener('focus', () => {
-      if (tailPackageFilter.value) {
-        filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
-      }
+      filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
     });
   }
   if (tailLoggerFilter) {
@@ -4825,9 +4876,7 @@ function setupTailFilters() {
       filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
     });
     tailLoggerFilter.addEventListener('focus', () => {
-      if (tailLoggerFilter.value) {
-        filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
-      }
+      filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
     });
   }
 }
@@ -4891,14 +4940,14 @@ function renderTailPackageOptions(filter = '') {
   }
   tailPackageResults.innerHTML = options.map(pkg => `
     <label class="token-picker-option">
-      <input type="checkbox" value="${escapeHtml(pkg)}" ${tailFilterPackages.includes(pkg) ? 'checked' : ''}>
+      <input type="checkbox" value="${escapeHtml(pkg)}" ${filters.packages.includes(pkg) ? 'checked' : ''}>
       <span>${escapeHtml(pkg)}</span>
       <span class="token-count">${tailAllPackages[pkg]}</span>
     </label>
   `).join('');
   tailPackageResults.querySelectorAll('input').forEach(input => {
     input.addEventListener('change', () => {
-      tailFilterPackages = Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value);
+      filters.packages = Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value);
       renderTailFilterTags();
       filterTailEntries();
     });
@@ -4915,14 +4964,14 @@ function renderTailLoggerOptions(filter = '') {
   }
   tailLoggerResults.innerHTML = options.map(logger => `
     <label class="token-picker-option">
-      <input type="checkbox" value="${escapeHtml(logger)}" ${tailFilterLoggers.includes(logger) ? 'checked' : ''}>
+      <input type="checkbox" value="${escapeHtml(logger)}" ${filters.loggers.includes(logger) ? 'checked' : ''}>
       <span>${escapeHtml(logger)}</span>
       <span class="token-count">${tailAllLoggers[logger]}</span>
     </label>
   `).join('');
   tailLoggerResults.querySelectorAll('input').forEach(input => {
     input.addEventListener('change', () => {
-      tailFilterLoggers = Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value);
+      filters.loggers = Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value);
       renderTailFilterTags();
       filterTailEntries();
     });
@@ -4931,7 +4980,7 @@ function renderTailLoggerOptions(filter = '') {
 
 function renderTailFilterTags() {
   if (tailPackageTags) {
-    tailPackageTags.innerHTML = tailFilterPackages.map(pkg => `
+    tailPackageTags.innerHTML = filters.packages.map(pkg => `
       <span class="filter-tag" data-package="${escapeHtml(pkg)}">
         ${escapeHtml(pkg.split('.').pop())}
         <button type="button" onclick="removeTailPackageFilter('${escapeHtml(pkg)}')">&times;</button>
@@ -4939,7 +4988,7 @@ function renderTailFilterTags() {
     `).join('');
   }
   if (tailLoggerTags) {
-    tailLoggerTags.innerHTML = tailFilterLoggers.map(logger => `
+    tailLoggerTags.innerHTML = filters.loggers.map(logger => `
       <span class="filter-tag" data-logger="${escapeHtml(logger)}">
         ${escapeHtml(logger.split('.').pop())}
         <button type="button" onclick="removeTailLoggerFilter('${escapeHtml(logger)}')">&times;</button>
@@ -4949,7 +4998,7 @@ function renderTailFilterTags() {
 }
 
 function removeTailPackageFilter(pkg) {
-  tailFilterPackages = tailFilterPackages.filter(p => p !== pkg);
+  filters.packages = filters.packages.filter(p => p !== pkg);
   renderTailFilterTags();
   if (tailPackageResults) {
     tailPackageResults.querySelectorAll(`input[value="${cssEscape(pkg)}"]`).forEach(i => i.checked = false);
@@ -4958,7 +5007,7 @@ function removeTailPackageFilter(pkg) {
 }
 
 function removeTailLoggerFilter(logger) {
-  tailFilterLoggers = tailFilterLoggers.filter(l => l !== logger);
+  filters.loggers = filters.loggers.filter(l => l !== logger);
   renderTailFilterTags();
   if (tailLoggerResults) {
     tailLoggerResults.querySelectorAll(`input[value="${cssEscape(logger)}"]`).forEach(i => i.checked = false);
@@ -4995,9 +5044,11 @@ function pushTailEntry(entry) {
 
   if (packageName && packageName !== 'null') {
     tailAllPackages[packageName] = (tailAllPackages[packageName] || 0) + 1;
+    allPackages[packageName] = (allPackages[packageName] || 0) + 1;
   }
   if (loggerName) {
     tailAllLoggers[loggerName] = (tailAllLoggers[loggerName] || 0) + 1;
+    allLoggers[loggerName] = (allLoggers[loggerName] || 0) + 1;
   }
 
   entry._index = tailEntries.length;
@@ -5048,7 +5099,7 @@ function renderTailEntryHtml(entry) {
         <span class="level-badge ${level}">${level}</span>
         <span class="entry-time">${escapeHtml(timestamp)}</span>
         <span class="entry-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop() || loggerName)}</span>
-        <span class="entry-message" title="${escapeHtml(messageText)}">${highlightText(messageText, tailFilterSearch, tailFilterRegex)}</span>
+        <span class="entry-message" title="${escapeHtml(messageText)}">${highlightText(messageText, filters.search, filters.regex)}</span>
         <span class="expand-arrow">▶</span>
       </div>
       <div class="tail-entry-details">
@@ -5058,7 +5109,7 @@ function renderTailEntryHtml(entry) {
           <button class="tail-copy-btn" onclick="event.stopPropagation(); copyTailEntry(${entry._index})">Copy</button>
         </div>
         ${hasStack ? `<div class="tail-entry-content stack-tab active"><div class="stack-trace">${formatStackTrace(entry.stackTrace)}</div></div>` : ''}
-        <div class="tail-entry-content json-tab ${hasStack ? '' : 'active'}"><pre class="json-view">${highlightText(JSON.stringify(entry, null, 2), tailFilterSearch, tailFilterRegex)}</pre></div>
+        <div class="tail-entry-content json-tab ${hasStack ? '' : 'active'}"><pre class="json-view">${highlightText(JSON.stringify(entry, null, 2), filters.search, filters.regex)}</pre></div>
       </div>
     </div>
   `;
@@ -5089,27 +5140,27 @@ function checkTailEntryShouldShow(entry) {
   const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
   const messageText = entry.message || entry.rawLine || '';
 
-  if (tailFilterLevel !== 'ALL' && level !== tailFilterLevel) {
+  if (filters.level !== 'ALL' && level !== filters.level) {
     return false;
   }
 
-  if (tailFilterPackages.length > 0) {
-    const matches = tailFilterPackages.some(pkg => packageName && packageName.startsWith(pkg));
+  if (filters.packages.length > 0) {
+    const matches = filters.packages.some(pkg => packageName && packageName.startsWith(pkg));
     if (!matches) return false;
   }
 
-  if (tailFilterLoggers.length > 0) {
-    const matches = tailFilterLoggers.some(logger => loggerName === logger);
+  if (filters.loggers.length > 0) {
+    const matches = filters.loggers.some(logger => loggerName === logger);
     if (!matches) return false;
   }
 
-  if (tailFilterSearch) {
+  if (filters.search) {
     try {
-      if (tailFilterRegex) {
-        const regex = new RegExp(tailFilterSearch, 'i');
+      if (filters.regex) {
+        const regex = new RegExp(filters.search, 'i');
         if (!regex.test(messageText) && !regex.test(loggerName)) return false;
       } else {
-        const searchLower = tailFilterSearch.toLowerCase();
+        const searchLower = filters.search.toLowerCase();
         if (!messageText.toLowerCase().includes(searchLower) && !loggerName.toLowerCase().includes(searchLower)) return false;
       }
     } catch (e) {

@@ -447,33 +447,6 @@
         </div>
 
         <div class="tail-controls">
-          <div class="tail-level-filters" id="tailLevelFilters">
-            <button class="tail-level-chip active" data-level="ALL">All <span id="tailCountALL">0</span></button>
-            <button class="tail-level-chip error" data-level="ERROR">ERROR <span id="tailCountERROR">0</span></button>
-            <button class="tail-level-chip warn" data-level="WARN">WARN <span id="tailCountWARN">0</span></button>
-            <button class="tail-level-chip info" data-level="INFO">INFO <span id="tailCountINFO">0</span></button>
-            <button class="tail-level-chip debug" data-level="DEBUG">DEBUG <span id="tailCountDEBUG">0</span></button>
-          </div>
-
-          <div class="tail-search-row">
-            <input type="text" id="tailSearchInput" class="tail-search-input" placeholder="Search (supports regex)...">
-            <button id="tailRegexToggle" class="tail-regex-toggle" type="button" title="Toggle regex mode">.*</button>
-          </div>
-
-          <div class="tail-filter-row">
-            <div class="searchable-dropdown" id="tailPackageDropdown">
-              <input type="text" id="tailPackageFilter" class="filter-input dropdown-search" placeholder="Filter by package...">
-              <div id="tailPackageResults" class="token-picker-results"></div>
-            </div>
-            <div id="tailPackageTags" class="filter-tags"></div>
-
-            <div class="searchable-dropdown" id="tailLoggerDropdown">
-              <input type="text" id="tailLoggerFilter" class="filter-input dropdown-search" placeholder="Filter by logger...">
-              <div id="tailLoggerResults" class="token-picker-results"></div>
-            </div>
-            <div id="tailLoggerTags" class="filter-tags"></div>
-          </div>
-
           <div class="tail-action-row">
             <button id="tailAutoScrollBtn" class="tail-action-btn active" type="button" title="Auto-scroll to new entries">
               <span class="tail-action-icon">↓</span> Auto-scroll

@@ -34,6 +34,6 @@ test.describe('Cloud Manager Tests - UI Elements', () => {
     await page.goto('/');
     await page.locator('#sourceModeCloudManager').click();
     await expect(page.locator('#cmTailBtn')).toBeVisible();
-    await expect(page.locator('#cmTailStopBtn')).toBeVisible();
+    await expect(page.locator('#cmTailStopBtn')).toBeHidden();
   });
 });

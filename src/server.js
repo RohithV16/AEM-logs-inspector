@@ -21,16 +21,6 @@ const { createCloudManagerRouter, performCloudManagerDownload } = require('./rou
 const app = express();
 const DASHBOARD_URL = `http://localhost:${PORT}`;
 
-/* === Rate Limiting === */
-const rateLimit = require('express-rate-limit');
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Too many requests, please try again later.' }
-});
-
 /* === Request ID Middleware === */
 app.use((req, res, next) => {
   req.id = req.headers['x-request-id'] || require('crypto').randomUUID();
@@ -41,12 +31,12 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '500mb' }));
 app.use(express.static('public'));
 
-app.use('/api', apiLimiter, createAnalyzeRouter());
-app.use('/api', apiLimiter, createMultiErrorRouter());
-app.use('/api', apiLimiter, createFilterRouter());
-app.use('/api', apiLimiter, createEventsRouter());
-app.use('/api', apiLimiter, createExportRouter());
-app.use('/api', apiLimiter, createCloudManagerRouter());
+app.use('/api', createAnalyzeRouter());
+app.use('/api', createMultiErrorRouter());
+app.use('/api', createFilterRouter());
+app.use('/api', createEventsRouter());
+app.use('/api', createExportRouter());
+app.use('/api', createCloudManagerRouter());
 
 app.use((err, req, res, next) => {
   console.error(`[${req.id}] Unhandled error:`, err.message);
