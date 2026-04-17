@@ -222,10 +222,52 @@ function buildCorrelationData(events) {
   };
 }
 
+function buildFilterOptionsFromStats(stats, batchLogType) {
+  if (batchLogType === 'request') {
+    return {
+      methods: Object.keys(stats.methods || {}).sort(),
+      statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+      pods: Object.keys(stats.pods || {}).sort()
+    };
+  }
+
+  if (batchLogType === 'cdn') {
+    return {
+      methods: Object.keys(stats.methods || {}).sort(),
+      statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+      cacheStatuses: Object.keys(stats.cacheStatuses || {}).sort(),
+      countries: Object.keys(stats.countries || {}).sort(),
+      pops: Object.keys(stats.pops || {}).sort(),
+      hosts: Object.keys(stats.hosts || {}).sort()
+    };
+  }
+
+  if (batchLogType === 'mixed') {
+    return {
+      request: {
+        methods: Object.keys(stats.methods || {}).sort(),
+        statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+        pods: Object.keys(stats.pods || {}).sort()
+      },
+      cdn: {
+        methods: Object.keys(stats.methods || {}).sort(),
+        statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+        cacheStatuses: Object.keys(stats.cacheStatuses || {}).sort(),
+        countries: Object.keys(stats.countries || {}).sort(),
+        pops: Object.keys(stats.pops || {}).sort(),
+        hosts: Object.keys(stats.hosts || {}).sort()
+      }
+    };
+  }
+
+  return null;
+}
+
 module.exports = {
   buildCorrelationData,
   normalizeCorrelationEvent,
   getSeverityForEntry,
   getHourBucket,
-  getTimestampValue
+  getTimestampValue,
+  buildFilterOptionsFromStats
 };

@@ -2,12 +2,11 @@
 const express = require('express');
 const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
-const { watchLogFile } = require('./tailer');
 const { detectLogType } = require('./parser');
 const { validateFilePath, sanitizeErrorMessage } = require('./utils/files');
 const { PORT } = require('./utils/constants');
 const { analyzeResolvedLogFile } = require('./services/logAnalysisService');
-const { createCloudManagerTailSession } = require('./services/cloudManagerService');
+const { createCloudManagerTailGroupSession } = require('./services/cloudManagerService');
 
 /* === Route Imports === */
 const createAnalyzeRouter = require('./routes/analyze');
@@ -101,42 +100,21 @@ function stopActiveTail(ws, source = '') {
   return activeSession.source || null;
 }
 
-function startLocalTailSession(ws, filePath) {
-  const targetPath = validateFilePath(filePath);
-  const watcher = watchLogFile(targetPath, (entry) => {
-    ws.send(JSON.stringify({
-      type: 'tail-entry',
-      source: 'local',
-      entry
-    }));
-  });
-
-  if (watcher.error) {
-    throw new Error(watcher.error);
-  }
-
-  ws.activeTailSession = {
-    source: 'local',
-    stop: () => watcher.close()
-  };
-  ws.send(JSON.stringify({
-    type: 'tail-status',
-    source: 'local',
-    status: 'running',
-    message: `Watching ${targetPath}`
-  }));
-}
-
 function startCloudManagerTailSession(ws, options = {}) {
-  const session = createCloudManagerTailSession(options, {
+  const session = createCloudManagerTailGroupSession(options, {
     onStatus: (status) => {
       ws.send(JSON.stringify({ type: 'tail-status', ...status }));
     },
     onEntry: (entry) => {
       ws.send(JSON.stringify({ type: 'tail-entry', source: 'cloudmanager', entry }));
     },
-    onError: (error) => {
-      ws.send(JSON.stringify({ type: 'tail-error', source: 'cloudmanager', error: sanitizeErrorMessage(error.message) }));
+    onError: (error, meta = {}) => {
+      ws.send(JSON.stringify({
+        type: 'tail-error',
+        source: 'cloudmanager',
+        error: sanitizeErrorMessage(error.message),
+        ...meta
+      }));
     },
     onStopped: ({ source }) => {
       if (ws.activeTailSession === session) {
@@ -153,20 +131,16 @@ function startCloudManagerTailSession(ws, options = {}) {
 function handleTailStartAction(ws, payload = {}) {
   stopActiveTail(ws, 'replaced');
 
-  if (payload.source === 'cloudmanager') {
-    const { environmentId, service, logName } = payload;
-    if (!environmentId || !service || !logName) {
-      throw new Error('Environment, service, and log name are required for Cloud Manager tailing.');
-    }
-    startCloudManagerTailSession(ws, payload);
-    return;
+  if (payload.source !== 'cloudmanager') {
+    throw new Error('Local file tailing has been removed. Use Cloud Manager tailing instead.');
   }
 
-  if (!payload.filePath) {
-    throw new Error('A local file path is required for tailing.');
+  const { environmentId, selections } = payload;
+  if (!environmentId || !Array.isArray(selections) || !selections.length) {
+    throw new Error('Environment and at least one Cloud Manager log selection are required for tailing.');
   }
 
-  startLocalTailSession(ws, payload.filePath);
+  startCloudManagerTailSession(ws, payload);
 }
 
 function attachWebSocketHandlers(server) {
@@ -186,10 +160,7 @@ function attachWebSocketHandlers(server) {
         } else if (data.action === 'tail-start') {
           handleTailStartAction(ws, data);
         } else if (data.action === 'tail-stop') {
-          const stoppedSource = stopActiveTail(ws, 'client-request');
-          if (stoppedSource === 'local') {
-            ws.send(JSON.stringify({ type: 'tail-stopped', source: 'local' }));
-          }
+          stopActiveTail(ws, 'client-request');
         }
       } catch (err) {
         ws.send(JSON.stringify({

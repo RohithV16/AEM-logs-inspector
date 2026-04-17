@@ -29,7 +29,8 @@ const {
   fetchProgramsFromCloudManager,
   fetchEnvironmentsFromCloudManager,
   listAvailableLogOptions,
-  createCloudManagerTailSession
+  createCloudManagerTailSession,
+  createCloudManagerTailGroupSession
 } = require('../../src/services/cloudManagerService');
 
 function createMockProcess() {
@@ -297,6 +298,166 @@ describe('cloudManagerService', () => {
         message: expect.stringContaining('aio auth:login')
       }));
       expect(onStopped).toHaveBeenCalled();
+    });
+  });
+
+  describe('createCloudManagerTailGroupSession', () => {
+    test('starts one tail session per selection and forwards source metadata', async () => {
+      const procA = createMockProcess();
+      const procB = createMockProcess();
+      spawn.mockReturnValueOnce(procA).mockReturnValueOnce(procB);
+
+      const onEntry = jest.fn();
+      const onStatus = jest.fn();
+      const onStopped = jest.fn();
+      const session = createCloudManagerTailGroupSession({
+        environmentId: 'env123',
+        programId: 'prog456',
+        selections: [
+          { service: 'author', logName: 'aemerror' },
+          { service: 'publish', logName: 'aemerror' }
+        ]
+      }, { onEntry, onStatus, onStopped });
+
+      session.start();
+      procA.emit('spawn');
+      procB.emit('spawn');
+      procA.stdout.write('29.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.Author] Author error\n');
+      procB.stdout.write('29.03.2026 14:30:15.124 [qtp-2] *ERROR* [com.example.Publish] Publish error\n');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(spawn).toHaveBeenNthCalledWith(1, 'aio', [
+        'cloudmanager:environment:tail-log',
+        'env123',
+        'author',
+        'aemerror',
+        '--programId',
+        'prog456'
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      expect(spawn).toHaveBeenNthCalledWith(2, 'aio', [
+        'cloudmanager:environment:tail-log',
+        'env123',
+        'publish',
+        'aemerror',
+        '--programId',
+        'prog456'
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      expect(onEntry).toHaveBeenCalledWith(expect.objectContaining({
+        sourceLabel: 'author/aemerror',
+        service: 'author',
+        logName: 'aemerror'
+      }));
+      expect(onEntry).toHaveBeenCalledWith(expect.objectContaining({
+        sourceLabel: 'publish/aemerror',
+        service: 'publish',
+        logName: 'aemerror'
+      }));
+      expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({
+        totalSources: 2
+      }));
+
+      session.stop();
+      expect(procA.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(procB.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(onStopped).toHaveBeenCalled();
+    });
+
+    test('keeps remaining sources running after one source fails', async () => {
+      const procA = createMockProcess();
+      const procB = createMockProcess();
+      spawn.mockReturnValueOnce(procA).mockReturnValueOnce(procB);
+
+      const onError = jest.fn();
+      const onStatus = jest.fn();
+      const onStopped = jest.fn();
+      const session = createCloudManagerTailGroupSession({
+        environmentId: 'env123',
+        selections: [
+          { service: 'author', logName: 'aemerror' },
+          { service: 'publish', logName: 'aemerror' }
+        ]
+      }, { onError, onStatus, onStopped });
+
+      session.start();
+      procA.emit('spawn');
+      procB.emit('spawn');
+      procA.stderr.write('auth:login required\n');
+      procA.emit('close', 1, null);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringContaining('aio auth:login')
+      }), expect.objectContaining({
+        sourceLabel: 'author/aemerror'
+      }));
+      expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'partial'
+      }));
+      expect(onStopped).not.toHaveBeenCalled();
+
+      procB.emit('close', null, 'SIGTERM');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(onStopped).toHaveBeenCalled();
+    });
+
+    test('does not stop the group while another source is still idle', async () => {
+      const procA = createMockProcess();
+      const procB = createMockProcess();
+      spawn.mockReturnValueOnce(procA).mockReturnValueOnce(procB);
+
+      const onError = jest.fn();
+      const onStopped = jest.fn();
+      const session = createCloudManagerTailGroupSession({
+        environmentId: 'env123',
+        selections: [
+          { service: 'author', logName: 'aemerror' },
+          { service: 'publish', logName: 'aemerror' }
+        ]
+      }, { onError, onStopped });
+
+      session.start();
+      procA.emit('spawn');
+      procA.stderr.write('auth:login required\n');
+      procA.emit('close', 1, null);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(onError).toHaveBeenCalled();
+      expect(onStopped).not.toHaveBeenCalled();
+
+      procB.emit('spawn');
+      procB.emit('close', null, 'SIGTERM');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(onStopped).toHaveBeenCalled();
+    });
+
+    test('ignores late entries after the group session is stopped', async () => {
+      const procA = createMockProcess();
+      const procB = createMockProcess();
+      spawn.mockReturnValueOnce(procA).mockReturnValueOnce(procB);
+
+      const onEntry = jest.fn();
+      const onStopped = jest.fn();
+      const session = createCloudManagerTailGroupSession({
+        environmentId: 'env123',
+        selections: [
+          { service: 'author', logName: 'aemerror' },
+          { service: 'publish', logName: 'aemerror' }
+        ]
+      }, { onEntry, onStopped });
+
+      session.start();
+      procA.emit('spawn');
+      procB.emit('spawn');
+
+      session.stop();
+      expect(onStopped).toHaveBeenCalled();
+
+      procA.stdout.write('29.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.Author] Buffered author error\n');
+      procB.stdout.write('29.03.2026 14:30:15.124 [qtp-2] *ERROR* [com.example.Publish] Buffered publish error\n');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(onEntry).not.toHaveBeenCalled();
     });
   });
 });

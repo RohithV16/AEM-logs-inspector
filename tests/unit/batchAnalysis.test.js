@@ -4,6 +4,9 @@ const path = require('path');
 
 const { analyzeAllInOnePass } = require('../../src/services/errorLogService');
 const {
+  analyzeLogBatch,
+  analyzeLogBatchFilters,
+  getLogBatchPage,
   analyzeMultiError,
   analyzeMergedErrorFilters,
   countAndExtractMultiErrorEntries
@@ -19,7 +22,7 @@ describe('multi-error analysis helpers', () => {
   let tempDir;
 
   beforeAll(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-multi-error-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-batch-'));
   });
 
   afterAll(() => {
@@ -100,6 +103,93 @@ describe('multi-error analysis helpers', () => {
 
     expect(result.results).toHaveLength(2);
     expect(result.levelCounts.ALL).toBe(2);
+  });
+
+  test('analyzeLogBatch supports homogeneous CDN files', async () => {
+    const cdnFileA = writeTempFile(tempDir, 'multi_cdn_a.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:30:15.123Z',
+        status: 200,
+        method: 'GET',
+        url: '/content/site-a',
+        cache: 'HIT',
+        host: 'example.com',
+        pop: 'dfw',
+        cli_country: 'US',
+        ttfb: 40,
+        ttlb: 80
+      }),
+      JSON.stringify({
+        timestamp: '2026-03-16T14:31:15.123Z',
+        status: 503,
+        method: 'GET',
+        url: '/content/site-b',
+        cache: 'MISS',
+        host: 'example.com',
+        pop: 'iad',
+        cli_country: 'US',
+        ttfb: 120,
+        ttlb: 140
+      })
+    ].join('\n'));
+    const cdnFileB = writeTempFile(tempDir, 'multi_cdn_b.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:32:15.123Z',
+        status: 200,
+        method: 'POST',
+        url: '/bin/replicate',
+        cache: 'PASS',
+        host: 'author.example.com',
+        pop: 'sin',
+        cli_country: 'IN',
+        ttfb: 90,
+        ttlb: 100
+      })
+    ].join('\n'));
+
+    const result = await analyzeLogBatch([cdnFileA, cdnFileB], {});
+    const filtered = await analyzeLogBatchFilters([cdnFileA, cdnFileB], {});
+    const page = await getLogBatchPage([cdnFileA, cdnFileB], { page: 1, perPage: 10 });
+
+    expect(result.logType).toBe('batch');
+    expect(result.batchLogType).toBe('cdn');
+    expect(result.summary.byType.cdn.files).toBe(2);
+    expect(filtered.batchLogType).toBe('cdn');
+    expect(filtered.methods).toMatchObject({ GET: 2, POST: 1 });
+    expect(filtered.cacheStatuses).toMatchObject({ HIT: 1, MISS: 1, PASS: 1 });
+    expect(page.events).toHaveLength(3);
+    expect(page.filterOptions.cacheStatuses).toEqual(['HIT', 'MISS', 'PASS']);
+  });
+
+  test('analyzeLogBatch supports mixed log types with generic batch output', async () => {
+    const errorFile = writeTempFile(tempDir, 'mixed_error.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Failed request'
+    ].join('\n'));
+    const cdnFile = writeTempFile(tempDir, 'mixed_cdn.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:31:15.123Z',
+        status: 403,
+        method: 'GET',
+        url: '/content/site',
+        cache: 'ERROR',
+        host: 'example.com',
+        pop: 'sfo',
+        cli_country: 'US',
+        ttfb: 200,
+        ttlb: 250
+      })
+    ].join('\n'));
+
+    const result = await analyzeLogBatch([errorFile, cdnFile], {});
+    const filtered = await analyzeLogBatchFilters([errorFile, cdnFile], { logType: 'cdn' });
+    const page = await getLogBatchPage([errorFile, cdnFile], { page: 1, perPage: 10, logType: 'cdn' });
+
+    expect(result.batchLogType).toBe('mixed');
+    expect(result.sourceTypes).toMatchObject({ error: 1, cdn: 1 });
+    expect(filtered.batchLogType).toBe('mixed');
+    expect(filtered.logTypes).toMatchObject({ cdn: 1 });
+    expect(page.total).toBe(1);
+    expect(page.events[0].logType).toBe('cdn');
   });
 
   test('analyzeAllInOnePass returns package-scoped pod and exception counts', async () => {

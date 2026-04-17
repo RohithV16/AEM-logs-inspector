@@ -36,6 +36,7 @@ const cmTailTitle = document.getElementById('cmTailTitle');
 const cmTailStatus = document.getElementById('cmTailStatus');
 const cmTailFeed = document.getElementById('cmTailFeed');
 const cmTailStopBtn = document.getElementById('cmTailStopBtn');
+const cmAdvancedSettingsToggle = document.getElementById('cmAdvancedSettingsToggle');
 const cmDownloadProgressPanel = document.getElementById('cmDownloadProgressPanel');
 const cmDownloadProgressTitle = document.getElementById('cmDownloadProgressTitle');
 const cmDownloadProgressCount = document.getElementById('cmDownloadProgressCount');
@@ -106,6 +107,22 @@ const tailFeed = document.getElementById('tailFeed');
 const tailNewIndicator = document.getElementById('tailNewIndicator');
 const tailScrollToNew = document.getElementById('tailScrollToNew');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+const resultWorkspace = document.getElementById('resultWorkspace');
+const workspaceTitle = document.getElementById('workspaceTitle');
+const workspaceModeBadge = document.getElementById('workspaceModeBadge');
+const workspaceStatus = document.getElementById('workspaceStatus');
+const workspaceClearBtn = document.getElementById('workspaceClearBtn');
+const pinnedEvents = document.getElementById('pinnedEvents');
+const resultViewTabs = Array.from(document.querySelectorAll('[data-result-view]'));
+const resultViewEventsTab = document.getElementById('resultViewEventsTab');
+const resultViewChartsTab = document.getElementById('resultViewChartsTab');
+const resultViewPinnedTab = document.getElementById('resultViewPinnedTab');
+const resultViewTailTab = document.getElementById('resultViewTailTab');
+const eventsView = document.getElementById('eventsView');
+const incidentIndicator = document.getElementById('incidentIndicator');
+const incidentIndicatorBtn = document.getElementById('incidentIndicatorBtn');
+const incidentCountEl = document.getElementById('incidentCount');
+const incidentsPanel = document.getElementById('incidentsPanel');
 const THEME_STORAGE_KEY = 'aem_themePreference';
 const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
 const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
@@ -114,6 +131,7 @@ const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
 const CM_PROGRAMS_CACHE_KEY = 'aem_cmProgramsCache';
 const CM_ENVIRONMENTS_CACHE_KEY = 'aem_cmEnvironmentsCache';
 const CM_LOG_OPTIONS_CACHE_KEY = 'aem_cmLogOptionsCache';
+const WORKSPACE_STORAGE_KEY = 'aem_workspaceState';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -132,6 +150,7 @@ let currentSourceMode = localStorage.getItem(SOURCE_MODE_STORAGE_KEY) === 'cloud
 let currentAnalyzedFilePath = '';
 let currentBatchInput = null;
 let currentBatchSummary = null;
+let currentBatchLogType = '';
 let cloudManagerProgramsLoaded = false;
 let cloudManagerCommandPreviewPending = false;
 let cloudManagerLogOptions = [];
@@ -186,6 +205,12 @@ let tailAllPackages = {};
 let tailAllLoggers = {};
 
 let activeView = 'analyzer';
+let currentResultView = 'events';
+let currentAnalysisSummary = null;
+let currentVisibleEventTotal = 0;
+let pinnedEntries = [];
+let currentCorrelation = null;
+let incidentsPanelOpen = false;
 let filters = {
   packages: [],
   loggers: [],
@@ -193,6 +218,10 @@ let filters = {
   search: '',
   regex: false
 };
+
+function replaceArrayContents(target, nextValues = []) {
+  target.splice(0, target.length, ...nextValues);
+}
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
 
@@ -267,7 +296,7 @@ function setThemePreference(nextPreference) {
 }
 
 function getActiveAnalysisFilePath() {
-  if (currentAnalysisMode === 'multi-error') return '';
+  if (currentAnalysisMode === 'batch') return '';
   if (currentAnalyzedFilePath) return currentAnalyzedFilePath;
   if (currentSourceMode === 'local') return filePathInput.value.trim();
   return '';
@@ -275,6 +304,411 @@ function getActiveAnalysisFilePath() {
 
 function setCurrentAnalyzedFilePath(filePath) {
   currentAnalyzedFilePath = filePath ? String(filePath).trim() : '';
+}
+
+function getWorkspaceStorageSnapshot() {
+  return {
+    sourceMode: currentSourceMode,
+    resultView: currentResultView,
+    filePath: filePathInput?.value.trim() || '',
+    rawSearch: rawSearchInput?.value || '',
+    rawLevel: rawEventsLevel,
+    startDate: startDate?.value || '',
+    endDate: endDate?.value || '',
+    filters: {
+      packages: [...filters.packages],
+      loggers: [...filters.loggers],
+      level: filters.level,
+      search: filters.search,
+      regex: filters.regex
+    },
+    thread: threadSelect?.value || '',
+    exception: exceptionSelect?.value || '',
+    category: categoryFilter?.value || '',
+    request: {
+      method: document.getElementById('methodFilter')?.value || '',
+      status: document.getElementById('statusFilter')?.value || '',
+      pod: document.getElementById('podFilter')?.value || '',
+      minResponseTime: document.getElementById('minResponseTime')?.value || '',
+      maxResponseTime: document.getElementById('maxResponseTime')?.value || ''
+    },
+    cdn: {
+      method: document.getElementById('cdnMethodFilter')?.value || '',
+      status: document.getElementById('cdnStatusFilter')?.value || '',
+      cache: document.getElementById('cacheStatusFilter')?.value || '',
+      country: document.getElementById('countryFilter')?.value || '',
+      pop: document.getElementById('popFilter')?.value || '',
+      host: document.getElementById('hostFilter')?.value || '',
+      minTtfb: document.getElementById('minTtfb')?.value || '',
+      maxTtfb: document.getElementById('maxTtfb')?.value || ''
+    },
+    pinnedEntries
+  };
+}
+
+function persistWorkspaceState() {
+  localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(getWorkspaceStorageSnapshot()));
+}
+
+function countActiveFilters() {
+  let count = 0;
+  if (startDate?.value) count++;
+  if (endDate?.value) count++;
+  if (rawEventsLevel && rawEventsLevel !== 'ALL') count++;
+  if (rawSearchInput?.value.trim()) count++;
+  if (filters.packages.length) count += filters.packages.length;
+  if (filters.loggers.length) count += filters.loggers.length;
+  if (threadSelect?.value) count++;
+  if (exceptionSelect?.value) count++;
+  if (categoryFilter?.value) count++;
+
+  [
+    'methodFilter', 'statusFilter', 'podFilter', 'minResponseTime', 'maxResponseTime',
+    'cdnMethodFilter', 'cdnStatusFilter', 'cacheStatusFilter', 'countryFilter',
+    'popFilter', 'hostFilter', 'minTtfb', 'maxTtfb'
+  ].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element?.value) count++;
+  });
+
+  if (Array.isArray(advancedRulesState) && advancedRulesState.length) count += advancedRulesState.length;
+  return count;
+}
+
+function buildWorkspaceTitle() {
+  if (currentAnalysisMode === 'batch' && currentBatchSummary) {
+    const totalFiles = currentBatchSummary.totalFiles || parseBatchInput(currentBatchInput || '').length;
+    const batchLabel = currentBatchLogType === 'mixed'
+      ? 'mixed log'
+      : `${currentBatchLogType || 'batch'} log`;
+    return `Merged ${batchLabel} analysis across ${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
+  }
+
+  if (currentAnalyzedFilePath) {
+    const segments = currentAnalyzedFilePath.split(/[\\/]/);
+    return segments[segments.length - 1] || currentAnalyzedFilePath;
+  }
+
+  if (activeTailSource === 'cloudmanager' && cloudManagerTailSession) {
+    return `Live tail: ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId || 'Cloud Manager'}`;
+  }
+
+  return 'No active analysis';
+}
+
+function updateWorkspaceChrome() {
+  const hasAnalysis = Boolean(currentAnalysisSummary || currentBatchSummary || activeTailSource);
+  if (resultWorkspace) resultWorkspace.classList.toggle('hidden', !hasAnalysis);
+  const emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.classList.toggle('hidden', hasAnalysis);
+
+  if (workspaceTitle) workspaceTitle.textContent = buildWorkspaceTitle();
+  if (workspaceModeBadge) {
+    const badgeLabel = activeTailSource
+      ? 'Live'
+      : currentAnalysisMode === 'batch'
+        ? 'Merged'
+        : (currentLogType || 'Idle');
+    workspaceModeBadge.textContent = badgeLabel;
+  }
+  if (workspaceStatus) {
+    if (activeTailSource === 'cloudmanager') {
+      workspaceStatus.textContent = `Live tail is active. Use filters to focus the stream or switch back to Events and Charts without stopping the session.`;
+    } else if (currentAnalysisMode === 'batch' && currentBatchSummary) {
+      workspaceStatus.textContent = `Merged batch analysis is active. Refine filters to narrow the cross-file result set or pin events to keep them visible while you investigate.`;
+    } else if (currentAnalysisSummary) {
+      workspaceStatus.textContent = `Analysis loaded. Use the sidebar to refine results, open Charts for distribution trends, or pin events that matter before changing filters.`;
+    } else {
+      workspaceStatus.textContent = 'Analyze a log file to populate events, charts, and investigation context.';
+    }
+  }
+}
+
+function updateWorkspaceSummary() {
+  updateWorkspaceChrome();
+}
+
+function setResultView(view, { persist = true } = {}) {
+  const nextView = ['events', 'charts', 'pinned', 'live-tail'].includes(view) ? view : 'events';
+  currentResultView = nextView;
+  chartsVisible = nextView === 'charts';
+
+  const views = {
+    events: eventsView,
+    charts: chartsTab,
+    pinned: document.getElementById('pinnedView'),
+    'live-tail': tailPanel
+  };
+
+  resultViewTabs.forEach((button) => {
+    const isActive = button.dataset.resultView === nextView;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  Object.entries(views).forEach(([key, element]) => {
+    if (!element) return;
+    element.classList.toggle('hidden', key !== nextView);
+    element.classList.toggle('active', key === nextView);
+  });
+
+  if (chartsToggleBtn) {
+    chartsToggleBtn.classList.toggle('active', nextView === 'charts');
+  }
+
+  if (nextView === 'charts') {
+    fetchChartsData();
+  }
+
+  if (persist) persistWorkspaceState();
+}
+
+function updateIncidentIndicator() {
+  const incidents = currentCorrelation?.incidents || [];
+  if (!incidents.length || currentAnalysisMode !== 'batch') {
+    if (incidentIndicator) incidentIndicator.classList.add('hidden');
+    if (incidentsPanel) incidentsPanel.classList.add('hidden');
+    incidentsPanelOpen = false;
+    return;
+  }
+
+  const maxSeverity = currentCorrelation.summary?.maxSeverity || 'default';
+  const count = incidents.length;
+  if (incidentCountEl) incidentCountEl.textContent = count;
+  if (incidentIndicatorBtn) {
+    incidentIndicatorBtn.classList.remove('severity-error');
+    if (maxSeverity === 'ERROR') incidentIndicatorBtn.classList.add('severity-error');
+  }
+  if (incidentIndicator) incidentIndicator.classList.remove('hidden');
+}
+
+function toggleIncidentsPanel() {
+  incidentsPanelOpen = !incidentsPanelOpen;
+  if (incidentIndicatorBtn) incidentIndicatorBtn.setAttribute('data-expanded', String(incidentsPanelOpen));
+  if (!incidentsPanelOpen) {
+    incidentsPanel.classList.add('hidden');
+    return;
+  }
+  incidentsPanel.classList.remove('hidden');
+  renderIncidents();
+}
+
+function renderIncidents() {
+  if (!incidentsPanel) return;
+  const incidents = currentCorrelation?.incidents || [];
+  if (!incidents.length) {
+    incidentsPanel.innerHTML = '<div class="incidents-empty">No incidents detected.</div>';
+    return;
+  }
+
+  const summary = currentCorrelation.summary || {};
+  const timeRange = summary.firstTimestamp && summary.lastTimestamp
+    ? `from ${summary.firstTimestamp} to ${summary.lastTimestamp}`
+    : '';
+
+  let html = '<div class="incidents-panel-header">';
+  html += '<h3>Incident Timeline</h3>';
+  html += `<span class="incidents-panel-summary">${escapeHtml(timeRange)}</span>`;
+  html += '<button id="incidentsPanelCloseBtn" class="incidents-panel-close" type="button" aria-label="Close incidents panel">&times;</button>';
+  html += '</div>';
+
+  incidents.forEach((incident, idx) => {
+    const maxSev = (incident.severities || []).reduce((best, s) => {
+      if (s.name === 'ERROR') return 'error';
+      if (s.name === 'WARN' && best !== 'error') return 'warn';
+      return best;
+    }, 'default');
+
+    const sevLabel = escapeHtml((incident.severities || []).map(s => `${s.name}:${s.count}`).join(', '));
+    const sources = (incident.sources || []).map(s => `<span class="incident-source-badge">${escapeHtml(s.name)} (${s.count})</span>`).join('');
+    const eventCount = incident.total || incident.events?.length || 0;
+    const timeLabel = incident.startTimestamp && incident.lastTimestamp
+      ? `${incident.startTimestamp} → ${incident.lastTimestamp}`
+      : incident.startTimestamp || '';
+
+    html += `<div class="incident-row" data-incident-idx="${idx}">`;
+    html += '<div class="incident-row-meta">';
+    html += `<span class="incident-severity-pill ${maxSev}">${sevLabel}</span>`;
+    html += `<span class="incident-time-range">${timeLabel}</span>`;
+    html += `<span class="incident-event-count">${eventCount} events</span>`;
+    html += '</div>';
+    if (sources) html += `<div class="incident-sources">${sources}</div>`;
+    html += '</div>';
+  });
+
+  incidentsPanel.innerHTML = html;
+
+  const closeBtn = document.getElementById('incidentsPanelCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      incidentsPanel.classList.add('hidden');
+      incidentsPanelOpen = false;
+      if (incidentIndicatorBtn) incidentIndicatorBtn.setAttribute('data-expanded', 'false');
+    });
+  }
+
+  incidentsPanel.querySelectorAll('.incident-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const idx = Number(row.dataset.incidentIdx);
+      const incident = incidents[idx];
+      if (!incident) return;
+
+      if (row.classList.contains('expanded')) {
+        row.classList.remove('expanded');
+        const existing = row.querySelector('.incident-events-list');
+        if (existing) existing.remove();
+        return;
+      }
+
+      row.classList.add('expanded');
+      const events = incident.events || [];
+      if (!events.length) return;
+
+      let eventsHtml = '<div class="incident-events-list">';
+      events.forEach(evt => {
+        const evtLevel = (evt.level || evt.severity || 'INFO').toLowerCase();
+        const evtClass = evtLevel === 'error' ? 'error' : evtLevel === 'warn' ? 'warn' : 'default';
+        const ts = escapeHtml(evt.timestamp || '');
+        const msg = evt.message || evt.title || evt.url || JSON.stringify(evt).substring(0, 120);
+        eventsHtml += '<div class="incident-event">';
+        eventsHtml += `<span class="incident-event-level ${evtClass}">${escapeHtml(evtLevel)}</span>`;
+        eventsHtml += `<span class="incident-event-timestamp">${ts}</span>`;
+        eventsHtml += `<span class="incident-event-message">${escapeHtml(msg)}</span>`;
+        eventsHtml += '</div>';
+      });
+      eventsHtml += '</div>';
+      row.insertAdjacentHTML('beforeend', eventsHtml);
+    });
+  });
+}
+
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function createPinnedEntryKey(evt = {}, logType = currentLogType) {
+  return [
+    logType,
+    evt.timestamp || '',
+    evt.logger || evt.sourceName || evt.sourceFile || evt.url || '',
+    evt.message || evt.title || evt.rawLine || '',
+    evt.status || '',
+    evt.method || ''
+  ].join('::');
+}
+
+function isPinnedEvent(evt = {}, logType = currentLogType) {
+  const key = createPinnedEntryKey(evt, logType);
+  return pinnedEntries.some((entry) => entry.key === key);
+}
+
+function renderPinnedEvents() {
+  if (!pinnedEvents) return;
+  if (!pinnedEntries.length) {
+    pinnedEvents.innerHTML = '<div class="pinned-empty">No findings pinned yet. Pin events from the Events view to keep them visible while you adjust filters.</div>';
+    updateWorkspaceSummary();
+    return;
+  }
+
+  pinnedEvents.innerHTML = pinnedEntries.map((entry) => `
+    <article class="pinned-event-card">
+      <div class="pinned-event-meta">
+        <span class="level-badge ${escapeHtml(entry.levelClass || 'INFO')}">${escapeHtml(entry.levelLabel || entry.logType || 'Event')}</span>
+        <span>${escapeHtml(entry.timestamp || '')}</span>
+        <span>${escapeHtml(entry.context || '')}</span>
+      </div>
+      <p class="pinned-event-message">${highlightText(entry.message || '', rawEventsSearch)}</p>
+      <div class="pinned-event-actions">
+        <button class="tail-action-btn" type="button" data-remove-pinned-key="${escapeHtml(entry.key)}">Remove</button>
+      </div>
+    </article>
+  `).join('');
+  updateWorkspaceSummary();
+}
+
+function buildPinnedEntry(evt = {}, logType = currentLogType) {
+  const levelClass = String(evt.level || evt.severity || evt.method || 'INFO').toUpperCase();
+  const context = evt.logger || evt.sourceName || evt.sourceFile || evt.url || evt.host || '';
+  return {
+    key: createPinnedEntryKey(evt, logType),
+    logType,
+    timestamp: evt.timestamp || '',
+    context,
+    message: evt.message || evt.title || evt.rawLine || evt.url || '',
+    levelLabel: evt.level || evt.method || evt.severity || logType,
+    levelClass
+  };
+}
+
+function togglePinnedEvent(entry, logType = currentLogType) {
+  const pinnedKey = createPinnedEntryKey(entry, logType);
+  const existingIndex = pinnedEntries.findIndex((item) => item.key === pinnedKey);
+  if (existingIndex >= 0) {
+    pinnedEntries.splice(existingIndex, 1);
+  } else {
+    pinnedEntries.unshift(buildPinnedEntry(entry, logType));
+  }
+  renderPinnedEvents();
+  persistWorkspaceState();
+}
+
+function restoreWorkspaceState() {
+  const saved = safeJsonParse(localStorage.getItem(WORKSPACE_STORAGE_KEY), {});
+  if (!saved || typeof saved !== 'object') return;
+
+  if (saved.filePath && filePathInput) {
+    filePathInput.value = saved.filePath;
+  }
+  if (saved.rawSearch && rawSearchInput) {
+    rawSearchInput.value = saved.rawSearch;
+    rawEventsSearch = saved.rawSearch;
+  }
+  if (saved.rawLevel) {
+    rawEventsLevel = saved.rawLevel;
+  }
+  if (saved.startDate && startDate) startDate.value = saved.startDate;
+  if (saved.endDate && endDate) endDate.value = saved.endDate;
+
+  if (saved.filters && typeof saved.filters === 'object') {
+    replaceArrayContents(filters.packages, Array.isArray(saved.filters.packages) ? saved.filters.packages : []);
+    replaceArrayContents(filters.loggers, Array.isArray(saved.filters.loggers) ? saved.filters.loggers : []);
+    filters.level = saved.filters.level || 'ALL';
+    filters.search = saved.filters.search || '';
+    filters.regex = Boolean(saved.filters.regex);
+  }
+
+  if (threadSelect && saved.thread) threadSelect.value = saved.thread;
+  if (exceptionSelect && saved.exception) exceptionSelect.value = saved.exception;
+  if (categoryFilter && saved.category) categoryFilter.value = saved.category;
+
+  const requestState = saved.request || {};
+  const cdnState = saved.cdn || {};
+  const valueMap = {
+    methodFilter: requestState.method,
+    statusFilter: requestState.status,
+    podFilter: requestState.pod,
+    minResponseTime: requestState.minResponseTime,
+    maxResponseTime: requestState.maxResponseTime,
+    cdnMethodFilter: cdnState.method,
+    cdnStatusFilter: cdnState.status,
+    cacheStatusFilter: cdnState.cache,
+    countryFilter: cdnState.country,
+    popFilter: cdnState.pop,
+    hostFilter: cdnState.host,
+    minTtfb: cdnState.minTtfb,
+    maxTtfb: cdnState.maxTtfb
+  };
+  Object.entries(valueMap).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element && value) element.value = value;
+  });
+
+  pinnedEntries = Array.isArray(saved.pinnedEntries) ? saved.pinnedEntries : [];
+  renderPinnedEvents();
+
+  updateLevelChips(rawEventsLevel || 'ALL');
+  currentResultView = saved.resultView || 'events';
 }
 
 function getCloudManagerSelectionState() {
@@ -288,15 +722,19 @@ function getCloudManagerSelectionState() {
   };
 }
 
-function getActiveCloudManagerTailSelection() {
-  return selectedCloudManagerLogs.length === 1 ? selectedCloudManagerLogs[0] : null;
+function isCloudManagerErrorLogSelection(selection = {}) {
+  const logName = String(selection.logName || selection.name || '').toLowerCase();
+  return logName.includes('error');
+}
+
+function getActiveCloudManagerTailSelections() {
+  return selectedCloudManagerLogs;
 }
 
 function getCloudManagerCommandPreviewState(mode = 'download') {
   const state = getCloudManagerSelectionState();
   if (mode === 'tail') {
-    const selection = getActiveCloudManagerTailSelection();
-    state.selections = selection ? [selection] : [];
+    state.selections = getActiveCloudManagerTailSelections();
     state.mode = 'tail';
     return state;
   }
@@ -437,6 +875,9 @@ function toggleCloudManagerAdvancedSettings() {
     // Save preference to localStorage
     const isExpanded = accordion.classList.contains('expanded');
     localStorage.setItem('aem_cmAdvancedExpanded', isExpanded ? 'true' : 'false');
+    if (cmAdvancedSettingsToggle) {
+      cmAdvancedSettingsToggle.setAttribute('aria-expanded', String(isExpanded));
+    }
   }
 }
 
@@ -447,6 +888,15 @@ function restoreCloudManagerTabState() {
     localStorage.setItem('aem_cmActiveTab', nextTab);
   }
   switchCloudManagerTab(nextTab);
+
+  const accordion = document.querySelector('.cloudmanager-advanced-settings');
+  const isExpanded = localStorage.getItem('aem_cmAdvancedExpanded') === 'true';
+  if (accordion) {
+    accordion.classList.toggle('expanded', isExpanded);
+  }
+  if (cmAdvancedSettingsToggle) {
+    cmAdvancedSettingsToggle.setAttribute('aria-expanded', String(isExpanded));
+  }
 }
 
 function renderCloudManagerSummary(data) {
@@ -495,7 +945,7 @@ function renderCloudManagerSummary(data) {
 
   cmDownloadSummary.innerHTML = `
     <div><strong>Downloaded ${files.length}</strong> Cloud Manager file(s).</div>
-    <div>Cached under: <code>${escapeHtml(data.environmentDirectory || data.outputDirectory || '')}</code></div>
+    <div>Downloaded to: <code>${escapeHtml(data.environmentDirectory || data.outputDirectory || '')}</code></div>
     ${dates ? `<div>Extracted dates: <span>${escapeHtml(dates)}</span></div>` : ''}
     <div>Analyze these files from <strong>Cloud Manager Logs</strong> in Local Path mode.</div>
     ${fileItems}
@@ -535,6 +985,10 @@ function renderCloudManagerHistory() {
         <span>${escapeHtml((entry.selections || []).map(item => `${item.service}/${item.logName}`).join(', '))}</span><br>
         <span>${escapeHtml(`${entry.summary?.fileCount || 0} files • ${entry.summary?.supportedFiles || 0} supported`)}</span><br>
         <code>${escapeHtml(entry.outputDirectory || '')}</code>
+      </div>
+      <div class="cloudmanager-history-actions">
+        <button class="tail-action-btn" type="button" data-history-action="reuse" data-run-id="${escapeHtml(entry.runId || '')}">Reuse Setup</button>
+        <button class="tail-action-btn" type="button" data-history-action="analyze" data-run-id="${escapeHtml(entry.runId || '')}" ${entry.analyzedFile || entry.downloadedFilesDetailed?.some((file) => file.supported !== false) ? '' : 'disabled'}>Analyze Latest</button>
       </div>
     </div>
   `).join('');
@@ -650,11 +1104,11 @@ function updateLocalDownloadsTrigger(candidates = []) {
   if (!localDownloadsTrigger || !localDownloadsTriggerMeta) return;
   const selectedCount = selectedLocalDownloadFiles.filter((id) => candidates.some((candidate) => candidate.id === id)).length;
   const environmentLabel = localDownloadsPopoverOpen ? getPopoverEnvironmentLabel() : getCloudManagerSelectedEnvironmentLabel();
-  let summary = environmentLabel ? 'No cached logs yet' : 'Choose an environment';
+  let summary = environmentLabel ? 'No downloads yet' : 'Choose an environment';
   if (environmentLabel && candidates.length) {
     summary = selectedCount
-      ? `${selectedCount} selected • ${candidates.length} cached`
-      : `${candidates.length} cached in ${environmentLabel}`;
+      ? `${selectedCount} selected • ${candidates.length} downloaded`
+      : `${candidates.length} downloaded in ${environmentLabel}`;
   }
   localDownloadsTriggerMeta.textContent = summary;
 }
@@ -665,7 +1119,7 @@ function setCloudManagerDownloadStatus(message = '', { pending = false } = {}) {
 
   if (cmAnalyzeBtn) {
     cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
-    cmAnalyzeBtn.textContent = cloudManagerDownloadPending ? 'Caching…' : 'Cache Selected Logs';
+    cmAnalyzeBtn.textContent = cloudManagerDownloadPending ? 'Downloading…' : 'Download Selected Logs';
   }
 
   if (refreshLocalDownloadsBtn) {
@@ -689,12 +1143,14 @@ function formatTailEntryMarkup(entry = {}) {
   const level = entry.level || entry.type || entry.logType || 'raw';
   const timestamp = entry.timestamp || '';
   const body = entry.rawLine || entry.message || JSON.stringify(entry);
+  const sourceLabel = entry.sourceLabel || `${entry.service || ''}/${entry.logName || ''}`.replace(/^\/|\/$/g, '');
   const severityClass = level === 'ERROR' ? 'error' : (level === 'WARN' ? 'warn' : '');
   return `
     <div class="cloudmanager-tail-entry ${severityClass}">
       <div class="cloudmanager-tail-entry-meta">
         <span>${escapeHtml(String(level))}</span>
         <span>${escapeHtml(String(timestamp))}</span>
+        <span>${escapeHtml(String(sourceLabel || 'Cloud Manager'))}</span>
       </div>
       <code>${escapeHtml(String(body))}</code>
     </div>
@@ -717,7 +1173,7 @@ function renderCloudManagerTailPanel() {
   }
 
   cmTailTitle.textContent = cloudManagerTailSession
-    ? `Tailing ${cloudManagerTailSession.logName} on ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId}`
+    ? `Tailing ${cloudManagerTailSession.selectionCount} log${cloudManagerTailSession.selectionCount === 1 ? '' : 's'} on ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId}`
     : 'Recent live tail output';
   cmTailFeed.innerHTML = cloudManagerTailEntries.map(formatTailEntryMarkup).join('');
   cmTailFeed.scrollTop = 0;
@@ -745,26 +1201,20 @@ function resetCloudManagerTailState({ preserveEntries = false } = {}) {
 }
 
 function updateTailControls() {
-  const localTailActive = activeTailSource === 'local';
-  if (tailBtn) {
-    tailBtn.disabled = activeTailSource === 'cloudmanager' || (currentSourceMode !== 'local' && !localTailActive);
-    tailBtn.textContent = localTailActive ? 'Stop Tail' : '\u25B6 Tail';
-    tailBtn.classList.toggle('active', localTailActive);
-    tailBtn.title = currentSourceMode === 'local' || localTailActive
-      ? 'Watch a local log file for new entries in real-time'
-      : 'Switch to Local Path mode to tail a local log file';
-  }
-
-  const tailSelection = getActiveCloudManagerTailSelection();
+  const tailSelections = getActiveCloudManagerTailSelections();
   const cloudManagerTailActive = activeTailSource === 'cloudmanager';
   if (cmTailBtn) {
-    cmTailBtn.disabled = cloudManagerDownloadPending || (!cloudManagerTailActive && !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && tailSelection));
+    cmTailBtn.disabled = cloudManagerDownloadPending || (!cloudManagerTailActive && !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && tailSelections.length));
     cmTailBtn.textContent = cloudManagerTailActive ? 'Tailing…' : 'Tail Logs';
     cmTailBtn.classList.toggle('active', cloudManagerTailActive);
+    cmTailBtn.title = 'Start live tailing for the selected Cloud Manager logs';
   }
 
   if (cmTailStopBtn) {
     cmTailStopBtn.disabled = !cloudManagerTailActive;
+  }
+  if (resultViewTailTab) {
+    resultViewTailTab.disabled = !cloudManagerTailActive && !tailEntries.length;
   }
 }
 
@@ -793,7 +1243,7 @@ async function loadCloudManagerCacheBrowser(programId = cmProgramSelect?.value |
   }
 
   if (localDownloadsList && !silent) {
-    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">Loading cached Cloud Manager logs...</div>';
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">Loading downloaded Cloud Manager logs...</div>';
   }
 
   try {
@@ -801,7 +1251,7 @@ async function loadCloudManagerCacheBrowser(programId = cmProgramSelect?.value |
     const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
     const data = await response.json();
     if (!data.success) {
-      throw new Error(data.error || 'Unable to load cached Cloud Manager logs');
+      throw new Error(data.error || 'Unable to load downloaded Cloud Manager logs');
     }
     cloudManagerCacheData = {
       cacheRoot: data.cacheRoot || cmOutputDirectoryInput?.value.trim() || '',
@@ -966,7 +1416,7 @@ async function loadPopoverCache(programId, environmentId, { silent = false } = {
     localDownloadsList.innerHTML = `
       <div class="popover-loading-container">
         <div class="popover-loading-spinner"></div>
-        <div class="popover-loading-text">Loading cached logs...</div>
+        <div class="popover-loading-text">Loading downloaded logs...</div>
       </div>
     `;
   }
@@ -976,7 +1426,7 @@ async function loadPopoverCache(programId, environmentId, { silent = false } = {
     const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
     const data = await response.json();
     if (!data.success) {
-      throw new Error(data.error || 'Unable to load cached logs');
+      throw new Error(data.error || 'Unable to load downloaded logs');
     }
     popoverCacheData = {
       cacheRoot: data.cacheRoot || '',
@@ -1025,19 +1475,21 @@ function applySelectedDownloadsToInput() {
     .filter(Boolean);
 
   if (!selectedFiles.length) {
-    filePathInput.value = '';
+    persistLocalPathInput('');
     return;
   }
 
   if (selectedFiles.length > 1) {
-    const nonErrorSelection = selectedFiles.find((file) => file.logType && file.logType !== 'error');
-    if (nonErrorSelection) {
-      showToast('Multiple-file analysis is only supported for error logs', 'warning');
-      return;
+    const allErrorLogs = selectedFiles.every((file) => file.logType === 'error');
+    if (!allErrorLogs) {
+      const hasNonError = selectedFiles.some((file) => file.logType && file.logType !== 'error');
+      if (hasNonError) {
+        showToast('Multiple-file analysis for CDN/request logs uses batch analysis (no error correlation)', 'warning');
+      }
     }
   }
 
-  filePathInput.value = selectedFiles.map((file) => file.filePath).join(',');
+  persistLocalPathInput(selectedFiles.map((file) => file.filePath).join(','));
 }
 
 function renderLocalDownloadsList() {
@@ -1075,8 +1527,8 @@ function renderLocalDownloadsList() {
 
   if (!activeProgramId || !activeEnvironmentId) {
     const hint = usePopoverData
-      ? 'Select a program and environment to browse the cache.'
-      : 'Select a program and environment in the Cloud Manager tab to browse the cache.';
+      ? 'Select a program and environment to browse downloads.'
+      : 'Select a program and environment in the Cloud Manager tab to browse downloads.';
     localDownloadsList.innerHTML = `<div class="cloudmanager-hint">${hint}</div>`;
     if (cmLogTypeTabs) cmLogTypeTabs.innerHTML = '';
     return;
@@ -1114,7 +1566,7 @@ function renderLocalDownloadsList() {
     : sortedTypes.filter((t) => t === activeLogTypeFilter);
 
   if (!filteredTypes.length) {
-    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">No cached logs found for this environment.</div>';
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">No downloaded logs found for this environment.</div>';
     return;
   }
 
@@ -1125,11 +1577,11 @@ function renderLocalDownloadsList() {
     <div class="cm-picker-meta-card">
       <div>
         <strong>${escapeHtml(environmentLabel || 'Cloud Manager environment')}</strong>
-        <span>${escapeHtml(activeCacheData.environmentDirectory || activeCacheData.cacheRoot || 'Cache path not available')}</span>
+        <span>${escapeHtml(activeCacheData.environmentDirectory || activeCacheData.cacheRoot || 'Download path not available')}</span>
       </div>
       <div class="cm-picker-stat">
         <strong>${escapeHtml(String(totalCached))}</strong>
-        <span>cached logs</span>
+        <span>downloaded logs</span>
       </div>
     </div>
   `;
@@ -1340,7 +1792,7 @@ async function refreshCloudManagerCommandPreview(mode = cloudManagerTailSession 
     const commands = (data.commands || []).map((entry) => `<code>${escapeHtml(entry.command)}</code>`).join('');
     const title = mode === 'tail' ? 'Tail command preview' : 'Command preview';
     const detail = mode === 'tail'
-      ? 'Live tail streams entries directly from Cloud Manager and does not cache them.'
+      ? 'Live tail streams entries directly from Cloud Manager and does not save them.'
       : escapeHtml(data.estimatedDateRange?.label || '');
     cmCommandPreview.innerHTML = `
       <div><strong>${title}</strong></div>
@@ -1360,8 +1812,8 @@ async function validateCloudManagerOutputDirectory() {
   const outputDirectory = cmOutputDirectoryInput.value.trim();
   if (cmOutputDirectoryHint) {
     cmOutputDirectoryHint.textContent = outputDirectory
-      ? `Persistent cache root: ${outputDirectory}`
-      : 'Cloud Manager downloads are cached automatically for browsing and analysis.';
+      ? `Download folder: ${outputDirectory}`
+      : 'Cloud Manager downloads are stored automatically for browsing and analysis.';
   }
   updateCloudManagerActionState(Boolean(outputDirectory));
   return Boolean(outputDirectory);
@@ -1420,6 +1872,9 @@ function setSourceMode(mode, { persist = true } = {}) {
     renderCloudManagerHistory();
     ensureCloudManagerProgramsLoaded();
   }
+
+  updateWorkspaceChrome();
+  if (persist) persistWorkspaceState();
 }
 
 function renderCloudManagerResultBadges() {}
@@ -1702,8 +2157,50 @@ themeButtons.forEach(button => {
 sourceModeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setSourceMode(button.dataset.sourceMode);
+    persistWorkspaceState();
   });
 });
+
+if (cmAdvancedSettingsToggle) {
+  cmAdvancedSettingsToggle.addEventListener('click', () => {
+    toggleCloudManagerAdvancedSettings();
+  });
+}
+
+resultViewTabs.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.disabled) return;
+    setResultView(button.dataset.resultView);
+  });
+});
+
+if (incidentIndicatorBtn) {
+  incidentIndicatorBtn.addEventListener('click', () => {
+    toggleIncidentsPanel();
+  });
+}
+
+if (workspaceClearBtn) {
+  workspaceClearBtn.addEventListener('click', () => {
+    currentAnalysisSummary = null;
+    currentVisibleEventTotal = 0;
+    rawEventsData = [];
+    currentAnalysisMode = 'single';
+    currentBatchInput = null;
+    currentBatchSummary = null;
+    currentBatchLogType = '';
+    currentCorrelation = null;
+    pinnedEntries = [];
+    setCurrentAnalyzedFilePath('');
+    if (rawEventsSection) rawEventsSection.innerHTML = '';
+    if (pinnedEvents) pinnedEvents.innerHTML = '<div class="pinned-empty">No findings pinned yet. Pin events from the Events view to keep them visible while you adjust filters.</div>';
+    setResultView('events', { persist: false });
+    updateWorkspaceChrome();
+    updateWorkspaceSummary();
+    persistWorkspaceState();
+    updateIncidentIndicator();
+  });
+}
 
 if (cmProgramSelect) {
   cmProgramSelect.addEventListener('change', async () => {
@@ -1806,6 +2303,7 @@ document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
   tabBtn.addEventListener('click', () => {
     const tabName = tabBtn.dataset.tab;
     switchCloudManagerTab(tabName);
+    persistWorkspaceState();
   });
 });
 
@@ -1890,7 +2388,7 @@ if (clearSelectedDownloadsBtn) {
   clearSelectedDownloadsBtn.addEventListener('click', () => {
     selectedLocalDownloadFiles = [];
     renderLocalDownloadsList();
-    filePathInput.value = '';
+    persistLocalPathInput('');
   });
 }
 
@@ -2185,11 +2683,31 @@ function renderAdvancedRuleBuilder() {
   }
 }
 
-function parseMultiErrorInput(value) {
+function parseBatchInput(value) {
   return String(value || '')
     .split(/[\n,]+/)
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function normalizeLocalPathInputValue(value) {
+  return parseBatchInput(value).join(',');
+}
+
+function persistLocalPathInput(value = filePathInput?.value || '') {
+  const normalized = normalizeLocalPathInputValue(value);
+  if (filePathInput && filePathInput.value !== normalized) {
+    filePathInput.value = normalized;
+  }
+
+  if (normalized) {
+    localStorage.setItem('aem_lastPath', normalized);
+  } else {
+    localStorage.removeItem('aem_lastPath');
+  }
+
+  persistWorkspaceState();
+  return normalized;
 }
 
 /* ============================================================
@@ -2307,8 +2825,8 @@ function applyCurrentSelectionsToFilterUI() {
 
 function resetErrorFilterState(options = {}) {
   const { preserveDates = false } = options;
-  filters.packages = [];
-  filters.loggers = [];
+  replaceArrayContents(filters.packages);
+  replaceArrayContents(filters.loggers);
   filters.level = 'ALL';
   filters.search = '';
   filters.regex = false;
@@ -2325,8 +2843,8 @@ function resetErrorFilterState(options = {}) {
 }
 
 function applyErrorPresetState(preset = {}) {
-  filters.packages = [];
-  filters.loggers = [];
+  replaceArrayContents(filters.packages);
+  replaceArrayContents(filters.loggers);
   filters.level = 'ALL';
   clearDropdownSearchInputs();
 
@@ -2438,8 +2956,8 @@ savePresetBtn.addEventListener('click', () => {
    ============================================================ */
 
 analyzeBtn.addEventListener('click', async () => {
-  const filePath = filePathInput.value.trim();
-  const multiPaths = parseMultiErrorInput(filePath);
+  const filePath = persistLocalPathInput(filePathInput.value).trim();
+  const multiPaths = parseBatchInput(filePath);
 
   if (multiPaths.length > 1) {
     await analyzeBatchInput(multiPaths);
@@ -2447,7 +2965,6 @@ analyzeBtn.addEventListener('click', async () => {
   }
 
   if (filePath) {
-    localStorage.setItem('aem_lastPath', filePath);
     await analyzeFilePath(filePath);
   } else {
     showToast('Please enter a file path', 'warning');
@@ -2468,7 +2985,7 @@ async function downloadSelectedCloudManagerLogs(options = {}) {
   }
 
   if (!outputDirectory || !(await validateCloudManagerOutputDirectory())) {
-    showToast('Cloud Manager cache root is not ready yet', 'warning');
+    showToast('Cloud Manager download folder is not ready yet', 'warning');
     return;
   }
 
@@ -2498,11 +3015,11 @@ async function analyzeBatchInput(input) {
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
   progressText.classList.remove('hidden');
-  progressText.textContent = 'Analyzing error files...';
+  progressText.textContent = 'Analyzing log files...';
   document.getElementById('emptyState').classList.add('hidden');
 
   try {
-    const response = await fetch('/api/analyze/multi-error', {
+    const response = await fetch('/api/analyze/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input, filters: { advancedRules: advancedRulesState } })
@@ -2510,13 +3027,13 @@ async function analyzeBatchInput(input) {
     const data = await response.json();
 
     if (!data.success) {
-      showError(data.error || 'Multi-error analysis failed');
+      showError(data.error || 'Batch analysis failed');
       return;
     }
 
-    handleMultiErrorAnalysisComplete(data, input);
+    handleBatchAnalysisComplete(data, input);
   } catch (error) {
-    showError('Multi-error analysis failed: ' + error.message);
+    showError('Batch analysis failed: ' + error.message);
   } finally {
     analyzeBtn.textContent = 'Analyze';
     analyzeBtn.disabled = false;
@@ -2592,14 +3109,14 @@ async function analyzeCloudManagerSelection(options) {
 
   console.log('[AEM] Starting Cloud Manager download with options:', options);
 
-  setCloudManagerDownloadStatus('Caching log files from Cloud Manager...', { pending: true });
-  setCloudManagerStatus('Caching log files from Cloud Manager...');
+  setCloudManagerDownloadStatus('Downloading log files from Cloud Manager...', { pending: true });
+  setCloudManagerStatus('Downloading log files from Cloud Manager...');
   document.getElementById('emptyState').classList.add('hidden');
   resetCloudManagerSummary();
 
   if (cmAnalyzeBtn) {
     cmAnalyzeBtn.disabled = true;
-    cmAnalyzeBtn.textContent = 'Caching...';
+    cmAnalyzeBtn.textContent = 'Downloading...';
   }
 
   showCloudManagerDownloadProgress(options.selections || []);
@@ -2622,8 +3139,8 @@ async function analyzeCloudManagerSelection(options) {
       return;
     }
 
-    setCloudManagerDownloadStatus('Cache updated.');
-    setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+    setCloudManagerDownloadStatus('Downloads updated.');
+    setCloudManagerStatus('Downloads updated. You can analyze the downloaded files from the Cloud Manager picker.');
     const labels = buildCloudManagerSelectionLabels();
     const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
     currentCloudManagerRunContext = {
@@ -2662,7 +3179,7 @@ async function analyzeCloudManagerSelection(options) {
     }
     finishedSuccessfully = true;
     hideCloudManagerDownloadProgress();
-    showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+    showToast('Downloads updated. Open Cloud Manager Logs to analyze the new files.', 'success');
     persistCloudManagerSelectionState();
   } catch (error) {
     console.error('[AEM] Catch block error:', error);
@@ -2673,7 +3190,7 @@ async function analyzeCloudManagerSelection(options) {
   } finally {
     if (cmAnalyzeBtn) {
       cmAnalyzeBtn.disabled = false;
-      cmAnalyzeBtn.textContent = 'Cache Selected Logs';
+      cmAnalyzeBtn.textContent = 'Download Selected Logs';
     }
     if (!finishedSuccessfully) {
       setCloudManagerDownloadStatus('');
@@ -2688,8 +3205,8 @@ async function handleCloudManagerDownloadComplete(data, options) {
     return;
   }
 
-  setCloudManagerDownloadStatus('Cache updated.');
-  setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+  setCloudManagerDownloadStatus('Downloads updated.');
+  setCloudManagerStatus('Downloads updated. You can analyze the downloaded files from the Cloud Manager picker.');
   const labels = buildCloudManagerSelectionLabels();
   const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
   currentCloudManagerRunContext = {
@@ -2727,7 +3244,7 @@ async function handleCloudManagerDownloadComplete(data, options) {
     setLocalDownloadsPopoverOpen(true);
   }
   hideCloudManagerDownloadProgress();
-  showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+  showToast('Downloads updated. Open Cloud Manager Logs to analyze the new files.', 'success');
   persistCloudManagerSelectionState();
 }
 
@@ -2820,6 +3337,8 @@ function handleAnalysisComplete(data, context = {}) {
   currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
+  currentBatchLogType = '';
+  currentAnalysisSummary = data.summary || null;
   setCurrentAnalyzedFilePath(context.analyzedFile || data.analyzedFile || '');
   chartsToggleBtn.disabled = false;
 
@@ -2901,16 +3420,23 @@ function handleAnalysisComplete(data, context = {}) {
     populateSelect('hostFilter', filterOptions.hosts || [], 'All Hosts');
   }
 
+  setResultView('events', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+  persistWorkspaceState();
   fetchRawEvents(1);
 }
 
-function handleMultiErrorAnalysisComplete(data, input) {
-  currentAnalysisMode = 'multi-error';
-  currentLogType = 'error';
+function handleBatchAnalysisComplete(data, input) {
+  currentAnalysisMode = 'batch';
+  currentBatchLogType = data.batchLogType || 'error';
+  currentLogType = currentBatchLogType === 'mixed' ? 'error' : currentBatchLogType;
+  currentAnalysisSummary = data.summary || null;
   setCurrentAnalyzedFilePath('');
   currentBatchInput = input;
   currentBatchSummary = data.summary || null;
-  chartsToggleBtn.disabled = true;
+  currentCorrelation = data.correlation || null;
+  chartsToggleBtn.disabled = currentBatchLogType === 'mixed';
   exportCsvBtn.disabled = true;
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
@@ -2921,20 +3447,83 @@ function handleMultiErrorAnalysisComplete(data, input) {
   }
 
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
-  const filterPanel = document.getElementById('errorFilters');
+  const filterPanel = document.getElementById(
+    currentBatchLogType === 'request'
+      ? 'requestFilters'
+      : currentBatchLogType === 'cdn'
+        ? 'cdnFilters'
+        : currentBatchLogType === 'mixed'
+          ? 'mixedFilters'
+          : 'errorFilters'
+  );
   if (filterPanel) filterPanel.classList.remove('hidden');
-  applyErrorFilterSidebarResponse(data);
-  if (data.levelCounts) {
+
+  if (currentBatchLogType === 'error') {
+    applyErrorFilterSidebarResponse(data);
+  } else if (currentBatchLogType === 'request') {
+    const filterOptions = data.filterOptions || {};
+    populateSelect('methodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('statusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('podFilter', filterOptions.pods || [], 'All Pods');
+  } else if (currentBatchLogType === 'cdn') {
+    const filterOptions = data.filterOptions || {};
+    populateSelect('cdnMethodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('cdnStatusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('cacheStatusFilter', filterOptions.cacheStatuses || [], 'All Cache Status');
+    populateSelect('countryFilter', filterOptions.countries || [], 'All Countries');
+    populateSelect('popFilter', filterOptions.pops || [], 'All POPs');
+    populateSelect('hostFilter', filterOptions.hosts || [], 'All Hosts');
+  } else if (currentBatchLogType === 'mixed') {
+    setupMixedFilterTabs();
+    const filterOptions = data.filterOptions || {};
+    const requestOpts = filterOptions.request || {};
+    const cdnOpts = filterOptions.cdn || {};
+    populateSelect('mixedMethodFilter', requestOpts.methods || [], 'All Methods');
+    populateSelect('mixedStatusFilter', requestOpts.statuses || [], 'All Status Codes');
+    populateSelect('mixedPodFilter', requestOpts.pods || [], 'All Pods');
+    populateSelect('mixedCdnMethodFilter', cdnOpts.methods || [], 'All Methods');
+    populateSelect('mixedCdnStatusFilter', cdnOpts.statuses || [], 'All Status Codes');
+    populateSelect('mixedCacheStatusFilter', cdnOpts.cacheStatuses || [], 'All Cache Status');
+    populateSelect('mixedCountryFilter', cdnOpts.countries || [], 'All Countries');
+    populateSelect('mixedPopFilter', cdnOpts.pops || [], 'All POPs');
+    populateSelect('mixedHostFilter', cdnOpts.hosts || [], 'All Hosts');
+  }
+
+  if (data.levelCounts && (currentBatchLogType === 'error' || currentBatchLogType === 'mixed')) {
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
     const lc = data.levelCounts;
-    set('countALL', lc.ALL);
+    set('countALL', lc.ALL || 0);
     set('countERROR', lc.ERROR);
     set('countWARN', lc.WARN);
     set('countINFO', lc.INFO);
     set('countDEBUG', lc.DEBUG);
   }
-  chartsTab.classList.add('hidden');
+  chartsTab.classList.toggle('hidden', currentBatchLogType === 'mixed');
+  setResultView('events', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+  persistWorkspaceState();
   fetchRawEvents(1);
+  updateIncidentIndicator();
+}
+
+function setupMixedFilterTabs() {
+  const tabs = document.querySelectorAll('.mixed-filter-tab');
+  const sections = document.querySelectorAll('.mixed-filter-section');
+  tabs.forEach(tab => {
+    if (tab.dataset.tabInitialized) return;
+    tab.dataset.tabInitialized = 'true';
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      sections.forEach(s => s.classList.add('hidden'));
+      tab.classList.add('active');
+      const targetSection = document.getElementById(tab.dataset.tab);
+      if (targetSection) targetSection.classList.remove('hidden');
+    });
+  });
+  if (tabs.length > 0) {
+    tabs[0].click();
+  }
 }
 
 function populateSelect(selectId, options, defaultLabel) {
@@ -2958,23 +3547,22 @@ const chartsTab = document.getElementById('chartsTab');
 let chartsVisible = false;
 
 chartsToggleBtn.addEventListener('click', () => {
-  chartsVisible = !chartsVisible;
-  chartsTab.classList.toggle('hidden', !chartsVisible);
-  chartsToggleBtn.classList.toggle('active', chartsVisible);
-  if (chartsVisible) fetchChartsData();
+  setResultView('charts');
+  chartsToggleBtn.classList.add('active');
 });
 
 async function fetchChartsData() {
-  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
+  const isBatch = currentAnalysisMode === 'batch' && currentBatchInput;
   const filePath = getActiveAnalysisFilePath();
-  if (!isMultiError && !filePath) return;
+  if (!isBatch && !filePath) return;
+  if (isBatch && currentBatchLogType !== 'error') return;
 
-  const body = isMultiError
+  const body = isBatch
     ? { input: currentBatchInput, filters: getCurrentErrorFilterPayload() }
     : { filePath, filters: getCurrentLogFilterPayload() };
 
   try {
-    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
+    const response = await fetch(isBatch ? '/api/filter/batch' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -3348,18 +3936,18 @@ function populateFilterDropdowns(loggers, threads, packages, exceptions, package
 }
 
 function getCurrentErrorFilterPayload() {
-  const filters = {};
+  const payload = {};
 
-  if (startDate.value) filters.startDate = normalizeDateTimeForApi(startDate.value);
-  if (endDate.value) filters.endDate = normalizeDateTimeForApi(endDate.value);
-  if (rawEventsLevel && rawEventsLevel !== 'ALL') filters.level = rawEventsLevel;
-  if (filters.loggers.length > 0) filters.logger = [...filters.loggers];
-  if (threadSelect?.value) filters.thread = threadSelect.value;
-  if (filters.packages.length > 0) filters.package = [...filters.packages];
-  if (exceptionSelect?.value) filters.exception = exceptionSelect.value;
-  if (categoryFilter?.value) filters.category = categoryFilter.value;
+  if (startDate.value) payload.startDate = normalizeDateTimeForApi(startDate.value);
+  if (endDate.value) payload.endDate = normalizeDateTimeForApi(endDate.value);
+  if (rawEventsLevel && rawEventsLevel !== 'ALL') payload.level = rawEventsLevel;
+  if (filters.loggers.length > 0) payload.logger = [...filters.loggers];
+  if (threadSelect?.value) payload.thread = threadSelect.value;
+  if (filters.packages.length > 0) payload.package = [...filters.packages];
+  if (exceptionSelect?.value) payload.exception = exceptionSelect.value;
+  if (categoryFilter?.value) payload.category = categoryFilter.value;
 
-  return filters;
+  return payload;
 }
 
 function getCurrentRequestFilterPayload() {
@@ -3385,6 +3973,30 @@ function getCurrentCDNFilterPayload() {
   if (document.getElementById('hostFilter')?.value) filters.host = document.getElementById('hostFilter').value;
   if (document.getElementById('minTtfb')?.value) filters.minTtfb = document.getElementById('minTtfb').value;
   if (document.getElementById('maxTtfb')?.value) filters.maxTtfb = document.getElementById('maxTtfb').value;
+
+  return filters;
+}
+
+function getCurrentMixedFilterPayload() {
+  const filters = {};
+
+  if (document.getElementById('mixedMethodFilter')?.value) filters.method = document.getElementById('mixedMethodFilter').value;
+  if (document.getElementById('mixedStatusFilter')?.value) filters.status = document.getElementById('mixedStatusFilter').value;
+  if (document.getElementById('mixedPodFilter')?.value) filters.pod = document.getElementById('mixedPodFilter').value;
+  if (document.getElementById('mixedMinResponseTime')?.value) filters.minTime = document.getElementById('mixedMinResponseTime').value;
+  if (document.getElementById('mixedMaxResponseTime')?.value) filters.maxTime = document.getElementById('mixedMaxResponseTime').value;
+  if (document.getElementById('mixedCacheStatusFilter')?.value) filters.cache = document.getElementById('mixedCacheStatusFilter').value;
+  if (document.getElementById('mixedCountryFilter')?.value) filters.country = document.getElementById('mixedCountryFilter').value;
+  if (document.getElementById('mixedHostFilter')?.value) filters.host = document.getElementById('mixedHostFilter').value;
+  if (document.getElementById('mixedMinTtfb')?.value) filters.minTtfb = document.getElementById('mixedMinTtfb').value;
+  if (document.getElementById('mixedMaxTtfb')?.value) filters.maxTtfb = document.getElementById('mixedMaxTtfb').value;
+
+  const cdnMethod = document.getElementById('mixedCdnMethodFilter')?.value;
+  const cdnStatus = document.getElementById('mixedCdnStatusFilter')?.value;
+  const cdnPop = document.getElementById('mixedPopFilter')?.value;
+  if (cdnMethod && !filters.method) filters.method = cdnMethod;
+  if (cdnStatus && !filters.status) filters.status = cdnStatus;
+  if (cdnPop && !filters.pod) filters.pod = cdnPop;
 
   return filters;
 }
@@ -3440,17 +4052,18 @@ function scheduleErrorFilterApply() {
 async function refreshErrorFilterOptions() {
   if (currentLogType !== 'error') return;
 
-  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
+  const isBatch = currentAnalysisMode === 'batch' && currentBatchInput;
   const filePath = getActiveAnalysisFilePath();
-  if (!isMultiError && !filePath) return;
+  if (!isBatch && !filePath) return;
+  if (isBatch && currentBatchLogType !== 'error') return;
 
   const seq = ++errorFilterRefreshSeq;
-  const payload = isMultiError
+  const payload = isBatch
     ? { input: currentBatchInput, filters: getSidebarErrorFilterPayload() }
     : { filePath, filters: getSidebarErrorFilterPayload() };
 
   try {
-    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
+    const response = await fetch(isBatch ? '/api/filter/batch' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -3663,8 +4276,19 @@ function commitTopTokenPickerMatch(resultsEl, query = '') {
 function applyRawEventFilters() {
   rawEventsSearch = rawSearchInput.value;
   rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
+  filters.level = rawEventsLevel;
+  filters.search = rawEventsSearch;
+  updateWorkspaceSummary();
+  persistWorkspaceState();
 
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (activeTailSource === 'cloudmanager') {
+    renderTailFeed();
+    updateTailCounts();
+    updateTailDropdownOptions();
+    return;
+  }
+
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
     fetchRawEvents(1);
     return;
   }
@@ -3693,6 +4317,11 @@ clearFiltersBtn.addEventListener('click', () => {
   refreshPackageScopedDropdowns();
   scheduleErrorFilterRefresh();
   advancedSearchRules.innerHTML = '';
+  if (activeTailSource === 'cloudmanager') {
+    renderTailFeed();
+    updateTailCounts();
+    updateTailDropdownOptions();
+  }
   renderAdvancedRuleBuilder();
   advancedRulesState = [];
   applyRawEventFilters();
@@ -3733,7 +4362,7 @@ runSearchBuilderBtn.addEventListener('click', () => {
    ============================================================ */
 
 exportCsvBtn.addEventListener('click', async () => {
-  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+  const body = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
   const response = await fetch('/api/export/csv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3743,7 +4372,7 @@ exportCsvBtn.addEventListener('click', async () => {
 });
 
 exportJsonBtn.addEventListener('click', async () => {
-  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+  const body = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
   const response = await fetch('/api/export/json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3754,8 +4383,8 @@ exportJsonBtn.addEventListener('click', async () => {
 
 exportPdfBtn.addEventListener('click', async () => {
   const summary = getSummaryFromDOM();
-  const body = currentAnalysisMode === 'multi-error'
-    ? { ...getBatchExportPayload(), summary, mode: 'multi-error' }
+  const body = currentAnalysisMode === 'batch'
+    ? { ...getBatchExportPayload(), summary, mode: 'batch' }
     : { summary, events: rawEventsData };
 
   const response = await fetch('/api/export/pdf', {
@@ -3767,16 +4396,27 @@ exportPdfBtn.addEventListener('click', async () => {
 });
 
 function getBatchExportPayload() {
+  let batchFilters;
+  if (currentBatchLogType === 'request') {
+    batchFilters = getCurrentRequestFilterPayload();
+  } else if (currentBatchLogType === 'cdn') {
+    batchFilters = getCurrentCDNFilterPayload();
+  } else if (currentBatchLogType === 'mixed') {
+    batchFilters = getCurrentMixedFilterPayload();
+  } else {
+    batchFilters = getActiveErrorFilterPayload();
+  }
   return {
     input: currentBatchInput,
-    filters: getActiveErrorFilterPayload(),
+    filters: batchFilters,
     advancedRules: advancedRulesState,
-    search: rawEventsSearch
+    search: rawEventsSearch,
+    logType: currentBatchLogType === 'mixed' ? '' : currentBatchLogType
   };
 }
 
 function getSummaryFromDOM() {
-  if (currentAnalysisMode === 'multi-error' && currentBatchSummary) {
+  if (currentAnalysisMode === 'batch' && currentBatchSummary) {
     return {
       totalErrors: currentBatchSummary.totalErrors || 0,
       totalWarnings: currentBatchSummary.totalWarnings || 0,
@@ -3787,12 +4427,28 @@ function getSummaryFromDOM() {
     };
   }
 
-  const getText = (id) => document.getElementById(id)?.textContent || '(0)';
+  const summary = currentAnalysisSummary || {};
+  if (currentLogType === 'request') {
+    return {
+      totalErrors: summary.totalRequests || 0,
+      totalWarnings: summary.slowRequests || 0,
+      uniqueErrors: summary.p95ResponseTime || 0,
+      uniqueWarnings: 0
+    };
+  }
+  if (currentLogType === 'cdn') {
+    return {
+      totalErrors: summary.totalRequests || 0,
+      totalWarnings: summary.cacheMisses || 0,
+      uniqueErrors: summary.cacheHitRatio || 0,
+      uniqueWarnings: 0
+    };
+  }
   return {
-    totalErrors: getText('totalErrors'),
-    totalWarnings: getText('totalWarnings'),
-    uniqueErrors: getText('uniqueErrors'),
-    uniqueWarnings: getText('uniqueWarnings')
+    totalErrors: summary.totalErrors || 0,
+    totalWarnings: summary.totalWarnings || 0,
+    uniqueErrors: summary.uniqueErrors || 0,
+    uniqueWarnings: summary.uniqueWarnings || 0
   };
 }
 
@@ -3800,9 +4456,9 @@ document.getElementById('exportAllBtn').addEventListener('click', async () => {
   showToast('Generating all exports...', 'info');
   const summary = getSummaryFromDOM();
   try {
-    const csvBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
-    const jsonBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
-    const pdfBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), summary, mode: 'multi-error' } : { summary, events: rawEventsData };
+    const csvBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
+    const jsonBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
+    const pdfBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), summary, mode: 'batch' } : { summary, events: rawEventsData };
     const [csvRes, jsonRes, pdfRes] = await Promise.all([
       fetch('/api/export/csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(csvBody) }),
       fetch('/api/export/json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody) }),
@@ -3855,7 +4511,7 @@ function closeTailSocket({ sendStop = false } = {}) {
   if (!tailSocket) return;
 
   if (sendStop && tailSocket.readyState === WebSocket.OPEN) {
-    tailSocket.send(JSON.stringify({ action: 'tail-stop', source: activeTailSource || 'local' }));
+    tailSocket.send(JSON.stringify({ action: 'tail-stop', source: activeTailSource || 'cloudmanager' }));
     return;
   }
 
@@ -3885,27 +4541,24 @@ function handleTailSocketMessage(data) {
     if (data.source === 'cloudmanager') {
       pushCloudManagerTailEntry(data.entry || {});
       pushTailEntry({ ...data.entry, source: 'cloudmanager' });
-    } else if (data.entry) {
-      pushTailEntry(data.entry);
     }
     return;
   }
 
   if (data.type === 'tail-error') {
     if (data.source === 'cloudmanager') {
-      setCloudManagerTailStatus(data.error || 'Cloud Manager live tail failed.');
-      cloudManagerTailSession = null;
+      setCloudManagerTailStatus(data.sourceLabel
+        ? `${data.sourceLabel}: ${data.error || 'Cloud Manager live tail failed.'}`
+        : (data.error || 'Cloud Manager live tail failed.'));
+      if (cloudManagerTailSession?.sourceFailures) {
+        cloudManagerTailSession.sourceFailures[data.sourceKey || data.sourceLabel || `failure-${Date.now()}`] = data.error || 'Cloud Manager live tail failed.';
+      }
+      renderCloudManagerTailPanel();
+      showToast(`Tail error: ${data.error || 'Unknown error'}`, 'error');
+      updateWorkspaceChrome();
+      updateWorkspaceSummary();
+      return;
     }
-    activeTailSource = '';
-    updateTailControls();
-    closeTailSocket();
-    showToast(`Tail error: ${data.error || 'Unknown error'}`, 'error');
-    refreshCloudManagerCommandPreview('download');
-    if (tailStatus) {
-      tailStatus.textContent = `Error: ${data.error || 'Unknown error'}`;
-    }
-    hideTailPanel();
-    return;
   }
 
   if (data.type === 'tail-stopped') {
@@ -3915,10 +4568,6 @@ function handleTailSocketMessage(data) {
       setCloudManagerTailStatus('Cloud Manager live tail stopped.');
       renderCloudManagerTailPanel();
       refreshCloudManagerCommandPreview('download');
-    } else {
-      activeTailSource = '';
-      updateTailControls();
-      showToast('Stopped tailing', 'info');
     }
     if (tailStatus) {
       tailStatus.textContent = 'Tail stopped';
@@ -3927,6 +4576,8 @@ function handleTailSocketMessage(data) {
       tailStopBtn.disabled = true;
     }
     closeTailSocket();
+    hideTailPanel();
+    persistWorkspaceState();
   }
 }
 
@@ -3943,66 +4594,30 @@ function openTailSocket(onOpen) {
     activeTailSource = '';
     cloudManagerTailSession = null;
     updateTailControls();
+    hideTailPanel();
+    persistWorkspaceState();
   };
   tailSocket.onclose = () => {
     tailSocket = null;
-    if (activeTailSource === 'local') {
-      activeTailSource = '';
-    } else if (activeTailSource === 'cloudmanager') {
+    if (activeTailSource === 'cloudmanager') {
       activeTailSource = '';
       cloudManagerTailSession = null;
       setCloudManagerTailStatus('Cloud Manager live tail disconnected.');
       refreshCloudManagerCommandPreview('download');
     }
     updateTailControls();
+    hideTailPanel();
+    persistWorkspaceState();
   };
 }
 
-function startLocalTail() {
-  if (currentSourceMode !== 'local') {
-    showToast('Tail is only available for local file paths', 'warning');
-    return;
-  }
-
-  const tailPathInput = document.getElementById('tailPath');
-  const filePath = tailPathInput ? tailPathInput.value.trim() : filePathInput.value.trim();
-  if (!filePath) {
-    showToast('Enter a file path to tail', 'warning');
-    return;
-  }
-
-  if (activeTailSource === 'local') {
-    closeTailSocket({ sendStop: true });
-    return;
-  }
-
-  tailEntries = [];
-  tailAllPackages = {};
-  tailAllLoggers = {};
-  filters.level = 'ALL';
-  filters.search = '';
-  filters.packages = [];
-  filters.loggers = [];
-  renderTailFilterTags();
-  updateTailCounts();
-
-  activeTailSource = 'local';
-  updateTailControls();
-  localStorage.setItem('aem_lastPath', filePath);
-  showTailPanel('local', filePath);
-  openTailSocket(() => {
-    tailSocket.send(JSON.stringify({ action: 'tail-start', source: 'local', filePath }));
-    showToast(`Tailing ${filePath}`, 'success');
-  });
-}
-
 function startCloudManagerTail() {
-  const selection = getActiveCloudManagerTailSelection();
+  const selections = getActiveCloudManagerTailSelections();
   const programId = cmProgramSelect?.value || '';
   const environmentId = cmEnvironmentSelect?.value || '';
 
-  if (!programId || !environmentId || !selection) {
-    showToast('Select exactly one Cloud Manager log to tail', 'warning');
+  if (!programId || !environmentId || !selections.length) {
+    showToast('Select one or more Cloud Manager logs to tail', 'warning');
     return;
   }
 
@@ -4016,26 +4631,28 @@ function startCloudManagerTail() {
   tailEntries = [];
   tailAllPackages = {};
   tailAllLoggers = {};
-  filters.level = 'ALL';
-  filters.search = '';
-  filters.packages = [];
-  filters.loggers = [];
+  resetErrorFilterState();
+  applyCurrentSelectionsToFilterUI();
   renderTailFilterTags();
   updateTailCounts();
 
   cloudManagerTailSession = {
-    ...selection,
     programId,
     environmentId,
     programName: labels.programName,
-    environmentName: labels.environmentName
+    environmentName: labels.environmentName,
+    selectionCount: selections.length,
+    selections: selections.map((selection) => ({ ...selection })),
+    sourceFailures: {}
   };
   activeTailSource = 'cloudmanager';
   setCloudManagerTailStatus('Starting Cloud Manager live tail...');
   renderCloudManagerTailPanel();
   refreshCloudManagerCommandPreview('tail');
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
 
-  const cmSource = `${labels.programName} / ${labels.environmentName} - ${selection.service}/${selection.logName}`;
+  const cmSource = `${labels.programName} / ${labels.environmentName} - ${selections.length} log${selections.length === 1 ? '' : 's'}`;
   showTailPanel('cloudmanager', cmSource);
 
   openTailSocket(() => {
@@ -4044,14 +4661,9 @@ function startCloudManagerTail() {
       source: 'cloudmanager',
       programId,
       environmentId,
-      service: selection.service,
-      logName: selection.logName
+      selections
     }));
   });
-}
-
-if (tailBtn) {
-  tailBtn.addEventListener('click', startLocalTail);
 }
 
 if (cmTailBtn) {
@@ -4096,19 +4708,29 @@ async function fetchRawEvents(page = 1, options = {}) {
   const { scrollToTop = false } = options;
   rawEventsPage = page;
 
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
+    let batchFilters;
+    if (currentBatchLogType === 'request') {
+      batchFilters = getCurrentRequestFilterPayload();
+    } else if (currentBatchLogType === 'cdn') {
+      batchFilters = getCurrentCDNFilterPayload();
+    } else if (currentBatchLogType === 'mixed') {
+      batchFilters = getCurrentMixedFilterPayload();
+    } else {
+      batchFilters = getActiveErrorFilterPayload();
+    }
     const body = {
       input: currentBatchInput,
       page,
       perPage: rawEventsPerPage,
-      filters: getActiveErrorFilterPayload(),
+      filters: batchFilters,
       search: rawEventsSearch
     };
 
-    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading merged error events...</div>';
+    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading merged batch events...</div>';
 
     try {
-      const response = await fetch('/api/raw-events/multi-error', {
+      const response = await fetch('/api/raw-events/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -4120,20 +4742,26 @@ async function fetchRawEvents(page = 1, options = {}) {
       }
 
       rawEventsData = data.events;
-      if (data.levelCounts) {
+      currentVisibleEventTotal = data.total || data.events.length || 0;
+      if (data.levelCounts && (currentBatchLogType === 'error' || currentBatchLogType === 'mixed')) {
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
         const lc = data.levelCounts;
-        set('countALL', lc.ALL);
+        set('countALL', lc.ALL || 0);
         set('countERROR', lc.ERROR);
         set('countWARN', lc.WARN);
         set('countINFO', lc.INFO);
         set('countDEBUG', lc.DEBUG);
       }
-      applyErrorFilterSidebarResponse(data);
-      renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || 'error');
+      if (currentBatchLogType === 'error') {
+        applyErrorFilterSidebarResponse(data);
+      }
+      const renderType = currentBatchLogType === 'mixed' ? 'batch' : currentBatchLogType;
+      renderRawEvents(data.events, data.total, data.page, data.perPage, renderType);
+      updateWorkspaceSummary();
+      persistWorkspaceState();
       if (scrollToTop) scrollRawEventsToTop();
     } catch (e) {
-      showToast('Failed to load merged error events: ' + e.message, 'error');
+      showToast('Failed to load merged batch events: ' + e.message, 'error');
     }
     return;
   }
@@ -4216,7 +4844,10 @@ async function fetchRawEvents(page = 1, options = {}) {
     }
 
     rawEventsData = data.events;
+    currentVisibleEventTotal = data.total || data.events.length || 0;
     renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || currentLogType);
+    updateWorkspaceSummary();
+    persistWorkspaceState();
     if (scrollToTop) scrollRawEventsToTop();
   } catch (e) {
     showToast('Failed to load events: ' + e.message, 'error');
@@ -4236,6 +4867,7 @@ function extractedExceptionBadge(evt) {
 }
 
 function renderRawEvents(events, total, page, perPage, logType = 'error') {
+  currentVisibleEventTotal = total || events.length || 0;
   if (exportRow) {
     exportRow.classList.toggle('export-row-hidden', total <= 0);
     exportRow.setAttribute('aria-hidden', total > 0 ? 'false' : 'true');
@@ -4266,7 +4898,9 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
   `;
 
   events.forEach((evt, i) => {
-    if (logType === 'request') {
+    if (logType === 'batch') {
+      html += renderBatchEvent(evt, i);
+    } else if (logType === 'request') {
       html += renderRequestEvent(evt, i);
     } else if (logType === 'cdn') {
       html += renderCDNEvent(evt, i);
@@ -4360,6 +4994,7 @@ function renderErrorEvent(evt, i) {
   const messageText = evt.message || evt.title || '';
   const hasStack = evt.stackTrace && evt.stackTrace.trim();
   const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
+  const pinned = isPinnedEvent(evt, 'error');
 
   const jsonEntry = {
     timestamp: evt.timestamp,
@@ -4381,6 +5016,7 @@ function renderErrorEvent(evt, i) {
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
         <span class="event-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop())}</span>
         <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'error')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4398,6 +5034,7 @@ function renderErrorEvent(evt, i) {
 
 function renderRequestEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const pinned = isPinnedEvent(evt, 'request');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -4416,6 +5053,7 @@ function renderRequestEvent(evt, i) {
         <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="response-time">${evt.responseTime}ms</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'request')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4431,6 +5069,7 @@ function renderRequestEvent(evt, i) {
 
 function renderCDNEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const pinned = isPinnedEvent(evt, 'cdn');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -4453,6 +5092,7 @@ function renderCDNEvent(evt, i) {
         <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="cache-badge">${evt.cache || '-'}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'cdn')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4467,6 +5107,7 @@ function renderCDNEvent(evt, i) {
 }
 
 function renderBatchEvent(evt, i) {
+  const pinned = isPinnedEvent(evt, 'batch');
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(evt, null, 2), rawEventsSearch)}</pre>`;
 
   return `
@@ -4476,6 +5117,7 @@ function renderBatchEvent(evt, i) {
         <span class="event-time">${escapeHtml(evt.timestamp || '')}</span>
         <span class="event-logger" title="${escapeHtml(evt.sourceName || evt.sourceFile || '')}">${escapeHtml(evt.sourceName || evt.sourceFile || '')}</span>
         <span class="event-message" title="${escapeHtml(evt.title || evt.message || '')}">${highlightText(evt.title || evt.message || '', rawEventsSearch)}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'batch')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4499,6 +5141,33 @@ window.copyEventJson = (btn, index) => {
     });
   }
 };
+
+window.togglePinnedEventByIndex = (index, logType = currentLogType) => {
+  const entry = rawEventsData[index];
+  if (!entry) return;
+  togglePinnedEvent(entry, logType);
+  const renderType = currentAnalysisMode === 'batch' && currentBatchLogType === 'mixed'
+    ? 'batch'
+    : currentLogType;
+  renderRawEvents(rawEventsData, currentVisibleEventTotal || rawEventsData.length, rawEventsPage, rawEventsPerPage, renderType);
+  updateWorkspaceSummary();
+};
+
+window.removePinnedEvent = (key) => {
+  pinnedEntries = pinnedEntries.filter((entry) => entry.key !== key);
+  renderPinnedEvents();
+  persistWorkspaceState();
+};
+
+if (pinnedEvents) {
+  pinnedEvents.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('[data-remove-pinned-key]');
+    if (!removeButton) return;
+    const key = removeButton.dataset.removePinnedKey || '';
+    if (!key) return;
+    window.removePinnedEvent(key);
+  });
+}
 
 document.querySelectorAll('.level-chip').forEach(chip => {
   if (chip.id === 'chartsToggleBtn') return;
@@ -4524,7 +5193,7 @@ rawSearchBtn.addEventListener('click', () => {
   if (activeTailSource) {
     return;
   }
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
     applyRawEventFilters();
   } else {
     fetchRawEvents(1);
@@ -4537,7 +5206,7 @@ rawSearchInput.addEventListener('keydown', (e) => {
   if (activeTailSource) {
     return;
   }
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
     applyRawEventFilters();
   } else {
     fetchRawEvents(1);
@@ -4549,7 +5218,53 @@ window.changeRawEventsPage = changeRawEventsPage;
 window.changeRawEventsPerPage = changeRawEventsPerPage;
 
 if (cmHistoryList) {
-  cmHistoryList.addEventListener('click', () => {});
+  cmHistoryList.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-history-action]');
+    if (!actionButton) return;
+
+    const runId = actionButton.dataset.runId || '';
+    const entry = readCloudManagerHistory().find((item) => item.runId === runId);
+    if (!entry) return;
+
+    if (actionButton.dataset.historyAction === 'reuse') {
+      setSourceMode('cloudmanager');
+      if (cmProgramSelect) cmProgramSelect.value = entry.programId || '';
+      persistCloudManagerSelectionState();
+      ensureCloudManagerProgramsLoaded({ force: false, silent: false }).then(async () => {
+        if (entry.programId) {
+          cmProgramSelect.value = entry.programId;
+          await loadCloudManagerEnvironments(entry.programId, { silent: false });
+        }
+        if (cmEnvironmentSelect && entry.environmentId) {
+          cmEnvironmentSelect.value = entry.environmentId;
+          await loadCloudManagerLogOptions(entry.programId, entry.environmentId, { silent: false });
+        }
+        selectedCloudManagerLogs = Array.isArray(entry.selections) ? entry.selections.map((selection) => ({ ...selection })) : [];
+        currentCloudManagerTier = entry.tier || '';
+        renderCloudManagerLogOptions();
+        syncCloudManagerWorkspace();
+        persistCloudManagerSelectionState();
+        showToast('Cloud Manager run restored into the current setup', 'success');
+      }).catch((error) => {
+        showToast(error.message || 'Failed to restore Cloud Manager run', 'error');
+      });
+      return;
+    }
+
+    if (actionButton.dataset.historyAction === 'analyze') {
+      const supportedFile = entry.analyzedFile
+        || entry.downloadedFilesDetailed?.find((file) => file.supported !== false)?.filePath
+        || entry.downloadedFiles?.[0]
+        || '';
+      if (!supportedFile) {
+        showToast('No supported downloaded file found for this history entry', 'warning');
+        return;
+      }
+      setSourceMode('local');
+      filePathInput.value = supportedFile;
+      analyzeBtn.click();
+    }
+  });
 }
 
 // Single-select searchable dropdown behavior
@@ -4757,6 +5472,7 @@ updateCascadeCountBadges();
 renderSelectionHints();
 applyThemePreference();
 applySidebarState();
+restoreWorkspaceState();
 restoreCloudManagerSelections();
 restoreCloudManagerTabState();
 ensureCloudManagerProgramsLoaded().catch((error) => {
@@ -4772,16 +5488,16 @@ refreshCloudManagerCommandPreview();
 updateCloudManagerActionState();
 updateTailControls();
 syncCloudManagerWorkspace();
+setResultView(currentResultView || 'events', { persist: false });
+renderPinnedEvents();
+updateWorkspaceChrome();
+updateWorkspaceSummary();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');
 if (lastPath) {
-  if (parseMultiErrorInput(lastPath).length > 1) {
-    localStorage.removeItem('aem_lastPath');
-  } else {
-    filePathInput.value = lastPath;
-    console.log('[AEM] Restored path:', lastPath);
-  }
+  filePathInput.value = normalizeLocalPathInputValue(lastPath);
+  console.log('[AEM] Restored path:', filePathInput.value);
 }
 
 // Debounced save on input for instant persistence
@@ -4789,9 +5505,8 @@ let savePathTimeout;
 filePathInput.addEventListener('input', () => {
   clearTimeout(savePathTimeout);
   savePathTimeout = setTimeout(() => {
-    const val = filePathInput.value.trim();
-    if (val && parseMultiErrorInput(val).length <= 1) {
-      localStorage.setItem('aem_lastPath', val);
+    const val = persistLocalPathInput(filePathInput.value);
+    if (val) {
       console.log('[AEM] Saved path on input:', val);
     }
   }, 300);
@@ -4799,10 +5514,7 @@ filePathInput.addEventListener('input', () => {
 
 // Also save on blur (immediate)
 filePathInput.addEventListener('blur', () => {
-  const val = filePathInput.value.trim();
-  if (val && parseMultiErrorInput(val).length <= 1) {
-    localStorage.setItem('aem_lastPath', val);
-  }
+  persistLocalPathInput(filePathInput.value);
 });
 
 // ============================================================
@@ -4947,7 +5659,7 @@ function renderTailPackageOptions(filter = '') {
   `).join('');
   tailPackageResults.querySelectorAll('input').forEach(input => {
     input.addEventListener('change', () => {
-      filters.packages = Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value);
+      replaceArrayContents(filters.packages, Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value));
       renderTailFilterTags();
       filterTailEntries();
     });
@@ -4971,7 +5683,7 @@ function renderTailLoggerOptions(filter = '') {
   `).join('');
   tailLoggerResults.querySelectorAll('input').forEach(input => {
     input.addEventListener('change', () => {
-      filters.loggers = Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value);
+      replaceArrayContents(filters.loggers, Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value));
       renderTailFilterTags();
       filterTailEntries();
     });
@@ -4998,7 +5710,7 @@ function renderTailFilterTags() {
 }
 
 function removeTailPackageFilter(pkg) {
-  filters.packages = filters.packages.filter(p => p !== pkg);
+  replaceArrayContents(filters.packages, filters.packages.filter(p => p !== pkg));
   renderTailFilterTags();
   if (tailPackageResults) {
     tailPackageResults.querySelectorAll(`input[value="${cssEscape(pkg)}"]`).forEach(i => i.checked = false);
@@ -5007,7 +5719,7 @@ function removeTailPackageFilter(pkg) {
 }
 
 function removeTailLoggerFilter(logger) {
-  filters.loggers = filters.loggers.filter(l => l !== logger);
+  replaceArrayContents(filters.loggers, filters.loggers.filter(l => l !== logger));
   renderTailFilterTags();
   if (tailLoggerResults) {
     tailLoggerResults.querySelectorAll(`input[value="${cssEscape(logger)}"]`).forEach(i => i.checked = false);
@@ -5017,9 +5729,9 @@ function removeTailLoggerFilter(logger) {
 
 function showTailPanel(source = 'local', path = '') {
   if (!tailPanel) return;
-  tailPanel.classList.remove('hidden');
+  if (resultViewTailTab) resultViewTailTab.disabled = false;
   if (tailTitle) {
-    tailTitle.textContent = source === 'cloudmanager' ? 'Cloud Manager Tail' : 'Local Tail';
+    tailTitle.textContent = 'Cloud Manager Tail';
   }
   if (tailSource) {
     tailSource.textContent = path;
@@ -5030,11 +5742,20 @@ function showTailPanel(source = 'local', path = '') {
   if (tailStatus) {
     tailStatus.textContent = 'Tailing in progress...';
   }
+  setResultView('live-tail', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
 }
 
 function hideTailPanel() {
   if (!tailPanel) return;
   tailPanel.classList.add('hidden');
+  if (resultViewTailTab) resultViewTailTab.disabled = true;
+  if (currentResultView === 'live-tail') {
+    setResultView('events', { persist: false });
+  }
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
 }
 
 function pushTailEntry(entry) {
@@ -5044,11 +5765,9 @@ function pushTailEntry(entry) {
 
   if (packageName && packageName !== 'null') {
     tailAllPackages[packageName] = (tailAllPackages[packageName] || 0) + 1;
-    allPackages[packageName] = (allPackages[packageName] || 0) + 1;
   }
   if (loggerName) {
     tailAllLoggers[loggerName] = (tailAllLoggers[loggerName] || 0) + 1;
-    allLoggers[loggerName] = (allLoggers[loggerName] || 0) + 1;
   }
 
   entry._index = tailEntries.length;
@@ -5092,12 +5811,14 @@ function renderTailEntryHtml(entry) {
   const messageText = entry.message || entry.rawLine || '';
   const hasStack = entry.stackTrace && entry.stackTrace.trim();
   const timestamp = entry.timestamp || '';
+  const sourceLabel = entry.sourceLabel || `${entry.service || ''}/${entry.logName || ''}`.replace(/^\/|\/$/g, '');
 
   return `
     <div class="tail-entry ${String(level).toLowerCase()}" data-index="${entry._index}" style="animation-delay: ${(entry._index % 20) * 30}ms">
       <div class="tail-entry-header">
         <span class="level-badge ${level}">${level}</span>
         <span class="entry-time">${escapeHtml(timestamp)}</span>
+        <span class="entry-logger" title="${escapeHtml(sourceLabel)}">${escapeHtml(sourceLabel || 'Cloud Manager')}</span>
         <span class="entry-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop() || loggerName)}</span>
         <span class="entry-message" title="${escapeHtml(messageText)}">${highlightText(messageText, filters.search, filters.regex)}</span>
         <span class="expand-arrow">▶</span>
@@ -5135,32 +5856,43 @@ function setupTailEntryEvents(entryEl) {
 }
 
 function checkTailEntryShouldShow(entry) {
+  const activeFilters = getActiveErrorFilterPayload();
   const level = entry.level || entry.logType || 'INFO';
   const loggerName = entry.logger || entry.sourceName || '';
   const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
   const messageText = entry.message || entry.rawLine || '';
 
-  if (filters.level !== 'ALL' && level !== filters.level) {
+  if (activeFilters.level && activeFilters.level !== 'ALL' && level !== activeFilters.level) {
     return false;
   }
 
-  if (filters.packages.length > 0) {
-    const matches = filters.packages.some(pkg => packageName && packageName.startsWith(pkg));
+  const packages = Array.isArray(activeFilters.package) ? activeFilters.package : [];
+  if (packages.length > 0) {
+    const matches = packages.some(pkg => packageName && (packageName === pkg || packageName.startsWith(`${pkg}.`)));
     if (!matches) return false;
   }
 
-  if (filters.loggers.length > 0) {
-    const matches = filters.loggers.some(logger => loggerName === logger);
+  const loggers = Array.isArray(activeFilters.logger) ? activeFilters.logger : [];
+  if (loggers.length > 0) {
+    const matches = loggers.some(logger => loggerName === logger);
     if (!matches) return false;
   }
 
-  if (filters.search) {
+  if (activeFilters.thread && entry.threadName !== activeFilters.thread && entry.thread !== activeFilters.thread) {
+    return false;
+  }
+
+  if (activeFilters.exception && !(entry.message || '').includes(activeFilters.exception)) {
+    return false;
+  }
+
+  if (activeFilters.search) {
     try {
       if (filters.regex) {
-        const regex = new RegExp(filters.search, 'i');
+        const regex = new RegExp(activeFilters.search, 'i');
         if (!regex.test(messageText) && !regex.test(loggerName)) return false;
       } else {
-        const searchLower = filters.search.toLowerCase();
+        const searchLower = String(activeFilters.search).toLowerCase();
         if (!messageText.toLowerCase().includes(searchLower) && !loggerName.toLowerCase().includes(searchLower)) return false;
       }
     } catch (e) {

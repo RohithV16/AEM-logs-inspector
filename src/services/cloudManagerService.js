@@ -518,6 +518,14 @@ function buildTailCommand(options = {}) {
   return args;
 }
 
+function getTailSelectionKey(selection = {}) {
+  return `${String(selection.service || '')}::${String(selection.logName || '')}`;
+}
+
+function getTailSelectionLabel(selection = {}) {
+  return `${String(selection.service || '')}/${String(selection.logName || '')}`;
+}
+
 async function downloadLogs(options) {
   const environmentDirectory = getCloudManagerEnvironmentDirectory(options.programId, options.environmentId);
   fs.mkdirSync(environmentDirectory, { recursive: true });
@@ -612,6 +620,8 @@ async function describeDownloadedFiles(download) {
 
 function createCloudManagerTailSession(options = {}, handlers = {}) {
   const commandArgs = buildTailCommand(options);
+  const sourceKey = getTailSelectionKey(options);
+  const sourceLabel = getTailSelectionLabel(options);
   let child = null;
   let stopped = false;
   let stopEmitted = false;
@@ -622,6 +632,8 @@ function createCloudManagerTailSession(options = {}, handlers = {}) {
         status,
         message,
         source: 'cloudmanager',
+        sourceKey,
+        sourceLabel,
         commandPreview: getAioCommandPreview(commandArgs)
       });
     }
@@ -649,12 +661,24 @@ function createCloudManagerTailSession(options = {}, handlers = {}) {
 
   const parseAndEmit = (line) => {
     const entry = parseTailEntry(line);
-    if (entry) emitEntry(entry);
+    if (entry) {
+      emitEntry({
+        ...entry,
+        source: 'cloudmanager',
+        sourceKey,
+        sourceLabel,
+        service: String(options.service || ''),
+        logName: String(options.logName || '')
+      });
+    }
   };
 
   return {
     commandArgs,
     commandPreview: getAioCommandPreview(commandArgs),
+    source: 'cloudmanager',
+    sourceKey,
+    sourceLabel,
     start() {
       if (child) return;
 
@@ -716,6 +740,129 @@ function createCloudManagerTailSession(options = {}, handlers = {}) {
   };
 }
 
+function createCloudManagerTailGroupSession(options = {}, handlers = {}) {
+  const selections = Array.isArray(options.selections) ? options.selections : [];
+  if (!selections.length) {
+    throw new Error('At least one Cloud Manager log selection is required for tailing.');
+  }
+
+  const sessions = new Map();
+  const sessionStates = new Map();
+  let stopped = false;
+  let stopEmitted = false;
+
+  const emitStatus = (status, message = '', extra = {}) => {
+    if (typeof handlers.onStatus !== 'function') return;
+    handlers.onStatus({
+      status,
+      message,
+      source: 'cloudmanager',
+      totalSources: selections.length,
+      ...extra
+    });
+  };
+
+  const emitError = (error, extra = {}) => {
+    if (typeof handlers.onError !== 'function') return;
+    handlers.onError(error, { source: 'cloudmanager', totalSources: selections.length, ...extra });
+  };
+
+  const emitStopped = () => {
+    if (stopEmitted) return;
+    stopEmitted = true;
+    if (typeof handlers.onStopped === 'function') {
+      handlers.onStopped({ source: 'cloudmanager', totalSources: selections.length });
+    }
+  };
+
+  const updateAggregateStatus = () => {
+    const values = Array.from(sessionStates.values());
+    const idle = values.filter((state) => state.status === 'idle').length;
+    const running = values.filter((state) => state.status === 'running').length;
+    const failed = values.filter((state) => state.status === 'failed').length;
+    const starting = values.filter((state) => state.status === 'starting').length;
+    const stoppedCount = values.filter((state) => state.status === 'stopped').length;
+
+    if (!stopped && (running || starting)) {
+      const status = failed > 0 ? 'partial' : (starting > 0 ? 'starting' : 'running');
+      const parts = [];
+      if (running) parts.push(`${running} running`);
+      if (starting) parts.push(`${starting} starting`);
+      if (failed) parts.push(`${failed} failed`);
+      emitStatus(status, `Cloud Manager live tail: ${parts.join(', ')}.`, { runningSources: running, failedSources: failed, stoppedSources: stoppedCount });
+    }
+
+    if (!stopped && idle === 0 && running === 0 && starting === 0) {
+      emitStopped();
+    }
+  };
+
+  selections.forEach((selection) => {
+    const normalized = {
+      ...options,
+      service: selection.service,
+      logName: selection.logName
+    };
+    const sourceKey = getTailSelectionKey(normalized);
+    const sourceLabel = getTailSelectionLabel(normalized);
+    sessionStates.set(sourceKey, { status: 'idle', sourceKey, sourceLabel });
+
+    const session = createCloudManagerTailSession(normalized, {
+      onStatus: (status) => {
+        if (stopped) return;
+        const nextStatus = status.status === 'starting' ? 'starting' : 'running';
+        sessionStates.set(sourceKey, { status: nextStatus, sourceKey, sourceLabel });
+        emitStatus(status.status, status.message, {
+          sourceKey,
+          sourceLabel,
+          commandPreview: status.commandPreview
+        });
+        updateAggregateStatus();
+      },
+      onEntry: (entry) => {
+        if (stopped) return;
+        if (typeof handlers.onEntry === 'function') {
+          handlers.onEntry(entry);
+        }
+      },
+      onError: (error) => {
+        if (stopped) return;
+        sessionStates.set(sourceKey, { status: 'failed', sourceKey, sourceLabel });
+        emitError(error, { sourceKey, sourceLabel });
+        updateAggregateStatus();
+      },
+      onStopped: () => {
+        const current = sessionStates.get(sourceKey);
+        if (!current || current.status !== 'failed') {
+          sessionStates.set(sourceKey, { status: 'stopped', sourceKey, sourceLabel });
+        }
+        updateAggregateStatus();
+      }
+    });
+
+    sessions.set(sourceKey, session);
+  });
+
+  return {
+    source: 'cloudmanager',
+    totalSources: selections.length,
+    selections: selections.map((selection) => ({
+      ...selection,
+      sourceKey: getTailSelectionKey(selection),
+      sourceLabel: getTailSelectionLabel(selection)
+    })),
+    start() {
+      emitStatus('starting', `Starting Cloud Manager live tail for ${selections.length} log${selections.length === 1 ? '' : 's'}...`);
+      sessions.forEach((session) => session.start());
+    },
+    stop() {
+      stopped = true;
+      sessions.forEach((session) => session.stop());
+      emitStopped();
+    }
+  };
+}
+
 function getEstimatedDateRange(days = 1) {
   const parsedDays = Number(days || 1);
   const now = new Date();
@@ -738,6 +885,7 @@ module.exports = {
   listAvailableLogOptions,
   downloadLogs,
   createCloudManagerTailSession,
+  createCloudManagerTailGroupSession,
   describeDownloadedFiles,
   validateOutputDirectory,
   getCloudManagerCacheRoot,

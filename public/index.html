@@ -227,6 +227,163 @@
             </div>
           </section>
 
+          <!-- MIXED LOG FILTERS (multiple log types) -->
+          <section id="mixedFilters" class="log-filter-panel hidden filter-group">
+            <div class="mixed-filter-tabs">
+              <button type="button" class="mixed-filter-tab active" data-tab="mixedErrorFilters">Error</button>
+              <button type="button" class="mixed-filter-tab" data-tab="mixedRequestFilters">Request</button>
+              <button type="button" class="mixed-filter-tab" data-tab="mixedCDNFilters">CDN</button>
+            </div>
+            <div id="mixedErrorFilters" class="mixed-filter-section">
+              <div class="filter-section-header">
+                <p class="filter-section-label">Java Package</p>
+                <span class="filter-count" id="mixedPackageVisibleCount"></span>
+              </div>
+              <div class="filter-control-row">
+                <div class="searchable-dropdown" id="mixedPackageDropdown">
+                  <input type="text" id="mixedPackageFilter" class="filter-input dropdown-search" placeholder="Search Java package...">
+                  <div id="mixedPackageResults" class="token-picker-results"></div>
+                </div>
+              </div>
+              <div id="mixedPackageTags" class="filter-tags"></div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Logger</p>
+                <span class="filter-count" id="mixedLoggerVisibleCount"></span>
+              </div>
+              <div class="filter-control-row">
+                <div class="searchable-dropdown" id="mixedLoggerDropdown">
+                  <input type="text" id="mixedLoggerFilter" class="filter-input dropdown-search" placeholder="Search logger...">
+                  <div id="mixedLoggerResults" class="token-picker-results"></div>
+                </div>
+              </div>
+              <div id="mixedLoggerTags" class="filter-tags"></div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">AEMaaCs Pods</p>
+                <span class="filter-count" id="mixedThreadVisibleCount"></span>
+              </div>
+              <div class="filter-control-row">
+                <div class="searchable-dropdown" id="mixedThreadDropdown">
+                  <input type="text" id="mixedThreadFilter" class="filter-input dropdown-search" placeholder="Search pods...">
+                  <select id="mixedThreadSelect" class="dropdown-select" size="6">
+                    <option value="">All Pods</option>
+                  </select>
+                </div>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Exception</p>
+                <span class="filter-count" id="mixedExceptionVisibleCount"></span>
+              </div>
+              <div class="filter-control-row">
+                <div class="searchable-dropdown" id="mixedExceptionDropdown">
+                  <input type="text" id="mixedExceptionFilter" class="filter-input dropdown-search" placeholder="Search exception type...">
+                  <select id="mixedExceptionSelect" class="dropdown-select" size="6">
+                    <option value="">All Exceptions</option>
+                  </select>
+                </div>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Category</p>
+              </div>
+              <select id="mixedCategoryFilter" class="filter-select" title="Filter by auto-detected error category">
+                <option value="">All Categories</option>
+              </select>
+            </div>
+            <div id="mixedRequestFilters" class="mixed-filter-section hidden">
+              <div class="filter-section-header">
+                <p class="filter-section-label">HTTP Method</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedMethodFilter" class="filter-select">
+                  <option value="">All Methods</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">HTTP Status</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedStatusFilter" class="filter-select">
+                  <option value="">All Status Codes</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Response Time</p>
+              </div>
+              <div class="filter-control-row">
+                <div class="filter-input-group">
+                  <input type="number" id="mixedMinResponseTime" class="filter-input" placeholder="Min ms" min="0">
+                  <input type="number" id="mixedMaxResponseTime" class="filter-input" placeholder="Max ms" min="0">
+                </div>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Pod</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedPodFilter" class="filter-select">
+                  <option value="">All Pods</option>
+                </select>
+              </div>
+            </div>
+            <div id="mixedCDNFilters" class="mixed-filter-section hidden">
+              <div class="filter-section-header">
+                <p class="filter-section-label">HTTP Method</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedCdnMethodFilter" class="filter-select">
+                  <option value="">All Methods</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">HTTP Status</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedCdnStatusFilter" class="filter-select">
+                  <option value="">All Status Codes</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Cache Status</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedCacheStatusFilter" class="filter-select">
+                  <option value="">All Cache Status</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Country</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedCountryFilter" class="filter-select">
+                  <option value="">All Countries</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">POP</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedPopFilter" class="filter-select">
+                  <option value="">All POPs</option>
+                </select>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">TTFB (ms)</p>
+              </div>
+              <div class="filter-control-row">
+                <div class="filter-input-group">
+                  <input type="number" id="mixedMinTtfb" class="filter-input" placeholder="Min" min="0">
+                  <input type="number" id="mixedMaxTtfb" class="filter-input" placeholder="Max" min="0">
+                </div>
+              </div>
+              <div class="filter-section-header">
+                <p class="filter-section-label">Host</p>
+              </div>
+              <div class="filter-control-row">
+                <select id="mixedHostFilter" class="filter-select">
+                  <option value="">All Hosts</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
           <!-- Action Buttons -->
           <section class="filter-group">
             <div class="filter-actions">
@@ -296,7 +453,6 @@
           <div class="upload-row">
             <input type="text" id="filePath" class="upload-input compact" placeholder="/path/to/error.log">
             <button id="analyzeBtn" class="upload-btn">Analyze</button>
-            <button id="tailBtn" class="tail-btn" title="Watch a log file for new entries in real-time">&#9654; Tail</button>
             <span id="progressText" class="hidden"></span>
           </div>
           <p class="upload-hint">Use one path for standard analysis or comma-separated error logs for merged error analysis.</p>
@@ -307,8 +463,8 @@
           <div class="local-downloads-dialog">
             <div class="local-downloads-popover-header">
               <div>
-                <p class="filter-section-label">Cloud Manager Cache</p>
-                <h3>Browse cached logs</h3>
+                <p class="filter-section-label">Cloud Manager Downloads</p>
+                <h3>Browse downloaded logs</h3>
               </div>
               <div class="local-downloads-environment-selects">
                 <select id="popoverCmProgramSelect" class="popover-filter-select">
@@ -357,16 +513,6 @@
                 </select>
                 <small id="cmEnvironmentHint" class="cloudmanager-hint">Choose a program to load environments.</small>
               </label>
-              <label class="cloudmanager-field">
-                <span>Days</span>
-                <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
-                <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
-              </label>
-              <label class="cloudmanager-field cloudmanager-field-wide">
-                <span>Cache root</span>
-                <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="~/.aem-logs" readonly>
-                <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Cloud Manager downloads are cached automatically for browsing and analysis.</small>
-              </label>
               <div class="cloudmanager-field cloudmanager-field-wide">
                 <span>Tier / Logs</span>
                 <div id="cmTierTabs" class="cloudmanager-tier-tabs"></div>
@@ -375,8 +521,29 @@
               </div>
             </div>
 
+            <div class="cloudmanager-advanced-settings">
+              <button id="cmAdvancedSettingsToggle" class="cloudmanager-advanced-settings-toggle" type="button" aria-expanded="false">
+                <span>Advanced settings</span>
+                <span class="cloudmanager-advanced-settings-chevron">▼</span>
+              </button>
+              <div class="cloudmanager-advanced-settings-content">
+                <div class="cloudmanager-grid">
+                  <label class="cloudmanager-field">
+                    <span>Days</span>
+                    <input type="number" id="cmDaysInput" class="upload-input compact" min="1" step="1" value="1">
+                    <small id="cmEstimatedDateRange" class="cloudmanager-hint">Estimated range: last 1 day</small>
+                  </label>
+                  <label class="cloudmanager-field cloudmanager-field-wide">
+                    <span>Download folder</span>
+                    <input type="text" id="cmOutputDirectory" class="upload-input compact" placeholder="~/.aem-logs" readonly>
+                    <small id="cmOutputDirectoryHint" class="cloudmanager-hint">Cloud Manager downloads are stored automatically for browsing and analysis.</small>
+                  </label>
+                </div>
+              </div>
+            </div>
+
             <div class="upload-row cloudmanager-actions-row">
-              <button id="cmAnalyzeBtn" class="upload-btn">Cache Selected Logs</button>
+              <button id="cmAnalyzeBtn" class="upload-btn">Download Selected Logs</button>
               <button id="cmTailBtn" class="tail-btn" type="button">Tail Logs</button>
               <span id="cmProgressText" class="hidden"></span>
             </div>
@@ -393,7 +560,7 @@
               <div id="cmTailStatus" class="cloudmanager-tail-status">Select a Cloud Manager log and start tailing.</div>
               <div id="cmTailFeed" class="cloudmanager-tail-feed"></div>
             </div>
-            <p class="upload-hint">Downloads land in the Cloud Manager cache. Live tailing streams entries only and does not cache them.</p>
+            <p class="upload-hint">Downloads are stored locally for browsing and analysis. Live tailing streams entries only and does not save them.</p>
           </div>
 
           <!-- History Tab -->
@@ -474,59 +641,136 @@
         <div class="empty-icon">&#128269;</div>
         <h2>No log file loaded</h2>
         <p>Select a source, then analyze a local log path or download a Cloud Manager log.</p>
-        <p class="empty-hint">&#128161; Pro tip: You can also watch a log file in real-time for new entries</p>
+        <p class="empty-hint">&#128161; Pro tip: Cloud Manager error logs can be tailed live after you select them.</p>
       </div>
 
-
-      <!-- Charts Tab Content -->
-      <div id="chartsTab" class="charts-tab hidden">
-        <div id="chartsSection" class="charts-section">
-          <div class="chart-container">
-            <canvas id="timelineChart"></canvas>
+      <section id="resultWorkspace" class="result-workspace hidden">
+        <div class="workspace-header">
+          <div>
+            <p class="filter-section-label">Investigation Workspace</p>
+            <h2 id="workspaceTitle">No active analysis</h2>
           </div>
-          <div class="chart-container">
-            <canvas id="loggerChart"></canvas>
-          </div>
-          <div class="chart-container">
-            <canvas id="threadChart"></canvas>
-          </div>
-          <div class="chart-container">
-            <canvas id="heatmapChart"></canvas>
+          <div class="workspace-actions">
+            <span id="workspaceModeBadge" class="workspace-badge">Idle</span>
+            <button id="workspaceClearBtn" class="btn-clear" type="button">Clear workspace</button>
           </div>
         </div>
-      </div>
 
-      <div id="errorMessage" class="error-message hidden"></div>
+        <div id="workspaceStatus" class="workspace-status">
+          Analyze a log file to populate events, charts, and investigation context.
+        </div>
 
-      <!-- Export Buttons -->
-      <div class="export-row export-row-hidden" aria-hidden="true">
-        <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
-        <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
-        <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>
-        <button id="exportAllBtn" class="export-btn" disabled>Export All</button>
-      </div>
+        <div class="result-view-tabs" role="tablist" aria-label="Result views">
+          <button id="resultViewEventsTab" class="result-view-tab active" type="button" data-result-view="events" aria-selected="true">Events</button>
+          <button id="resultViewChartsTab" class="result-view-tab" type="button" data-result-view="charts" aria-selected="false">Charts</button>
+          <button id="resultViewPinnedTab" class="result-view-tab" type="button" data-result-view="pinned" aria-selected="false">Pinned</button>
+          <button id="resultViewTailTab" class="result-view-tab" type="button" data-result-view="live-tail" aria-selected="false" disabled="">Live Tail</button>
+          <div id="incidentIndicator" class="incident-indicator hidden">
+            <button id="incidentIndicatorBtn" class="incident-indicator-btn" type="button" aria-expanded="false" aria-controls="incidentsPanel">
+              <span class="incident-icon" aria-hidden="true">&#9888;</span>
+              <span id="incidentCount">0</span>
+              <span>incidents</span>
+              <span class="incident-chevron" aria-hidden="true">▾</span>
+            </button>
+          </div>
+        </div>
 
-      <!-- Pagination Info -->
-      <div class="pagination-info" id="paginationInfo"></div>
+        <div id="incidentsPanel" class="incidents-panel hidden"></div>
 
-      <!-- Level Filter Chips -->
-      <div id="levelFilters" class="level-filters">
-        <button class="level-chip active" data-level="ALL">All <span id="countALL"></span></button>
-        <button class="level-chip error" data-level="ERROR">ERROR <span id="countERROR"></span></button>
-        <button class="level-chip warn" data-level="WARN">WARN <span id="countWARN"></span></button>
-        <button class="level-chip info" data-level="INFO">INFO <span id="countINFO"></span></button>
-        <button class="level-chip debug" data-level="DEBUG">DEBUG <span id="countDEBUG"></span></button>
-        <button id="chartsToggleBtn" class="level-chip" style="margin-left:auto;">&#128200; Charts</button>
-      </div>
+        <section id="eventsView" class="result-view-panel active">
+          <div id="errorMessage" class="error-message hidden"></div>
 
-      <!-- Raw Events Search -->
-      <div id="rawSearchRow" class="raw-search-row">
-        <input type="text" id="rawSearchInput" class="filter-input" placeholder="Search events (supports regex)..." style="flex:1;">
-        <button id="rawSearchBtn" class="btn-apply">Search</button>
-      </div>
+          <div class="export-row export-row-hidden" aria-hidden="true">
+            <button id="exportCsvBtn" class="export-btn" disabled>Export CSV</button>
+            <button id="exportJsonBtn" class="export-btn" disabled>Export JSON</button>
+            <button id="exportPdfBtn" class="export-btn" disabled>Export PDF</button>
+            <button id="exportAllBtn" class="export-btn" disabled>Export All</button>
+          </div>
 
-      <!-- Raw Events List -->
-      <div id="rawEvents" class="raw-events-section"></div>
+          <div class="pagination-info" id="paginationInfo"></div>
+
+          <div id="levelFilters" class="level-filters">
+            <button class="level-chip active" data-level="ALL">All <span id="countALL"></span></button>
+            <button class="level-chip error" data-level="ERROR">ERROR <span id="countERROR"></span></button>
+            <button class="level-chip warn" data-level="WARN">WARN <span id="countWARN"></span></button>
+            <button class="level-chip info" data-level="INFO">INFO <span id="countINFO"></span></button>
+            <button class="level-chip debug" data-level="DEBUG">DEBUG <span id="countDEBUG"></span></button>
+            <button id="chartsToggleBtn" class="level-chip" style="margin-left:auto;">&#128200; Open Charts</button>
+          </div>
+
+          <div id="rawSearchRow" class="raw-search-row">
+            <input type="text" id="rawSearchInput" class="filter-input" placeholder="Search events (supports regex)..." style="flex:1;">
+            <button id="rawSearchBtn" class="btn-apply">Search</button>
+          </div>
+
+          <div id="rawEvents" class="raw-events-section"></div>
+        </section>
+
+        <div id="chartsTab" class="charts-tab result-view-panel hidden">
+          <div id="chartsSection" class="charts-section">
+            <div class="chart-container">
+              <canvas id="timelineChart"></canvas>
+            </div>
+            <div class="chart-container">
+              <canvas id="loggerChart"></canvas>
+            </div>
+            <div class="chart-container">
+              <canvas id="threadChart"></canvas>
+            </div>
+            <div class="chart-container">
+              <canvas id="heatmapChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <section id="pinnedView" class="result-view-panel hidden">
+          <div class="pinned-view-header">
+            <div>
+              <p class="filter-section-label">Pinned Findings</p>
+              <h3>Keep important events visible while you refine filters</h3>
+            </div>
+          </div>
+          <div id="pinnedEvents" class="pinned-events-list"></div>
+        </section>
+
+        <section id="tailPanel" class="tail-panel result-view-panel hidden">
+          <div class="tail-header">
+            <div class="tail-header-left">
+              <div class="tail-live-indicator">
+                <span class="tail-live-dot"></span>
+                <span class="tail-live-text">Live</span>
+              </div>
+              <h3 id="tailTitle">No active tail</h3>
+              <span id="tailSource" class="tail-source-path"></span>
+            </div>
+            <div class="tail-header-actions">
+              <button id="tailStopBtn" class="tail-stop-btn" type="button" disabled>Stop Tail</button>
+            </div>
+          </div>
+
+          <div class="tail-controls">
+            <div class="tail-action-row">
+              <button id="tailAutoScrollBtn" class="tail-action-btn active" type="button" title="Auto-scroll to new entries">
+                <span class="tail-action-icon">↓</span> Auto-scroll
+              </button>
+              <button id="tailClearBtn" class="tail-action-btn" type="button" title="Clear visible entries">Clear</button>
+              <div class="tail-export-dropdown">
+                <button id="tailExportBtn" class="tail-action-btn" type="button">Export</button>
+                <div id="tailExportMenu" class="tail-export-menu hidden">
+                  <button id="tailExportJson" type="button">Export JSON</button>
+                  <button id="tailExportCsv" type="button">Export CSV</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="tailStatus" class="tail-status"></div>
+          <div id="tailFeed" class="tail-feed"></div>
+          <div id="tailNewIndicator" class="tail-new-indicator hidden">
+            <button id="tailScrollToNew" type="button">↓ New entries</button>
+          </div>
+        </section>
+      </section>
 
       <!-- Toast Container -->
       <div id="toastContainer" class="toast-container"></div>

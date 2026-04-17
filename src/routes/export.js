@@ -1,7 +1,7 @@
 /* === Imports === */
 const express = require('express');
 const { exportToCSV, exportToJSON, generatePDFSummary } = require('../exporter');
-const { collectMultiErrorEvents } = require('../services/multiErrorAnalysisService');
+const { collectBatchAnalysisEvents } = require('../services/multiErrorAnalysisService');
 const { checkAlerts } = require('../alerts');
 const { sanitizeErrorMessage } = require('../utils/files');
 
@@ -13,9 +13,9 @@ function createExportRouter() {
   const router = express.Router();
 
   async function resolveExportResults(body) {
-    if (body && body.mode === 'multi-error' && body.input) {
+    if (body && body.mode === 'batch' && body.input) {
       const filters = body.filters || {};
-      return collectMultiErrorEvents(body.input, {
+      return collectBatchAnalysisEvents(body.input, {
         advancedRules: body.advancedRules || filters.advancedRules,
         search: body.search || filters.search,
         level: filters.level || filters.severity || body.level || body.severity,
@@ -29,7 +29,21 @@ function createExportRouter() {
         from: filters.from || body.from,
         to: filters.to || body.to,
         hourOfDay: body.hourOfDay,
-        sourceFile: filters.sourceFile || body.sourceFile
+        sourceFile: filters.sourceFile || body.sourceFile,
+        logType: filters.logType || body.logType,
+        method: filters.method || body.method,
+        status: filters.status || body.status || body.httpStatus,
+        pod: filters.pod || body.pod,
+        cache: filters.cache || body.cache,
+        country: filters.country || body.country || body.clientCountry,
+        pop: filters.pop || body.pop,
+        host: filters.host || body.host,
+        minResponseTime: filters.minResponseTime || body.minResponseTime,
+        maxResponseTime: filters.maxResponseTime || body.maxResponseTime,
+        minTtfb: filters.minTtfb || body.minTtfb,
+        maxTtfb: filters.maxTtfb || body.maxTtfb,
+        minTtlb: filters.minTtlb || body.minTtlb,
+        maxTtlb: filters.maxTtlb || body.maxTtlb
       }, { includeStackTrace: true });
     }
 

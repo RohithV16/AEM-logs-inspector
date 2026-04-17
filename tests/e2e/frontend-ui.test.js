@@ -249,6 +249,44 @@ test.describe('AEM Log Inspector - Export & Download Tests', () => {
     await expect(exceptionSelect).toBeVisible();
   });
 
+  test('Logger token picker applies selection on click', async ({ page }) => {
+    await page.locator('#filePath').fill(ERROR_LOG);
+    await page.locator('#analyzeBtn').click();
+    await page.waitForTimeout(TIMEOUTS.analyze);
+
+    const loggerFilter = page.locator('#loggerFilter');
+    await loggerFilter.fill(config.filters.logger_pattern);
+    await page.waitForTimeout(TIMEOUTS.filter);
+
+    const firstOption = page.locator('#loggerResults .token-picker-option').first();
+    await expect(firstOption).toBeVisible();
+    const optionText = await firstOption.locator('.token-picker-option-label').innerText();
+
+    await firstOption.click();
+
+    const loggerTags = page.locator('#loggerTags .filter-tag');
+    await expect(loggerTags).toHaveCount(1);
+    await expect(loggerTags.first()).toContainText(optionText.split(' (')[0].split('.').pop());
+  });
+
+  test('Pinned event remove works when log message contains apostrophes', async ({ page }) => {
+    const pinnedKey = "error::timestamp::logger::Can't process user's request";
+
+    await page.evaluate((key) => {
+      window.__removedPinnedKey = null;
+      window.removePinnedEvent = (removedKey) => {
+        window.__removedPinnedKey = removedKey;
+      };
+      const container = document.getElementById('pinnedEvents');
+      container.innerHTML = `<button type="button" data-remove-pinned-key="${key}">Remove</button>`;
+    }, pinnedKey);
+
+    await page.evaluate(() => {
+      document.querySelector('#pinnedEvents [data-remove-pinned-key]')?.click();
+    });
+    await expect.poll(() => page.evaluate(() => window.__removedPinnedKey)).toBe(pinnedKey);
+  });
+
   test('Timeline zoom controls work', async ({ page }) => {
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
@@ -299,6 +337,25 @@ test.describe('AEM Log Inspector - Multi-file Upload Tests', () => {
 
     await expect(page.locator('#errorFilters')).toBeVisible({ timeout: 5000 });
     await expect(page.locator('#countALL')).toContainText('2');
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test('Multi-file input persists after reload', async ({ page }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-multi-persist-'));
+    const errorOne = writeTempErrorLog(tempDir, 'persist1.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Error one'
+    ]);
+    const errorTwo = writeTempErrorLog(tempDir, 'persist2.log', [
+      '16.03.2026 14:31:15.123 [qtp-2] *ERROR* [com.example.B] Error two'
+    ]);
+    const expectedValue = `${errorOne}, ${errorTwo}`;
+
+    await page.locator('#filePath').fill(`${errorOne},${errorTwo}`);
+    await page.locator('#filePath').blur();
+    await page.reload();
+
+    await expect(page.locator('#filePath')).toHaveValue(expectedValue);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
   });

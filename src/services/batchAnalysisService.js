@@ -2,7 +2,7 @@ const path = require('path');
 const { detectLogType, createLogStream, createRequestLogStream, createCDNLogStream } = require('../parser');
 const { resolveAnalysisTargets } = require('../utils/files');
 const { buildAdvancedMatcher } = require('./searchBuilder');
-const { buildCorrelationData, normalizeCorrelationEvent, getTimestampValue } = require('./correlationService');
+const { buildCorrelationData, normalizeCorrelationEvent, getTimestampValue, buildFilterOptionsFromStats } = require('./correlationService');
 const { normalizeMessage } = require('../grouper');
 const { extractExceptionNames } = require('./errorLogService');
 const { categorizeError } = require('../categorizer');
@@ -371,6 +371,21 @@ function buildBatchEventMatcher(filters = {}) {
   const hourOfDay = String(filters.hourOfDay || '').trim();
   const logType = String(filters.logType || '').trim();
   const sourceFile = String(filters.sourceFile || '').trim();
+  const method = String(filters.method || '').trim();
+  const status = filters.status !== undefined && filters.status !== null && filters.status !== ''
+    ? Number(filters.status)
+    : null;
+  const pod = String(filters.pod || '').trim();
+  const cache = String(filters.cache || '').trim();
+  const country = String(filters.country || '').trim();
+  const pop = String(filters.pop || '').trim();
+  const host = String(filters.host || '').trim();
+  const minResponseTime = filters.minResponseTime ?? filters.minTime ?? null;
+  const maxResponseTime = filters.maxResponseTime ?? filters.maxTime ?? null;
+  const minTtfb = filters.minTtfb ?? null;
+  const maxTtfb = filters.maxTtfb ?? null;
+  const minTtlb = filters.minTtlb ?? null;
+  const maxTtlb = filters.maxTtlb ?? null;
 
   return (event) => {
     if (!advancedMatcher(event)) return false;
@@ -409,6 +424,19 @@ function buildBatchEventMatcher(filters = {}) {
     if (hourOfDay && String(Number(event.hour?.slice(-2))) !== String(hourOfDay)) return false;
     if (logType && event.logType !== logType) return false;
     if (sourceFile && event.sourceFile !== sourceFile && event.sourceName !== sourceFile) return false;
+    if (method && event.method !== method) return false;
+    if (status !== null && Number(event.status) !== status) return false;
+    if (pod && event.thread !== pod) return false;
+    if (cache && event.cache !== cache) return false;
+    if (country && event.clientCountry !== country) return false;
+    if (pop && event.pop !== pop) return false;
+    if (host && event.host !== host) return false;
+    if (minResponseTime !== null && minResponseTime !== '' && Number(event.responseTime || 0) < Number(minResponseTime)) return false;
+    if (maxResponseTime !== null && maxResponseTime !== '' && Number(event.responseTime || 0) > Number(maxResponseTime)) return false;
+    if (minTtfb !== null && minTtfb !== '' && Number(event.ttfb || 0) < Number(minTtfb)) return false;
+    if (maxTtfb !== null && maxTtfb !== '' && Number(event.ttfb || 0) > Number(maxTtfb)) return false;
+    if (minTtlb !== null && minTtlb !== '' && Number(event.ttlb || 0) < Number(minTtlb)) return false;
+    if (maxTtlb !== null && maxTtlb !== '' && Number(event.ttlb || 0) > Number(maxTtlb)) return false;
     if (search && !buildSearchText(event).includes(search)) return false;
     return true;
   };
@@ -481,7 +509,8 @@ async function* mergeNormalizedEvents(filePaths, options = {}) {
       let selected = active[0];
       for (let i = 1; i < active.length; i++) {
         const candidate = active[i];
-        if (getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
+        if (candidate.current.value && selected.current.value &&
+            getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
           selected = candidate;
         }
       }
@@ -612,7 +641,8 @@ async function analyzeBatch(input, filters = {}, onProgress) {
     let selected = active[0];
     for (let i = 1; i < active.length; i++) {
       const candidate = active[i];
-      if (getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
+      if (candidate.current.value && selected.current.value &&
+          getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
         selected = candidate;
       }
     }
@@ -673,6 +703,32 @@ async function analyzeBatch(input, filters = {}, onProgress) {
   );
   const { summary: mergedSummary, ...mergedFields } = mergedErrorStats;
 
+  const batchLogType = contexts.length === 1
+    ? contexts[0].tracker.logType
+    : [...new Set(contexts.map(c => c.tracker.logType).filter(Boolean))].length === 1
+      ? contexts[0].tracker.logType
+      : 'mixed';
+
+  const aggregatedStats = contexts.reduce((acc, context) => {
+    const tracker = context.tracker;
+    if (tracker.logType === 'request' || tracker.logType === 'cdn') {
+      Object.keys(tracker.methods || {}).forEach(m => acc.methods[m] = (acc.methods[m] || 0) + tracker.methods[m]);
+      Object.keys(tracker.statuses || {}).forEach(s => acc.statuses[s] = (acc.statuses[s] || 0) + tracker.statuses[s]);
+    }
+    if (tracker.logType === 'request') {
+      Object.keys(tracker.pods || {}).forEach(p => acc.pods[p] = (acc.pods[p] || 0) + tracker.pods[p]);
+    }
+    if (tracker.logType === 'cdn') {
+      Object.keys(tracker.cacheStatuses || {}).forEach(c => acc.cacheStatuses[c] = (acc.cacheStatuses[c] || 0) + tracker.cacheStatuses[c]);
+      Object.keys(tracker.countries || {}).forEach(c => acc.countries[c] = (acc.countries[c] || 0) + tracker.countries[c]);
+      Object.keys(tracker.pops || {}).forEach(p => acc.pops[p] = (acc.pops[p] || 0) + tracker.pops[p]);
+      Object.keys(tracker.hosts || {}).forEach(h => acc.hosts[h] = (acc.hosts[h] || 0) + tracker.hosts[h]);
+    }
+    return acc;
+  }, { methods: {}, statuses: {}, pods: {}, cacheStatuses: {}, countries: {}, pops: {}, hosts: {} });
+
+  const filterOptions = buildFilterOptionsFromStats(aggregatedStats, batchLogType);
+
   return {
     logType: 'batch',
     summary: {
@@ -680,6 +736,7 @@ async function analyzeBatch(input, filters = {}, onProgress) {
       byType
     },
     sources,
+    filterOptions,
     correlation: {
       summary: correlationData.summary,
       hourOfDaySeverity: correlationData.hourOfDaySeverity,
