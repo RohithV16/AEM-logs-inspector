@@ -4988,10 +4988,21 @@ function formatStackTrace(trace) {
   }).join('\n');
 }
 
+function buildEventMessage(evt, logType) {
+  if (logType === 'error') return evt.message || evt.title || '';
+  if (logType === 'request') return evt.url || '';
+  if (logType === 'cdn') {
+    return evt.url || evt.host
+      || `${evt.method || ''} ${evt.status || ''}`.trim()
+      || '';
+  }
+  return evt.title || evt.message || evt.url || evt.host || '';
+}
+
 function renderErrorEvent(evt, i) {
   const level = evt.level || evt.severity || 'INFO';
   const loggerName = evt.logger || evt.sourceName || '';
-  const messageText = evt.message || evt.title || '';
+  const messageText = buildEventMessage(evt, 'error');
   const hasStack = evt.stackTrace && evt.stackTrace.trim();
   const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
   const pinned = isPinnedEvent(evt, 'error');
@@ -5035,6 +5046,7 @@ function renderErrorEvent(evt, i) {
 function renderRequestEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
   const pinned = isPinnedEvent(evt, 'request');
+  const messageText = buildEventMessage(evt, 'request');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -5050,7 +5062,7 @@ function renderRequestEvent(evt, i) {
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="response-time">${evt.responseTime}ms</span>
         <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'request')">${pinned ? 'Pinned' : 'Pin'}</button>
@@ -5070,6 +5082,7 @@ function renderRequestEvent(evt, i) {
 function renderCDNEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
   const pinned = isPinnedEvent(evt, 'cdn');
+  const messageText = buildEventMessage(evt, 'cdn');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -5089,7 +5102,7 @@ function renderCDNEvent(evt, i) {
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="cache-badge">${evt.cache || '-'}</span>
         <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'cdn')">${pinned ? 'Pinned' : 'Pin'}</button>
@@ -5109,6 +5122,7 @@ function renderCDNEvent(evt, i) {
 function renderBatchEvent(evt, i) {
   const pinned = isPinnedEvent(evt, 'batch');
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(evt, null, 2), rawEventsSearch)}</pre>`;
+  const messageText = buildEventMessage(evt, 'batch');
 
   return `
     <div class="raw-event ${getSeverityClass(evt.severity)}" data-index="${i}" style="animation-delay:${i * 30}ms">
@@ -5116,7 +5130,7 @@ function renderBatchEvent(evt, i) {
         <span class="level-badge ${getSeverityClass(evt.severity)}">${escapeHtml(evt.severity)}</span>
         <span class="event-time">${escapeHtml(evt.timestamp || '')}</span>
         <span class="event-logger" title="${escapeHtml(evt.sourceName || evt.sourceFile || '')}">${escapeHtml(evt.sourceName || evt.sourceFile || '')}</span>
-        <span class="event-message" title="${escapeHtml(evt.title || evt.message || '')}">${highlightText(evt.title || evt.message || '', rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'batch')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
