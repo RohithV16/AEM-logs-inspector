@@ -251,7 +251,7 @@ test.describe('API Integration Tests', () => {
 
   test('10c. POST /api/raw-events/batch - Filter mixed batch by logType', async ({ page }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-api-batch-mixed-'));
-    const errorOne = writeTempFile(tempDir, 'error-one.log', [
+    const errorOne = writeTempErrorLog(tempDir, 'error-one.log', [
       '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Failed request'
     ]);
     const cdnOne = writeTempErrorLog(tempDir, 'cdn-one.log', [
