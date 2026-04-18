@@ -146,3 +146,73 @@ describe('parser - multi-line stack trace handling', () => {
     expect(entries).toEqual([]);
   });
 });
+
+// Regression: ISSUE-002 — simple logger format where [logger-class] message has no HTTP context
+describe('parser - simple logger format (ISSUE-002)', () => {
+  test('parseLine extracts logger from bracket in simple format', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong');
+
+    expect(entry).not.toBeNull();
+    expect(entry.logger).toBe('com.example.Component');
+    expect(entry.message).toBe('Something went wrong');
+    expect(entry.level).toBe('ERROR');
+    expect(entry.thread).toBe('thread-1');
+    expect(entry.httpMethod).toBe('');
+  });
+
+  test('parseLine handles simple logger with dots in message', () => {
+    const entry = parseLine('29.03.2026 00:00:01.000 [thread-1] *WARN* [com.example.Cache] Cache miss for /content/page');
+
+    expect(entry.logger).toBe('com.example.Cache');
+    expect(entry.message).toBe('Cache miss for /content/page');
+  });
+
+  test('parseLine handles simple logger with short class name', () => {
+    const entry = parseLine('29.03.2026 00:00:02.000 [thread-2] *ERROR* [org.apache.sling.SlingServlet] Servlet error');
+
+    expect(entry.logger).toBe('org.apache.sling.SlingServlet');
+    expect(entry.message).toBe('Servlet error');
+  });
+
+  test('parseLine still handles HTTP context format correctly', () => {
+    const entry = parseLine('09.02.2026 23:59:07.330 [author-pod-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger Something happened');
+
+    expect(entry.logger).toBe('com.example.Logger');
+    expect(entry.message).toBe('Something happened');
+    expect(entry.httpMethod).toBe('GET');
+    expect(entry.requestPath).toBe('/content/site');
+  });
+
+  test('parseLine parses mixed simple and HTTP context lines in same file', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-parser-mixed-'));
+    const tempFile = path.join(tempDir, 'mixed.log');
+    const content = [
+      '29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong',
+      '09.02.2026 23:59:07.330 [author-pod-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger HTTP error',
+      '29.03.2026 00:00:01.000 [thread-1] *WARN* [com.example.Cache] Cache miss'
+    ].join('\n');
+
+    fs.writeFileSync(tempFile, content, 'utf8');
+    const entries = parseLogFile(tempFile);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+
+    expect(entries.length).toBe(3);
+    expect(entries[0].logger).toBe('com.example.Component');
+    expect(entries[0].message).toBe('Something went wrong');
+    expect(entries[1].logger).toBe('com.example.Logger');
+    expect(entries[1].httpMethod).toBe('GET');
+    expect(entries[2].logger).toBe('com.example.Cache');
+    expect(entries[2].message).toBe('Cache miss');
+  });
+
+  test('parseLine handles logger with inner angle brackets', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [org.apache.jackrabbit.oak.plugins.index.AsyncIndexUpdate] Async indexer failed');
+
+    expect(entry.logger).toBe('org.apache.jackrabbit.oak.plugins.index.AsyncIndexUpdate');
+    expect(entry.message).toBe('Async indexer failed');
+  });
+});

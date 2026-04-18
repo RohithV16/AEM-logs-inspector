@@ -4,11 +4,21 @@ const readline = require('readline');
 const zlib = require('zlib');
 
 /**
- * Matches AEM error log format: 29.03.2026 00:00:00.000 [thread-id] *LEVEL* [logger-class] message
- * Captures: timestamp, instance-id, level, thread, logger (Java class), message
- * Note: Java class name can contain angle brackets like JobQueueImpl.<main queue>
+ * Simple logger format: timestamp [thread-id] *LEVEL* [logger-class] message
+ * No HTTP context — bracket content is the logger name, rest is message.
+ * Example: 29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong
+ * Groups: 1=timestamp, 2=thread, 3=level, 4=logger, 5=message
  */
-const LOG_PATTERN = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[(.+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
+const LOG_PATTERN_SIMPLE = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] (.+)$/;
+
+/**
+ * HTTP context format: timestamp [thread-id] *LEVEL* [ip [requestId] METHOD path HTTP/version] logger message
+ * Requires full HTTP structure (IP + requestId + METHOD + HTTP/version) to distinguish from
+ * simple logger format even when a logger name happens to start with digits/dots.
+ * Example: 09.02.2026 23:59:07.330 [qtp-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger msg
+ * Groups: 1=timestamp, 2=thread, 3=level, 4=threadName(=ip context), 5=loggerCandidate, 6=message
+ */
+const LOG_PATTERN_HTTP = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[(\d{1,3}(?:\.\d{1,3}){3} \[\d+\] (?:HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) \S+ HTTP\/[\d.]+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
 
 /* === Request Log Patterns === */
 /**
@@ -67,26 +77,42 @@ function parseRequestTimestamp(ts) {
  * @returns {Object|null} Parsed entry or null if line doesn't match pattern
  */
 function parseLine(line) {
-  const match = line.match(LOG_PATTERN);
-  if (!match) return null;
+  // Try HTTP context format first (more specific): [ip [id] METHOD path HTTP/v] logger message
+  const httpMatch = line.match(LOG_PATTERN_HTTP);
+  if (httpMatch) {
+    const [, timestamp, instanceId, level, thread, loggerCandidate, message] = httpMatch;
+    const hasLogger = isLikelyLoggerToken(loggerCandidate);
+    const logger = hasLogger ? loggerCandidate : '';
+    const normalizedMessage = hasLogger ? message : `${loggerCandidate} ${message}`.trim();
+    const requestMeta = parseErrorRequestContext(thread);
+    return {
+      timestamp,
+      thread: instanceId,
+      level,
+      threadName: thread,
+      logger,
+      message: normalizedMessage,
+      requestContext: thread,
+      httpMethod: requestMeta.httpMethod,
+      requestPath: requestMeta.requestPath
+    };
+  }
 
-  // Extract groups: 1=timestamp, 2=instance-id, 3=level, 4=thread, 5=logger (Java class), 6=message
-  const [, timestamp, instanceId, level, thread, loggerCandidate, message] = match;
-  const hasLogger = isLikelyLoggerToken(loggerCandidate);
-  const logger = hasLogger ? loggerCandidate : '';
-  const normalizedMessage = hasLogger ? message : `${loggerCandidate} ${message}`.trim();
-  const requestMeta = parseErrorRequestContext(thread);
-  // Normalize field names for consistency across log types
+  // Fall back to simple logger format: [logger-class] message
+  const simpleMatch = line.match(LOG_PATTERN_SIMPLE);
+  if (!simpleMatch) return null;
+
+  const [, timestamp, instanceId, level, logger, message] = simpleMatch;
   return {
     timestamp,
     thread: instanceId,
     level,
-    threadName: thread,
+    threadName: instanceId,
     logger,
-    message: normalizedMessage,
-    requestContext: thread,
-    httpMethod: requestMeta.httpMethod,
-    requestPath: requestMeta.requestPath
+    message,
+    requestContext: instanceId,
+    httpMethod: '',
+    requestPath: ''
   };
 }
 
@@ -145,7 +171,7 @@ function detectLogFamilyFromLine(line) {
   if (trimmed.startsWith('{')) return 'cdn-json';
   if (REQUEST_PATTERN.test(trimmed) || RESPONSE_PATTERN.test(trimmed)) return 'aem-request';
   if (APACHE_ACCESS_PATTERN.test(trimmed)) return 'apache-access';
-  if (LOG_PATTERN.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'aem-error';
+  if (LOG_PATTERN_SIMPLE.test(trimmed) || LOG_PATTERN_HTTP.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'aem-error';
   return null;
 }
 

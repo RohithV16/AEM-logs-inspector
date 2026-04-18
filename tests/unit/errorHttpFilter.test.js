@@ -37,10 +37,10 @@ describe('error log HTTP request filters', () => {
     expect(entry.requestPath).toBe('/bin/wcmcommand');
   });
 
-  test('parseLine does not treat plain message words as loggers', () => {
+  test('parseLine extracts logger from simple logger format', () => {
     const entry = parseLine('16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.mandg.core.utils.ArticleUtils] as without in from which the asset failed');
 
-    expect(entry.logger).toBe('');
+    expect(entry.logger).toBe('com.mandg.core.utils.ArticleUtils');
     expect(entry.message).toBe('as without in from which the asset failed');
   });
 
@@ -106,5 +106,43 @@ describe('error log HTTP request filters', () => {
 
     const filterByNonExistent = buildEntryFilter({ exception: 'NonExistentException' });
     expect(filterByNonExistent(entry)).toBe(false);
+  });
+});
+
+// Regression: ISSUE-003 — search should match across all fields, not just message
+describe('error log search field coverage (ISSUE-003)', () => {
+  test('buildEntryFilter search matches logger name', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong');
+
+    const filter = buildEntryFilter({ search: 'Component' });
+    expect(filter(entry)).toBe(true);
+  });
+
+  test('buildEntryFilter search matches full logger package', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong');
+
+    const filter = buildEntryFilter({ search: 'com\\.example' });
+    expect(filter(entry)).toBe(true);
+  });
+
+  test('buildEntryFilter search matches thread name', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [qtp-worker-42] *ERROR* [com.example.Component] Something went wrong');
+
+    const filter = buildEntryFilter({ search: 'qtp-worker' });
+    expect(filter(entry)).toBe(true);
+  });
+
+  test('buildEntryFilter search still matches message', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] NullPointerException in handler');
+
+    const filter = buildEntryFilter({ search: 'NullPointer' });
+    expect(filter(entry)).toBe(true);
+  });
+
+  test('buildEntryFilter search returns false for non-matching term', () => {
+    const entry = parseLine('29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong');
+
+    const filter = buildEntryFilter({ search: 'NoSuchElementException' });
+    expect(filter(entry)).toBe(false);
   });
 });
