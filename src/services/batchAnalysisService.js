@@ -333,7 +333,8 @@ function buildSearchText(event) {
     event.pop,
     event.host,
     event.requestId,
-    event.url
+    event.url,
+    event.stackTrace
   ]
     .filter(value => value !== null && value !== undefined && value !== '')
     .join(' ')

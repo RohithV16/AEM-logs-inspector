@@ -320,7 +320,11 @@ function buildEntryFilter(filters = {}) {
      Uses early returns for efficiency - fails fast on first non-match. */
   return (entry) => {
     if (level && level !== 'ALL' && entry.level !== level) return false;
-    if (searchRegex && !searchRegex.test(entry.message)) return false;
+    if (searchRegex) {
+      const searchText = [entry.message, entry.logger, entry.threadName, entry.stackTrace]
+        .filter(Boolean).join(' ');
+      if (!searchRegex.test(searchText)) return false;
+    }
     if (fromDate || toDate) {
       const entryDate = parseLogTimestamp(entry.timestamp);
       if (entryDate) {
