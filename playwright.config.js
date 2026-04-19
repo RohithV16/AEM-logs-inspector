@@ -49,7 +49,7 @@ module.exports = defineConfig({
      On CI, never reuse an existing server to avoid stale state between retries.
      Locally, reuse a running server to speed up the dev loop. */
   webServer: {
-    command: 'DEBUG_FILTERS=true node src/server.js > /tmp/server.log 2>&1',
+    command: 'pwd && DEBUG_FILTERS=true node src/server.js > /tmp/server.log 2>&1',
     port: 3000,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
