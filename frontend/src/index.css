@@ -4679,3 +4679,20 @@ mark {
   color: var(--color-text-primary);
 }
 
+
+/* Premium Library UI Styles */
+.library-list { width: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-secondary); border-radius: 8px; margin-top: 12px; border: 1px solid var(--border-color); }
+.library-list-header { display: flex; padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 0.75rem; color: var(--text-dim); letter-spacing: 0.05rem; background: rgba(0,0,0,0.2); }
+.library-list-body { overflow-y: auto; max-height: 400px; }
+.library-list-row { display: flex; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--border-color-dim); cursor: pointer; transition: all 0.2s ease; }
+.library-list-row:hover { background: rgba(255, 255, 255, 0.05); }
+.library-list-row.selected { background: rgba(52, 152, 219, 0.08); border-left: 3px solid var(--status-info); }
+.empty-library-state { padding: 40px; text-align: center; color: var(--text-dim); }
+.library-controls-top { display: flex; gap: 12px; margin-bottom: 16px; align-items: center; }
+.library-search-input { flex: 1; padding: 8px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); }
+.library-actions-top { display: flex; gap: 8px; }
+.selection-counter { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 8px; }
+.name-stack { display: flex; flex-direction: column; min-width: 0; }
+.file-name { font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-path { font-size: 0.7rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.type-badge { font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; border: 1px solid; font-weight: 700; height: fit-content; text-transform: uppercase; }
