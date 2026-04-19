@@ -155,7 +155,9 @@ test.describe('AEM Log Inspector - Frontend UI Tests', () => {
 
     const timelineChart = page.locator('canvas#timelineChart');
     await expect(timelineChart).toBeVisible();
-
+    
+    // Ensure the toggle button is still visible and accessible
+    await chartsToggleBtn.scrollIntoViewIfNeeded();
     await chartsToggleBtn.click();
     await page.waitForTimeout(500);
 
