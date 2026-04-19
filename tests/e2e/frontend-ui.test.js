@@ -156,9 +156,9 @@ test.describe('AEM Log Inspector - Frontend UI Tests', () => {
     const timelineChart = page.locator('canvas#timelineChart');
     await expect(timelineChart).toBeVisible();
     
-    // Ensure the toggle button is still visible and accessible
-    await chartsToggleBtn.scrollIntoViewIfNeeded();
-    await chartsToggleBtn.click();
+    // To 'hide' charts (switch back), we use the Events tab since the toggle button 
+    // is inside the events view and becomes hidden when charts are shown.
+    await page.locator('#resultViewEventsTab').click();
     await page.waitForTimeout(500);
 
     await expect(chartsTab).toHaveClass(/hidden/);
