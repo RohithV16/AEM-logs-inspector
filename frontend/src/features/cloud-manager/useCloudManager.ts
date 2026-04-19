@@ -13,8 +13,9 @@ interface Environment {
 }
 
 interface LogOption {
-  id: string;
+  service: string;
   name: string;
+  label?: string;
 }
 
 interface CloudManagerState {
@@ -46,10 +47,20 @@ export const useCloudManagerStore = create<CloudManagerState>()(
       loading: false,
       error: null,
       setPrograms: (programs) => set({ programs }),
-      selectProgram: (id) => set({ selectedProgramId: id, environments: [], selectedEnvironmentId: null, logOptions: [] }),
+      selectProgram: (id) => set({
+        selectedProgramId: id,
+        environments: [],
+        selectedEnvironmentId: null,
+        logOptions: [],
+        selectedLogOptions: []
+      }),
       setEnvironments: (environments) => set({ environments }),
-      selectEnvironment: (id) => set({ selectedEnvironmentId: id, logOptions: [] }),
-      setLogOptions: (logOptions) => set({ logOptions }),
+      selectEnvironment: (id) => set({
+        selectedEnvironmentId: id,
+        logOptions: [],
+        selectedLogOptions: []
+      }),
+      setLogOptions: (logOptions) => set({ logOptions, selectedLogOptions: [] }),
       toggleLogOption: (id) => {
         const { selectedLogOptions } = get();
         set({

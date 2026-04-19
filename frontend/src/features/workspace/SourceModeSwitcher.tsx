@@ -6,7 +6,6 @@ export function SourceModeSwitcher() {
   return (
     <div className="source-mode-switch" role="tablist" aria-label="Analysis source mode">
       <button
-        id="sourceModeLocal"
         className={`source-mode-btn ${sourceMode === 'local' ? 'active' : ''}`}
         type="button"
         onClick={() => setSourceMode('local')}
@@ -15,7 +14,6 @@ export function SourceModeSwitcher() {
         Local Path
       </button>
       <button
-        id="sourceModeCloudManager"
         className={`source-mode-btn ${sourceMode === 'cloudmanager' ? 'active' : ''}`}
         type="button"
         onClick={() => setSourceMode('cloudmanager')}

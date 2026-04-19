@@ -1,6 +1,6 @@
 # AEM Log Inspector
 
-A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both a CLI interface and an interactive Express-based web dashboard with real-time monitoring, advanced filtering, and Cloud Manager integration.
+A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both a CLI interface and a React-based dashboard served by Express with real-time monitoring, advanced filtering, and Cloud Manager integration.
 
 ## Table of Contents
 
@@ -35,9 +35,10 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both 
 - Compressed `.gz` file support
 
 ### Web Dashboard
+- React dashboard built with Vite and served by Express
 - Interactive analysis with real-time progress updates
 - Multi-file analysis with merged results
-- WebSocket-based live log tailing
+- WebSocket-based Cloud Manager live log tailing
 - Advanced structured search builder with field operators
 - Filter presets (save/load configurations)
 - Shareable filter links via URL state encoding
@@ -65,13 +66,14 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both 
 ### Cloud Manager Integration
 - Download logs from Adobe Cloud Manager environments
 - Live tail a selected Cloud Manager log from the dashboard or CLI
+- Download selected Cloud Manager logs and immediately analyze them from the dashboard
 - Program and environment selection via live `aio` data
 - Download caching in `~/.aem-logs/`
 - Progress tracking with real-time updates
 - Cache management and validation
 
 ### Real-Time Monitoring
-- WebSocket-based live log tailing
+- WebSocket-based Cloud Manager live log tailing
 - Configurable alerting system with thresholds
 - Server-Sent Events (SSE) for streaming analysis
 - Error, warning, and critical logger threshold alerts
@@ -164,6 +166,7 @@ Open `http://localhost:3000` in your browser. The dashboard will automatically o
 - Share filters via URL
 - Live log tailing
 - Export results in multiple formats
+- In Cloud Manager mode, download and analyze supported logs or switch to live tail
 
 ### Keyboard Shortcuts
 
@@ -227,7 +230,7 @@ JSON-formatted CDN logs with cache performance data including TTFB, TTLB, cache 
 | `POST` | `/api/cloudmanager/download-analyze` | Download and analyze logs |
 | `POST` | `/api/cloudmanager/validate-output-directory` | Validate output directory |
 | `POST` | `/api/cloudmanager/command-preview` | Preview download commands |
-| `WebSocket` | `/` | Real-time log tailing and analysis |
+| `WebSocket` | `/` | Real-time log tailing and streaming actions |
 
 ## Cloud Manager Integration
 
@@ -259,9 +262,9 @@ JSON-formatted CDN logs with cache performance data including TTFB, TTLB, cache 
 1. Start the dashboard: `npm run dashboard`
 2. Select "Cloud Manager" as your source
 3. Choose a program and environment
-4. Select service and log type
-5. Choose either `Cache Selected Logs` or `Tail Logs`
-6. Downloaded logs are cached; live tail output is streamed only
+4. Select one or more log options
+5. Choose either `Download Selected Logs` or `Start Tail`
+6. Downloaded logs are analyzed automatically when a supported file is returned; live tail output is streamed only
 
 **Via CLI:**
 ```bash
@@ -374,7 +377,7 @@ node src/index.js cloudmanager analyze \
 
 ### Module Organization
 - `src/index.js`: CLI entry point
-- `src/server.js`: Express dashboard with WebSocket
+- `src/server.js`: Express dashboard and WebSocket server
 - `src/parser.js`: Log file parsing and detection
 - `src/analyzer.js`: Core analysis functions
 - `src/categorizer.js`: Error categorization
@@ -385,12 +388,14 @@ node src/index.js cloudmanager analyze \
 - `src/routes/`: API route handlers
 - `src/services/`: Log analysis services
 - `src/utils/`: Utility functions and constants
+- `frontend/`: React dashboard source built to `dist/`
 
 ### Scripts
 
 ```bash
 npm start <path-to-log-file>    # CLI analyzer
 npm run dashboard               # Start web dashboard
+npm run dev:all                 # Run Express + Vite frontend dev servers
 npm test                        # Run Jest unit tests
 npm run test:e2e               # Run Playwright E2E tests
 npm run test:e2e:ui            # Run Playwright with UI
@@ -491,21 +496,22 @@ aio cloudmanager:list-programs
 - **Streaming parsers**: Memory-efficient log processing
 
 ### Frontend
-- **Vanilla JavaScript**: No framework dependencies
+- **React 19**: Component-based dashboard UI
+- **Vite**: Frontend build tooling and dev server
 - **Chart.js**: Interactive visualizations
 - **CSS**: Responsive design with dark mode support
 - **LocalStorage**: Filter presets and user preferences
 
 ### Data Flow
-1. User uploads file or selects Cloud Manager source
-2. Server validates and detects log type
-3. Parser extracts events from log file
+1. User uploads a local file or selects Cloud Manager source
+2. Server validates input and detects log type
+3. Parser extracts events from the log file or Cloud Manager export
 4. Analyzer computes metrics and statistics
-5. Results sent to client via WebSocket or HTTP
-6. Dashboard renders charts and tables
+5. Results are returned over HTTP; live tailing uses WebSocket streaming
+6. React dashboard renders charts, tables, and live log feeds
 
 ### Real-Time Features
-- **WebSocket**: Live log tailing and analysis progress
+- **WebSocket**: Live Cloud Manager log tailing and streaming actions
 - **SSE**: Streaming analysis for large files
 - **Alerting**: Configurable thresholds for errors/warnings
 

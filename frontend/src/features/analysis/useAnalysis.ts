@@ -1,5 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { useAnalysisStore } from './useAnalysisStore';
+import { useFilterStore } from '../filters/useFilters';
 
 export interface AnalysisResult {
   success: boolean;
@@ -18,17 +19,31 @@ async function analyzeFile(filePath: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filePath, filters: {} }),
   });
-  return response.json();
+  const payload = await response.json() as AnalysisResult & Record<string, unknown>;
+
+  if (!response.ok) {
+    throw new Error(`Analysis request failed with status ${response.status}.`);
+  }
+
+  if (!payload.success) {
+    throw new Error(payload.error || 'Analysis failed.');
+  }
+
+  return payload;
 }
 
 export function useAnalysis() {
   const setAnalysis = useAnalysisStore((s) => s.setAnalysis);
+  const addRecentFile = useAnalysisStore((s) => s.addRecentFile);
+  const clearFilters = useFilterStore((s) => s.clear);
   
   return useMutation({
     mutationFn: analyzeFile,
     onSuccess: (data, filePath) => {
       if (data.success) {
         setAnalysis(filePath, data.logType, data);
+        addRecentFile(filePath);
+        clearFilters();
       }
     }
   });

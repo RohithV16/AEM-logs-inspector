@@ -6,6 +6,7 @@ const { buildRequestFilter: buildRequestFilterSvc } = require('../services/reque
 const { buildCDNFilter: buildCDNFilterSvc } = require('../services/cdnLogService');
 const { analyzeEntries, getSummaryFromEntries, getTimelineData, filterAndAnalyzeStream, buildErrorFilterStats, getTrendComparison } = require('../analyzer');
 const { validateFilePath, sanitizeErrorMessage, shouldUseStream } = require('../utils/files');
+const { storeLogFile, findStoredFileByOriginalPath } = require('../utils/logStorage');
 const { MAX_FILE_SIZE } = require('../utils/constants');
 const { isSafeRegex } = require('../utils/regex');
 
@@ -15,6 +16,16 @@ const { isSafeRegex } = require('../utils/regex');
  */
 function createFilterRouter() {
   const router = express.Router();
+
+  // Log all requests to filter router
+  router.use((req, res, next) => {
+    console.log('Filter router received:', req.method, '/api/filter' + req.path);
+    next();
+  });
+
+  router.get('/test', (req, res) => {
+    res.json({ success: true, message: 'Filter router test works!' });
+  });
 
   function validateRegexFilters(filters = {}) {
     const regexFields = ['search', 'logger', 'thread'];
@@ -45,6 +56,15 @@ function createFilterRouter() {
         targetPath = validateFilePath(filePath);
       } else {
         throw new Error('No file path provided');
+      }
+
+      let storageWarning = null;
+      try {
+        const stored = storeLogFile(targetPath);
+        targetPath = stored.storedPath;
+      } catch (storageError) {
+        storageWarning = storageError.message;
+        console.error('Failed to store log file:', storageError.message);
       }
 
       validateRegexFilters(filters || {});
@@ -95,7 +115,8 @@ function createFilterRouter() {
           timeline,
           methods,
           statuses,
-          pods
+          pods,
+          storageWarning
         });
       }
       
@@ -159,7 +180,8 @@ function createFilterRouter() {
           cacheStatuses,
           countries,
           pops,
-          hosts
+          hosts,
+          storageWarning
         });
       }
       
@@ -191,7 +213,8 @@ function createFilterRouter() {
           httpMethods,
           packageThreads: filtered.packageThreads,
           packageExceptions: filtered.packageExceptions,
-          categories: Object.keys(filtered.categories || {}).sort()
+          categories: Object.keys(filtered.categories || {}).sort(),
+          storageWarning
         });
       } else {
         /* For smaller files: load all entries into memory for faster filtering */
@@ -248,13 +271,13 @@ function createFilterRouter() {
           packages: packageDist,
           exceptions: exceptionDist,
           httpMethods,
-          packageThreads,
+packageThreads,
           packageExceptions,
-          categories
+          categories,
+          storageWarning
         });
       }
     } catch (error) {
-      /* Sanitize error message to prevent XSS in client response */
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }
   });
@@ -279,27 +302,339 @@ function createFilterRouter() {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }
   });
-  router.get('/cloudmanager/auth-check', async (_req, res) => {
+
+  /* === GET /api/filter/scan === */
+  /* Scan storage folder and return nested file tree */
+  router.get('/scan', async (req, res) => {
     try {
-      const { execFile } = require('child_process');
-      await new Promise((resolve, reject) => {
-        execFile('aio', ['cloudmanager:list-programs', '--json'], { maxBuffer: 1024 * 1024 }, (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
+      const { scanStorageFolder, getStorageDir } = require('../utils/logStorage');
+      const tree = scanStorageFolder();
+      const storageDir = getStorageDir();
+      res.json({
+        success: true,
+        storageDir,
+        tree
       });
-      res.json({ success: true, authenticated: true });
     } catch (error) {
-      const message = String(error.message || '');
-      if (/auth:login|not logged in|login required|expired token|invalid token|access token|unauthorized|401|ims/i.test(message)) {
-        res.json({ success: false, authenticated: false, error: 'Authorization required. Please log in via Adobe aio CLI by running `aio auth:login`.' });
-        return;
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
+    }
+  });
+
+  /* === POST /api/filter/analyze-batch === */
+  /* Analyze selected files (max 5) */
+  router.post('/analyze-batch', async (req, res) => {
+    const { filePaths } = req.body;
+    
+    if (!Array.isArray(filePaths) || filePaths.length === 0) {
+      return res.json({ success: false, error: 'No files provided' });
+    }
+    
+    if (filePaths.length > 5) {
+      return res.json({ success: false, error: 'Maximum 5 files allowed' });
+    }
+    
+    try {
+      const { getStoredFile, getStorageDir } = require('../utils/logStorage');
+      const { analyzeEntries, getSummaryFromEntries, getTimelineData, buildErrorFilterStats } = require('../analyzer');
+      const { detectLogTypeAndCreateStream, parseLogFile } = require('../parser');
+      const { validateFilePath } = require('../utils/files');
+      
+      const results = [];
+      
+      for (const fileId of filePaths) {
+        const storedFile = getStoredFile(fileId);
+        
+        if (!storedFile) {
+          results.push({ fileId, success: false, error: 'File not found' });
+          continue;
+        }
+        
+        try {
+          const targetPath = validateFilePath(storedFile.storedPath);
+          const { logType, stream } = await detectLogTypeAndCreateStream(targetPath);
+          
+          let entries;
+          if (stream) {
+            entries = [];
+            for await (const entry of stream) {
+              entries.push(entry);
+            }
+          } else {
+            entries = parseLogFile(targetPath);
+          }
+          
+          const stats = buildErrorFilterStats(entries);
+          const analysisResults = analyzeEntries(entries);
+          const summary = getSummaryFromEntries(entries);
+          const timeline = getTimelineData(entries);
+          
+          results.push({
+            fileId,
+            success: true,
+            logType,
+            summary,
+            results: analysisResults,
+            timeline,
+            loggerDist: stats.loggers,
+            threadDist: stats.threads,
+            packages: stats.packages,
+            exceptions: stats.exceptions,
+            fileName: storedFile.fileName,
+            originalPath: storedFile.originalPath
+          });
+        } catch (fileError) {
+          results.push({ fileId, success: false, error: fileError.message });
+        }
       }
-      if (/command not found|ENOENT|not found/i.test(message)) {
-        res.json({ success: false, authenticated: false, error: 'Adobe aio CLI not found. Install it first.' });
-        return;
+      
+      res.json({
+        success: true,
+        results
+      });
+    } catch (error) {
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
+    }
+  });
+
+  /* === GET /api/filter/stored === */
+  /* List all stored log files */
+  router.get('/stored', async (req, res) => {
+    try {
+      const { listStoredFiles, getStorageDir } = require('../utils/logStorage');
+      const files = listStoredFiles();
+      const storageDir = getStorageDir();
+      res.json({
+        success: true,
+        storageDir,
+        files
+      });
+    } catch (error) {
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
+    }
+  });
+
+  /* === DELETE /api/filter/stored/:id === */
+  /* Delete a stored log file */
+  router.delete('/stored/:id', async (req, res) => {
+    try {
+      const { deleteStoredFile } = require('../utils/logStorage');
+      const { id } = req.params;
+      const deleted = deleteStoredFile(id);
+      res.json({ success: deleted });
+    } catch (error) {
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
+    }
+  });
+
+  /* === POST /api/filter/stored/:id/analyze === */
+  /* Analyze a stored log file */
+  router.post('/stored/:id/analyze', async (req, res) => {
+    try {
+      const { getStoredFile } = require('../utils/logStorage');
+      const { id } = req.params;
+      const storedFile = getStoredFile(id);
+      
+      if (!storedFile) {
+        return res.json({ success: false, error: 'Stored file not found' });
       }
-      res.json({ success: false, authenticated: false, error: 'Cloud Manager CLI check failed.' });
+      
+      const targetPath = validateFilePath(storedFile.storedPath);
+      validateRegexFilters(req.body.filters || {});
+      
+      const { logType, stream } = await detectLogTypeAndCreateStream(targetPath);
+      const filters = req.body.filters || {};
+      
+      if (logType === 'request') {
+        const requestFilters = filters;
+        const filter = buildRequestFilterSvc(requestFilters);
+        const requestStream = stream || createRequestLogStream(targetPath);
+        
+        const methods = {};
+        const statuses = {};
+        const pods = {};
+        let totalRequests = 0;
+        let totalResponseTime = 0;
+        const responseTimes = [];
+        const timeline = {};
+        
+        for await (const entry of requestStream) {
+          if (!filter(entry)) continue;
+          
+          totalRequests++;
+          if (entry.method) methods[entry.method] = (methods[entry.method] || 0) + 1;
+          if (entry.status) {
+            statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+            responseTimes.push(entry.responseTime);
+            totalResponseTime += entry.responseTime;
+          }
+          if (entry.pod) pods[entry.pod] = (pods[entry.pod] || 0) + 1;
+          if (entry.timestamp) {
+            const hour = entry.timestamp.substring(0, 13);
+            if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0 };
+            timeline[hour].requests++;
+            if (entry.status >= 400) timeline[hour].errors++;
+          }
+        }
+        
+        responseTimes.sort((a, b) => a - b);
+        const avgResponseTime = totalRequests > 0 ? Math.round(totalResponseTime / responseTimes.length) : 0;
+        
+        return res.json({
+          success: true,
+          logType: 'request',
+          summary: { totalRequests, avgResponseTime },
+          timeline,
+          methods,
+          statuses,
+          pods
+        });
+      }
+      
+      if (logType === 'cdn') {
+        const cdnFilters = filters;
+        const filter = buildCDNFilterSvc(cdnFilters);
+        const cdnStream = stream || createCDNLogStream(targetPath);
+        
+        const methods = {};
+        const statuses = {};
+        const cacheStatuses = {};
+        const countries = {};
+        const pops = {};
+        const hosts = {};
+        let totalRequests = 0;
+        let totalTtfb = 0;
+        let totalTtlb = 0;
+        const timeline = {};
+        
+        for await (const entry of cdnStream) {
+          if (!filter(entry)) continue;
+          
+          totalRequests++;
+          if (entry.method) methods[entry.method] = (methods[entry.method] || 0) + 1;
+          if (entry.status) statuses[entry.status] = (statuses[entry.status] || 0) + 1;
+          if (entry.cache) cacheStatuses[entry.cache] = (cacheStatuses[entry.cache] || 0) + 1;
+          if (entry.clientCountry) countries[entry.clientCountry] = (countries[entry.clientCountry] || 0) + 1;
+          if (entry.pop) pops[entry.pop] = (pops[entry.pop] || 0) + 1;
+          if (entry.ttfb) totalTtfb += entry.ttfb;
+          if (entry.ttlb) totalTtlb += entry.ttlb;
+          if (entry.host) hosts[entry.host] = (hosts[entry.host] || 0) + 1;
+          if (entry.timestamp) {
+            const hour = entry.timestamp.substring(0, 13);
+            if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, cacheHits: 0 };
+            timeline[hour].requests++;
+            if (entry.status >= 400) timeline[hour].errors++;
+            if (entry.cache === 'HIT') timeline[hour].cacheHits++;
+          }
+        }
+        
+        const avgTtfb = totalRequests > 0 ? Math.round(totalTtfb / totalRequests) : 0;
+        const avgTtlb = totalRequests > 0 ? Math.round(totalTtlb / totalRequests) : 0;
+        const cacheHitsCount = (cacheStatuses['HIT'] || 0) + (cacheStatuses['TCP_HIT'] || 0);
+        const cacheHitRatio = totalRequests > 0 ? ((cacheHitsCount / totalRequests) * 100).toFixed(1) : 0;
+        
+        return res.json({
+          success: true,
+          logType: 'cdn',
+          summary: { 
+            totalRequests,
+            avgTtfb,
+            avgTtlb,
+            cacheHitRatio,
+            cacheHits: cacheHitsCount,
+            cacheMisses: totalRequests - cacheHitsCount
+          },
+          timeline,
+          methods,
+          statuses,
+          cacheStatuses,
+          countries,
+          pops,
+          hosts
+        });
+      }
+      
+      const useStream = shouldUseStream(targetPath);
+      
+      if (useStream) {
+        const filtered = await filterAndAnalyzeStream(stream || createLogStream(targetPath), filters);
+        const httpMethods = filtered.httpMethods || {};
+        return res.json({
+          success: true,
+          summary: filtered.summary,
+          results: filtered.results,
+          timeline: filtered.timeline,
+          loggerDist: filtered.loggers,
+          filterError: filtered.filterError,
+          hourlyHeatmap: filtered.hourlyHeatmap || {},
+          threadDist: filtered.threads,
+          logType: 'error',
+          loggers: filtered.loggers,
+          threads: filtered.threads,
+          packages: filtered.packages,
+          exceptions: filtered.exceptions,
+          httpMethods,
+          packageThreads: filtered.packageThreads,
+          packageExceptions: filtered.packageExceptions,
+          categories: Object.keys(filtered.categories || {}).sort()
+        });
+      }
+      
+      let entries;
+      if (stream) {
+        entries = [];
+        for await (const entry of stream) {
+          entries.push(entry);
+        }
+      } else {
+        entries = parseLogFile(targetPath);
+      }
+
+      if (filters) {
+        if (filters.startDate || filters.endDate) {
+          const start = filters.startDate ? new Date(filters.startDate) : null;
+          const end = filters.endDate ? new Date(filters.endDate) : null;
+          if (start && isNaN(start.getTime())) throw new Error('Invalid start date');
+          if (end && isNaN(end.getTime())) throw new Error('Invalid end date');
+        }
+
+        const filter = buildEntryFilter(filters);
+        entries = entries.filter(filter);
+      }
+
+      const stats = buildErrorFilterStats(entries);
+      const results = analyzeEntries(entries);
+      const summary = getSummaryFromEntries(entries);
+      const timeline = getTimelineData(entries);
+      const loggerDist = stats.loggers;
+      const threadDist = stats.threads;
+      const packageDist = stats.packages;
+      const exceptionDist = stats.exceptions;
+      const httpMethods = stats.httpMethods || {};
+      const packageThreads = stats.packageThreads;
+      const packageExceptions = stats.packageExceptions;
+      const categories = Object.keys(stats.categories).sort();
+      const hourlyHeatmap = stats.hourlyHeatmap;
+      return res.json({
+        success: true,
+        summary,
+        results,
+        timeline,
+        loggerDist,
+        filterError: null,
+        hourlyHeatmap,
+        threadDist,
+        logType: 'error',
+        loggers: loggerDist,
+        threads: threadDist,
+        packages: packageDist,
+        exceptions: exceptionDist,
+        httpMethods,
+        packageThreads,
+        packageExceptions,
+        categories
+      });
+    } catch (error) {
+      res.json({ success: false, error: sanitizeErrorMessage(error.message) });
     }
   });
 

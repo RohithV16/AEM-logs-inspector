@@ -69,6 +69,7 @@ function derivePackageGroup(logger) {
 
 function matchesFilterText(actualValue, filterValue) {
   if (!filterValue) return true;
+  if (Array.isArray(filterValue) && filterValue.length === 0) return true;
 
   const values = Array.isArray(filterValue) ? filterValue : [filterValue];
   const actualText = String(actualValue || '');
@@ -531,6 +532,10 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
   const baseFilter = buildEntryFilter(baseFilters);
   const entries = [];
   const levelCounts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
+  const uniqueLoggers = new Set();
+  const uniquePackages = new Set();
+  const uniqueThreads = new Set();
+  const uniqueExceptions = new Set();
   let skipped = (page - 1) * pageSize;
   let total = 0;
 
@@ -538,6 +543,14 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
     if (baseFilter(entry)) {
       levelCounts.ALL++;
       if (entry.level) levelCounts[entry.level] = (levelCounts[entry.level] || 0) + 1;
+    }
+
+    if (entry.logger) uniqueLoggers.add(entry.logger);
+    if (entry.threadName) uniqueThreads.add(entry.threadName);
+    if (entry.exception) uniqueExceptions.add(entry.exception);
+    if (entry.logger) {
+      const pkg = derivePackageGroup(entry.logger);
+      if (pkg) uniquePackages.add(pkg);
     }
 
     if (!filtered(entry)) continue;
@@ -550,7 +563,15 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
     }
   }
 
-  return { entries, total, levelCounts };
+  return { 
+    entries, 
+    total, 
+    levelCounts,
+    loggers: Array.from(uniqueLoggers).sort(),
+    packages: Array.from(uniquePackages).sort(),
+    threads: Array.from(uniqueThreads).sort(),
+    exceptions: Array.from(uniqueExceptions).sort()
+  };
 }
 
 module.exports = {

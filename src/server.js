@@ -15,32 +15,44 @@ const createMultiErrorRouter = require('./routes/multiError');
 const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
-const { createCloudManagerRouter, performCloudManagerDownload } = require('./routes/cloudManager');
+const { createCloudManagerRouter } = require('./routes/cloudManager');
 
 /* === Express App Setup === */
 const app = express();
 const DASHBOARD_URL = `http://localhost:${PORT}`;
 
-/* === Request ID Middleware === */
-app.use((req, res, next) => {
-  req.id = req.headers['x-request-id'] || require('crypto').randomUUID();
-  res.setHeader('x-request-id', req.id);
-  next();
-});
+// Middleware for parsing JSON bodies
+app.use(express.json());
 
-app.use(express.json({ limit: '500mb' }));
-app.use(express.static('public'));
+// Serve static files from the dist directory
 app.use(express.static(path.join(__dirname, '..', 'dist')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'dist/index.html'));
-});
+
+const filterRouter = createFilterRouter();
+console.log('Filter router routes:', filterRouter.stack.filter(l => l.route).map(l => l.route.path));
+
+// Mount filter router at /api/filter
+app.use('/api/filter', filterRouter);
 
 app.use('/api', createAnalyzeRouter());
 app.use('/api', createMultiErrorRouter());
-app.use('/api', createFilterRouter());
+//app.use('/api', filterRouter);  // Already mounted above
 app.use('/api', createEventsRouter());
+
 app.use('/api', createExportRouter());
 app.use('/api', createCloudManagerRouter());
+
+app.get('/test-after', (req, res) => res.json({ msg: 'after routers' }));
+
+app.get('/api/test-direct', (req, res) => res.json({ msg: 'direct test' }));
+
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    next();
+    return;
+  }
+  // For any other request, send index.html for SPA routing
+  res.sendFile(path.join(__dirname, '..', 'dist/index.html'));
+});
 
 app.use((err, req, res, next) => {
   console.error(`[${req.id}] Unhandled error:`, err.message);

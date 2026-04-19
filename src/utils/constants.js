@@ -25,7 +25,7 @@ const REGEX_TIMEOUT_MS = 100;
 /* === Server Configuration === */
 
 // Default port for the web dashboard
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 module.exports = {
   ALLOWED_LOG_EXTENSIONS,

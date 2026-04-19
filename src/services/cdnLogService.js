@@ -302,10 +302,23 @@ async function countAndExtractCDNEntries(filePath, filters = {}, page = 1, pageS
 async function countAndExtractCDNEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildCDNFilter(filters);
   const entries = [];
+  const uniqueMethods = new Set();
+  const uniqueStatuses = new Set();
+  const uniqueCache = new Set();
+  const uniqueCountries = new Set();
+  const uniquePops = new Set();
+  const uniqueHosts = new Set();
   let skipped = (page - 1) * pageSize;
   let totalCount = 0;
 
   for await (const entry of stream) {
+    if (entry.method) uniqueMethods.add(entry.method);
+    if (entry.status) uniqueStatuses.add(String(entry.status));
+    if (entry.cache) uniqueCache.add(entry.cache);
+    if (entry.clientCountry) uniqueCountries.add(entry.clientCountry);
+    if (entry.pop) uniquePops.add(entry.pop);
+    if (entry.host) uniqueHosts.add(entry.host);
+    
     if (filter(entry)) {
       totalCount++;
       if (skipped > 0) {
@@ -316,7 +329,16 @@ async function countAndExtractCDNEntriesFromStream(stream, filters = {}, page = 
     }
   }
 
-  return { entries, total: totalCount };
+  return { 
+    entries, 
+    total: totalCount,
+    methods: Array.from(uniqueMethods).sort(),
+    statuses: Array.from(uniqueStatuses).sort((a, b) => Number(a) - Number(b)),
+    cacheStatuses: Array.from(uniqueCache).sort(),
+    countries: Array.from(uniqueCountries).sort(),
+    pops: Array.from(uniquePops).sort(),
+    hosts: Array.from(uniqueHosts).sort()
+  };
 }
 
 module.exports = {

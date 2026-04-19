@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
 
 export interface TailEntry {
   id: string;
@@ -8,28 +7,92 @@ export interface TailEntry {
   message: string;
 }
 
+interface TailStartPayload {
+  source: 'cloudmanager';
+  environmentId: string;
+  programId?: string;
+  selections: Array<{ service: string; logName: string }>;
+}
+
+interface TailMessage {
+  type: string;
+  error?: string;
+  message?: string;
+  entry?: Partial<TailEntry> & { rawLine?: string };
+}
+
+function getWebSocketUrl() {
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:3000';
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const localHostnames = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
+  const isLocalDevHost = localHostnames.has(window.location.hostname);
+  if (isLocalDevHost && window.location.port && window.location.port !== '3000') {
+    return `${protocol}//${window.location.hostname}:3000`;
+  }
+
+  return `${protocol}//${window.location.host}`;
+}
+
 export function useTailSocket() {
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
   const [entries, setEntries] = useState<TailEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const connect = useCallback((filters?: Record<string, string[]>) => {
-    const newSocket = io('/tail');
-    newSocket.on('connect', () => setConnected(true));
-    newSocket.on('disconnect', () => setConnected(false));
-    newSocket.on('tail-entry', (entry: TailEntry) => {
-      setEntries((prev) => [...prev.slice(-499), entry]);
-    });
-    newSocket.on('tail-error', (err: string) => setError(err));
-    newSocket.on('error', (err: string) => setError(err));
-    if (filters) newSocket.emit('tail-start', filters);
+  const connect = useCallback((payload: TailStartPayload) => {
+    const newSocket = new WebSocket(getWebSocketUrl());
+    newSocket.onopen = () => {
+      setConnected(true);
+      setError(null);
+      newSocket.send(JSON.stringify({ action: 'tail-start', ...payload }));
+    };
+
+    newSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as TailMessage;
+        if (data.type === 'tail-entry') {
+          const entry = data.entry || {};
+          const timestamp = String(entry.timestamp || new Date().toISOString());
+          const level = String(entry.level || 'INFO');
+          const message = String(entry.message || entry.rawLine || '');
+          setEntries((prev) => [...prev.slice(-499), {
+            id: `${Date.now()}-${prev.length}`,
+            timestamp,
+            level,
+            message
+          }]);
+          return;
+        }
+        if (data.type === 'tail-error') {
+          setError(data.error || 'Live tail failed.');
+        } else if (data.type === 'tail-stopped') {
+          setConnected(false);
+        }
+      } catch {
+        setError('Received invalid tail response from server.');
+      }
+    };
+
+    newSocket.onerror = () => {
+      setError('WebSocket connection failed.');
+      setConnected(false);
+    };
+
+    newSocket.onclose = () => {
+      setConnected(false);
+    };
+
     setSocket(newSocket);
   }, []);
 
   const disconnect = useCallback(() => {
-    socket?.emit('tail-stop');
-    socket?.disconnect();
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: 'tail-stop' }));
+    }
+    socket?.close();
     setSocket(null);
     setConnected(false);
   }, [socket]);
@@ -38,7 +101,7 @@ export function useTailSocket() {
 
   useEffect(() => {
     return () => {
-      socket?.disconnect();
+      socket?.close();
     };
   }, [socket]);
 

@@ -20,10 +20,23 @@ interface LogEvent {
 }
 
 interface EventsResponse {
+  success?: boolean;
   events: LogEvent[];
   total: number;
   levelCounts?: { ALL: number; ERROR: number; WARN: number; INFO: number };
   logType: string;
+  packages?: string[];
+  loggers?: string[];
+  threads?: string[];
+  exceptions?: string[];
+  methods?: string[];
+  statuses?: string[];
+  pods?: string[];
+  cacheStatuses?: string[];
+  countries?: string[];
+  pops?: string[];
+  hosts?: string[];
+  error?: string;
 }
 
 export function ResultsTable() {
@@ -33,11 +46,14 @@ export function ResultsTable() {
   
   const filters = useFilterStore();
   const { currentFilePath } = useAnalysisStore();
+  const setAvailableTokens = useFilterStore((state) => state.setAvailableTokens);
 
-  const { data, isLoading } = useQuery<EventsResponse>({
+  const { data, isLoading, isError, error } = useQuery<EventsResponse>({
     queryKey: ['rawEvents', currentFilePath, page, perPage, searchQuery, level, filters],
     queryFn: async () => {
-      if (!currentFilePath) return { events: [], total: 0, logType: 'default' };
+      if (!currentFilePath) {
+        return { success: true, events: [], total: 0, logType: 'default' };
+      }
       
       const response = await fetch(`/api/raw-events`, {
         method: 'POST',
@@ -61,7 +77,40 @@ export function ResultsTable() {
           cache: filters.advancedRules.find(r => r.field === 'cache')?.value,
         })
       });
-      return response.json();
+      const payload = await response.json() as EventsResponse;
+
+      if (!response.ok) {
+        throw new Error(`Failed to load events (HTTP ${response.status}).`);
+      }
+      if (!payload.success) {
+        throw new Error(payload.error || 'Failed to load events.');
+      }
+
+      if (payload.packages || payload.loggers || payload.threads || payload.exceptions) {
+        setAvailableTokens({
+          packages: payload.packages,
+          loggers: payload.loggers,
+          threads: payload.threads,
+          exceptions: payload.exceptions,
+        });
+      } else if (payload.methods || payload.statuses || payload.pods) {
+        setAvailableTokens({
+          methods: payload.methods,
+          statuses: payload.statuses,
+          pods: payload.pods,
+        });
+      } else if (payload.methods || payload.statuses || payload.cacheStatuses || payload.countries || payload.pops || payload.hosts) {
+        setAvailableTokens({
+          methods: payload.methods,
+          statuses: payload.statuses,
+          cacheStatuses: payload.cacheStatuses,
+          countries: payload.countries,
+          pops: payload.pops,
+          hosts: payload.hosts,
+        });
+      }
+
+      return payload;
     },
   });
 
@@ -106,6 +155,8 @@ export function ResultsTable() {
       <div className="raw-events-section">
         {isLoading ? (
           <div className="loading-state">Loading events...</div>
+        ) : isError ? (
+          <div className="error-message">{error instanceof Error ? error.message : 'Failed to load events.'}</div>
         ) : (
           <div id="rawEvents">
             {(data?.events || []).map((event: LogEvent, idx: number) => (

@@ -302,10 +302,17 @@ async function countAndExtractRequestEntries(filePath, filters = {}, page = 1, p
 async function countAndExtractRequestEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildRequestFilter(filters);
   const entries = [];
+  const uniqueMethods = new Set();
+  const uniqueStatuses = new Set();
+  const uniquePods = new Set();
   let skipped = (page - 1) * pageSize;
   let totalCount = 0;
 
   for await (const entry of stream) {
+    if (entry.method) uniqueMethods.add(entry.method);
+    if (entry.status) uniqueStatuses.add(String(entry.status));
+    if (entry.pod) uniquePods.add(entry.pod);
+    
     if (filter(entry)) {
       totalCount++;
       if (skipped > 0) {
@@ -316,7 +323,13 @@ async function countAndExtractRequestEntriesFromStream(stream, filters = {}, pag
     }
   }
 
-  return { entries, total: totalCount };
+  return { 
+    entries, 
+    total: totalCount,
+    methods: Array.from(uniqueMethods).sort(),
+    statuses: Array.from(uniqueStatuses).sort((a, b) => Number(a) - Number(b)),
+    pods: Array.from(uniquePods).sort()
+  };
 }
 
 module.exports = {

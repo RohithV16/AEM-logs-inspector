@@ -28,10 +28,10 @@ function TokenPicker({ label, tokens, selected, onAdd, onRemove }: TokenPickerPr
           <input
             type="text"
             className="filter-input dropdown-search"
-            placeholder={`Search ${label.toLowerCase()}...`}
+            placeholder={tokens.length === 0 ? `Analyze a log file to see ${label.toLowerCase()}` : `Search ${label.toLowerCase()}...`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setIsOpen(true)}
+            onFocus={() => tokens.length > 0 && setIsOpen(true)}
             onBlur={() => setTimeout(() => setIsOpen(false), 200)}
           />
           {isOpen && filtered.length > 0 && (
@@ -66,11 +66,12 @@ function TokenPicker({ label, tokens, selected, onAdd, onRemove }: TokenPickerPr
 }
 
 export function PackageTokenPicker() {
-  const { packages, addPackage, removePackage } = useFilterStore();
+  const { packages, availablePackages, addPackage, removePackage } = useFilterStore();
+  const tokens = availablePackages.length > 0 ? availablePackages : [];
   return (
     <TokenPicker
       label="Packages"
-      tokens={['com.example.app', 'com.example.core', 'com.example.ui']}
+      tokens={tokens}
       selected={packages}
       onAdd={addPackage}
       onRemove={removePackage}
@@ -79,11 +80,12 @@ export function PackageTokenPicker() {
 }
 
 export function LoggerTokenPicker() {
-  const { loggers, addLogger, removeLogger } = useFilterStore();
+  const { loggers, availableLoggers, addLogger, removeLogger } = useFilterStore();
+  const tokens = availableLoggers.length > 0 ? availableLoggers : [];
   return (
     <TokenPicker
       label="Loggers"
-      tokens={['ERROR', 'WARN', 'INFO', 'DEBUG']}
+      tokens={tokens}
       selected={loggers}
       onAdd={addLogger}
       onRemove={removeLogger}
@@ -92,11 +94,12 @@ export function LoggerTokenPicker() {
 }
 
 export function ThreadTokenPicker() {
-  const { threads, addThread, removeThread } = useFilterStore();
+  const { threads, availableThreads, addThread, removeThread } = useFilterStore();
+  const tokens = availableThreads.length > 0 ? availableThreads : [];
   return (
     <TokenPicker
       label="Threads"
-      tokens={['main', 'pool-1', 'pool-2']}
+      tokens={tokens}
       selected={threads}
       onAdd={addThread}
       onRemove={removeThread}
@@ -105,11 +108,12 @@ export function ThreadTokenPicker() {
 }
 
 export function ExceptionTokenPicker() {
-  const { exceptions, addException, removeException } = useFilterStore();
+  const { exceptions, availableExceptions, addException, removeException } = useFilterStore();
+  const tokens = availableExceptions.length > 0 ? availableExceptions : [];
   return (
     <TokenPicker
       label="Exceptions"
-      tokens={['NullPointerException', 'IOException', 'RuntimeException']}
+      tokens={tokens}
       selected={exceptions}
       onAdd={addException}
       onRemove={removeException}

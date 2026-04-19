@@ -2,7 +2,6 @@ import { ThemeControls } from './features/preferences/ThemeControls';
 import { Sidebar } from './features/workspace/Sidebar';
 import { SourceModeSwitcher } from './features/workspace/SourceModeSwitcher';
 import { LocalFileInput } from './features/analysis/LocalFileInput';
-import { BatchInput } from './features/analysis/BatchInput';
 import { ResultsTable } from './features/results/ResultsTable';
 import { Toaster } from './shared/components/Toaster';
 import { useWorkspaceStore, DashboardTab } from './features/workspace/useWorkspace';
@@ -21,7 +20,6 @@ export default function App() {
     <div className="main-grid">
       <Sidebar />
       <main className="main-content">
-        {/* ... existing upload-card ... */}
         <div className="upload-card">
           <div className="upload-card-header">
             <div>
@@ -37,8 +35,9 @@ export default function App() {
             {sourceMode === 'local' ? (
               <>
                 <LocalFileInput />
-                <BatchInput />
-                <p className="upload-hint">Use one path for standard analysis or comma-separated error logs for merged error analysis.</p>
+                <p className="upload-hint">
+                  Enter absolute path to a local AEM error, request, or CDN log.
+                </p>
               </>
             ) : (
               <CloudManagerPanel />

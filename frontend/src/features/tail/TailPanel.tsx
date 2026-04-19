@@ -1,9 +1,11 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useState, useRef, useEffect } from 'react';
 import { useTailSocket } from './useTailSocket';
+import { useCloudManagerStore } from '../cloud-manager/useCloudManager';
 
 export function TailPanel() {
   const { entries, connected, error, connect, disconnect, clear } = useTailSocket();
+  const { selectedProgramId, selectedEnvironmentId, selectedLogOptions, logOptions } = useCloudManagerStore();
   const [autoScroll, setAutoScroll] = useState(true);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -21,6 +23,24 @@ export function TailPanel() {
     }
   }, [entries.length, autoScroll, virtualizer]);
 
+  const selectedSelections = logOptions
+    .filter((option) => selectedLogOptions.includes(`${option.service}:${option.name}`))
+    .map((option) => ({ service: option.service, logName: option.name }));
+  const canStart = Boolean(selectedEnvironmentId && selectedSelections.length > 0);
+
+  function handleStart() {
+    if (!selectedEnvironmentId || selectedSelections.length === 0) {
+      return;
+    }
+
+    connect({
+      source: 'cloudmanager',
+      environmentId: selectedEnvironmentId,
+      programId: selectedProgramId || undefined,
+      selections: selectedSelections
+    });
+  }
+
   return (
     <section id="tailPanel" className="tail-panel result-view-panel active">
       <div className="tail-header">
@@ -34,7 +54,8 @@ export function TailPanel() {
         <div className="tail-header-actions">
           <button 
             className={`tail-stop-btn ${!connected ? 'start' : ''}`} 
-            onClick={connected ? disconnect : () => connect()}
+            onClick={connected ? disconnect : handleStart}
+            disabled={!connected && !canStart}
           >
             {connected ? 'Stop Tail' : 'Start Tail'}
           </button>
@@ -54,6 +75,9 @@ export function TailPanel() {
       </div>
 
       {error && <div className="tail-status error">{error}</div>}
+      {!connected && !error && !canStart && (
+        <div className="tail-status">Select Cloud Manager log options before starting tail.</div>
+      )}
 
       <div 
         ref={parentRef} 

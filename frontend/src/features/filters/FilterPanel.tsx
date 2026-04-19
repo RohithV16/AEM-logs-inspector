@@ -10,7 +10,7 @@ export function FilterPanel() {
         <label>
           From
           <input
-            type="date"
+            type="datetime-local"
             value={dateRange.start}
             onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
           />
@@ -18,7 +18,7 @@ export function FilterPanel() {
         <label>
           To
           <input
-            type="date"
+            type="datetime-local"
             value={dateRange.end}
             onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
           />
