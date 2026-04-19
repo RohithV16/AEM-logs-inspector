@@ -34,25 +34,30 @@ async function awaitAnalysisComplete(page, options = {}) {
 async function awaitFilterApply(page, options = {}) {
   const { timeout = 15000 } = options;
 
-  // Wait for the progressText to have the 'hidden' class
-  await page.waitForFunction(() => {
-    const el = document.getElementById('progressText');
-    return !el || el.classList.contains('hidden');
-  }, { timeout });
+  const timeoutMs = Date.now() + timeout;
   
-  // Wait for the container to have content that isn't a "Loading" placeholder
-  await page.waitForFunction(() => {
-    const rawEvents = document.getElementById('rawEvents');
-    if (!rawEvents || rawEvents.children.length === 0) return false;
-    
-    // Check if it still has a loading message
-    const text = rawEvents.textContent || '';
-    if (text.includes('Loading')) return false;
-    
-    return true;
-  }, { timeout });
+  while (Date.now() < timeoutMs) {
+    const errorToast = await page.locator('.toast.error').isVisible().catch(() => false);
+    if (errorToast) {
+      const errorText = await page.locator('.toast.error').textContent();
+      throw new Error(`Filter failed: ${errorText}`);
+    }
 
-  return true;
+    const progressHidden = await page.locator('#progressText').evaluate(el => el.classList.contains('hidden')).catch(() => true);
+    if (progressHidden) {
+      // Check if it still has a loading message in rawEvents
+      const isLoading = await page.evaluate(() => {
+        const rawEvents = document.getElementById('rawEvents');
+        return !rawEvents || rawEvents.textContent.includes('Loading');
+      });
+      
+      if (!isLoading) return true;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error('Filter did not apply within timeout');
 }
 
 function getSummaryCounts(page) {
