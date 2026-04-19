@@ -2,6 +2,8 @@ import { ThemeProvider } from './features/preferences/ThemeProvider';
 import { ThemeControls } from './features/preferences/ThemeControls';
 import { WorkspaceShell } from './features/workspace/WorkspaceShell';
 import { SourceModeSwitcher } from './features/workspace/SourceModeSwitcher';
+import { LocalFileInput } from './features/analysis/LocalFileInput';
+import { BatchInput } from './features/analysis/BatchInput';
 
 export default function App() {
   return (
@@ -11,7 +13,10 @@ export default function App() {
           <ThemeControls />
           <SourceModeSwitcher />
         </header>
-        <WorkspaceShell />
+        <WorkspaceShell>
+          <LocalFileInput />
+          <BatchInput />
+        </WorkspaceShell>
       </div>
     </ThemeProvider>
   );
