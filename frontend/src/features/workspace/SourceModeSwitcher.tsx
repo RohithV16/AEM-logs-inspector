@@ -1,38 +1,28 @@
-import { useState, useEffect } from 'react';
-
-type SourceMode = 'local' | 'cloudmanager';
+import { useWorkspaceStore } from './useWorkspace';
 
 export function SourceModeSwitcher() {
-  const [mode, setMode] = useState<SourceMode>(() => {
-    return (localStorage.getItem('aem_sourceMode') as SourceMode) || 'local';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('aem_sourceMode', mode);
-  }, [mode]);
+  const { sourceMode, setSourceMode } = useWorkspaceStore();
 
   return (
-    <div role="radiogroup">
-      <label>
-        <input
-          type="radio"
-          name="sourceMode"
-          value="local"
-          checked={mode === 'local'}
-          onChange={() => setMode('local')}
-        />
-        Local
-      </label>
-      <label>
-        <input
-          type="radio"
-          name="sourceMode"
-          value="cloudmanager"
-          checked={mode === 'cloudmanager'}
-          onChange={() => setMode('cloudmanager')}
-        />
+    <div className="source-mode-switch" role="tablist" aria-label="Analysis source mode">
+      <button
+        id="sourceModeLocal"
+        className={`source-mode-btn ${sourceMode === 'local' ? 'active' : ''}`}
+        type="button"
+        onClick={() => setSourceMode('local')}
+        aria-selected={sourceMode === 'local'}
+      >
+        Local Path
+      </button>
+      <button
+        id="sourceModeCloudManager"
+        className={`source-mode-btn ${sourceMode === 'cloudmanager' ? 'active' : ''}`}
+        type="button"
+        onClick={() => setSourceMode('cloudmanager')}
+        aria-selected={sourceMode === 'cloudmanager'}
+      >
         Cloud Manager
-      </label>
+      </button>
     </div>
   );
 }

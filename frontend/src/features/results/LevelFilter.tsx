@@ -1,20 +1,22 @@
-import { useState } from 'react';
-
-type Level = 'ALL' | 'ERROR' | 'WARN' | 'INFO';
 
 interface LevelFilterProps {
-  counts: Record<Level, number>;
+  activeLevel: string;
+  onLevelChange: (level: string) => void;
+  counts: Record<string, number>;
 }
 
-export function LevelFilter({ counts }: LevelFilterProps) {
-  const [level, setLevel] = useState<Level>('ALL');
+export function LevelFilter({ activeLevel, onLevelChange, counts }: LevelFilterProps) {
+  const levels = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG'];
 
   return (
-    <div className="level-filter">
-      {(['ALL', 'ERROR', 'WARN', 'INFO'] as Level[]).map((l) => (
-        <button key={l} className={level === l ? 'active' : ''} onClick={() => setLevel(l)}>
-          {l}
-          <span className="count">{counts[l]}</span>
+    <div id="levelFilters" className="level-filters">
+      {levels.map((l) => (
+        <button
+          key={l}
+          className={`level-chip ${l.toLowerCase()} ${activeLevel === l ? 'active' : ''}`}
+          onClick={() => onLevelChange(l)}
+        >
+          {l} <span id={`count${l}`}>{counts[l] || 0}</span>
         </button>
       ))}
     </div>

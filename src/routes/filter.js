@@ -1,7 +1,7 @@
 /* === Imports === */
 const express = require('express');
 const { detectLogTypeAndCreateStream, parseLogFile, createLogStream, createRequestLogStream, createCDNLogStream } = require('../parser');
-const { buildEntryFilter, buildRequestFilter, buildCDNFilter } = require('../services/errorLogService');
+const { buildEntryFilter } = require('../services/errorLogService');
 const { buildRequestFilter: buildRequestFilterSvc } = require('../services/requestLogService');
 const { buildCDNFilter: buildCDNFilterSvc } = require('../services/cdnLogService');
 const { analyzeEntries, getSummaryFromEntries, getTimelineData, filterAndAnalyzeStream, buildErrorFilterStats, getTrendComparison } = require('../analyzer');
@@ -112,6 +112,8 @@ function createFilterRouter() {
         const pops = {};
         const hosts = {};
         let totalRequests = 0;
+        let totalTtfb = 0;
+        let totalTtlb = 0;
         const timeline = {};
         
         for await (const entry of cdnStream) {
@@ -123,7 +125,9 @@ function createFilterRouter() {
           if (entry.cache) cacheStatuses[entry.cache] = (cacheStatuses[entry.cache] || 0) + 1;
           if (entry.clientCountry) countries[entry.clientCountry] = (countries[entry.clientCountry] || 0) + 1;
           if (entry.pop) pops[entry.pop] = (pops[entry.pop] || 0) + 1;
-          if (entry.host) hosts[entry.host] = (hosts[entry.host] || 0) + 1;
+          if (entry.ttfb) totalTtfb += entry.ttfb;
+        if (entry.ttlb) totalTtlb += entry.ttlb;
+        if (entry.host) hosts[entry.host] = (hosts[entry.host] || 0) + 1;
           if (entry.timestamp) {
             const hour = entry.timestamp.substring(0, 13);
             if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, cacheHits: 0 };
@@ -133,10 +137,22 @@ function createFilterRouter() {
           }
         }
         
+        const avgTtfb = totalRequests > 0 ? Math.round(totalTtfb / totalRequests) : 0;
+        const avgTtlb = totalRequests > 0 ? Math.round(totalTtlb / totalRequests) : 0;
+        const cacheHitsCount = (cacheStatuses['HIT'] || 0) + (cacheStatuses['TCP_HIT'] || 0);
+        const cacheHitRatio = totalRequests > 0 ? ((cacheHitsCount / totalRequests) * 100).toFixed(1) : 0;
+        
         return res.json({
           success: true,
           logType: 'cdn',
-          summary: { totalRequests },
+          summary: { 
+            totalRequests,
+            avgTtfb,
+            avgTtlb,
+            cacheHitRatio,
+            cacheHits: cacheHitsCount,
+            cacheMisses: totalRequests - cacheHitsCount
+          },
           timeline,
           methods,
           statuses,
@@ -261,6 +277,29 @@ function createFilterRouter() {
       res.json({ success: true, trend });
     } catch (error) {
       res.json({ success: false, error: sanitizeErrorMessage(error.message) });
+    }
+  });
+  router.get('/cloudmanager/auth-check', async (_req, res) => {
+    try {
+      const { execFile } = require('child_process');
+      await new Promise((resolve, reject) => {
+        execFile('aio', ['cloudmanager:list-programs', '--json'], { maxBuffer: 1024 * 1024 }, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      res.json({ success: true, authenticated: true });
+    } catch (error) {
+      const message = String(error.message || '');
+      if (/auth:login|not logged in|login required|expired token|invalid token|access token|unauthorized|401|ims/i.test(message)) {
+        res.json({ success: false, authenticated: false, error: 'Authorization required. Please log in via Adobe aio CLI by running `aio auth:login`.' });
+        return;
+      }
+      if (/command not found|ENOENT|not found/i.test(message)) {
+        res.json({ success: false, authenticated: false, error: 'Adobe aio CLI not found. Install it first.' });
+        return;
+      }
+      res.json({ success: false, authenticated: false, error: 'Cloud Manager CLI check failed.' });
     }
   });
 

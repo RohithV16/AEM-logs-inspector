@@ -1,8 +1,10 @@
 import { useMutation } from '@tanstack/react-query';
+import { useAnalysisStore } from './useAnalysisStore';
 
 export interface AnalysisResult {
   success: boolean;
   error?: string;
+  logType?: string;
 }
 
 export interface BatchInput {
@@ -10,18 +12,25 @@ export interface BatchInput {
   logTypes: ('error' | 'request' | 'cdn')[];
 }
 
-async function analyzeFile(filePath: string): Promise<AnalysisResult> {
-  const response = await fetch('/api/analyze', {
+async function analyzeFile(filePath: string) {
+  const response = await fetch('/api/filter', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filePath }),
+    body: JSON.stringify({ filePath, filters: {} }),
   });
   return response.json();
 }
 
 export function useAnalysis() {
+  const setAnalysis = useAnalysisStore((s) => s.setAnalysis);
+  
   return useMutation({
     mutationFn: analyzeFile,
+    onSuccess: (data, filePath) => {
+      if (data.success) {
+        setAnalysis(filePath, data.logType, data);
+      }
+    }
   });
 }
 

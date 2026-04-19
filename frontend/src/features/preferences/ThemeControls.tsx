@@ -4,13 +4,28 @@ export function ThemeControls() {
   const { theme, setTheme } = useTheme();
 
   return (
-    <select
-      value={theme}
-      onChange={(e) => setTheme(e.target.value as 'system' | 'light' | 'dark')}
-    >
-      <option value="system">System</option>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
+    <div className="theme-switcher upload-theme-switcher" role="group" aria-label="Color theme">
+      <button
+        className={`theme-option ${theme === 'system' ? 'active' : ''}`}
+        type="button"
+        onClick={() => setTheme('system')}
+      >
+        Auto
+      </button>
+      <button
+        className={`theme-option ${theme === 'light' ? 'active' : ''}`}
+        type="button"
+        onClick={() => setTheme('light')}
+      >
+        Light
+      </button>
+      <button
+        className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
+        type="button"
+        onClick={() => setTheme('dark')}
+      >
+        Dark
+      </button>
+    </div>
   );
 }

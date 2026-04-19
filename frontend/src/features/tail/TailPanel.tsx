@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTailSocket } from './useTailSocket';
 
 export function TailPanel() {
@@ -10,38 +10,82 @@ export function TailPanel() {
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 32,
-    overscan: 10,
+    estimateSize: () => 40,
+    overscan: 15,
   });
 
+  // Handle auto-scroll
+  useEffect(() => {
+    if (autoScroll && entries.length > 0) {
+      virtualizer.scrollToIndex(entries.length - 1);
+    }
+  }, [entries.length, autoScroll, virtualizer]);
+
   return (
-    <div className="tail-panel">
-      <div className="tail-status">
-        <span className={connected ? 'connected' : 'disconnected'}>
-          {connected ? 'Connected' : 'Disconnected'}
-        </span>
-        <button onClick={connected ? disconnect : connect}>
-          {connected ? 'Stop' : 'Start'}
-        </button>
-        <button onClick={clear}>Clear</button>
-        <label>
-          <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
-          Auto-scroll
-        </label>
-      </div>
-      {error && <div className="tail-error">{error}</div>}
-      <div ref={parentRef} className="tail-entries">
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => (
-            <div key={virtualRow.key} style={{
-              position: 'absolute', top: 0, left: 0, width: '100%',
-              height: `${virtualRow.size}px`, transform: `translateY(${virtualRow.start}px)`,
-            }}>
-              {entries[virtualRow.index]?.timestamp} {entries[virtualRow.index]?.level} {entries[virtualRow.index]?.message}
-            </div>
-          ))}
+    <section id="tailPanel" className="tail-panel result-view-panel active">
+      <div className="tail-header">
+        <div className="tail-header-left">
+          <div className={`tail-live-indicator ${connected ? 'active' : ''}`}>
+            <span className="tail-live-dot"></span>
+            <span className="tail-live-text">{connected ? 'Live' : 'Paused'}</span>
+          </div>
+          <h3 id="tailTitle">{connected ? 'Streaming Logs...' : 'Tail Stopped'}</h3>
+        </div>
+        <div className="tail-header-actions">
+          <button 
+            className={`tail-stop-btn ${!connected ? 'start' : ''}`} 
+            onClick={connected ? disconnect : () => connect()}
+          >
+            {connected ? 'Stop Tail' : 'Start Tail'}
+          </button>
         </div>
       </div>
-    </div>
+
+      <div className="tail-controls">
+        <div className="tail-action-row">
+          <button 
+            className={`tail-action-btn ${autoScroll ? 'active' : ''}`}
+            onClick={() => setAutoScroll(!autoScroll)}
+          >
+            <span className="tail-action-icon">↓</span> Auto-scroll
+          </button>
+          <button className="tail-action-btn" onClick={clear}>Clear</button>
+        </div>
+      </div>
+
+      {error && <div className="tail-status error">{error}</div>}
+
+      <div 
+        ref={parentRef} 
+        className="tail-feed" 
+        style={{ height: '600px', overflowY: 'auto', background: 'var(--bg-card)' }}
+      >
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const entry = entries[virtualRow.index];
+            return (
+              <div 
+                key={virtualRow.key} 
+                className={`log-entry ${entry.level.toLowerCase()}`}
+                style={{
+                  position: 'absolute', top: 0, left: 0, width: '100%',
+                  height: `${virtualRow.size}px`, transform: `translateY(${virtualRow.start}px)`,
+                  padding: '8px 15px', borderBottom: '1px solid var(--border-color)',
+                  fontFamily: 'var(--font-mono)', fontSize: '12px'
+                }}
+              >
+                <span className="log-timestamp" style={{ marginRight: '10px', color: 'var(--text-muted)' }}>
+                  {entry.timestamp}
+                </span>
+                <span className={`level-chip ${entry.level.toLowerCase()}`} style={{ marginRight: '10px' }}>
+                  {entry.level}
+                </span>
+                <span className="log-message">{entry.message}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }

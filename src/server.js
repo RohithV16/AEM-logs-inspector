@@ -30,9 +30,9 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '500mb' }));
 app.use(express.static('public'));
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, '..', 'dist')));
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist/index.html'));
+  res.sendFile(path.join(__dirname, '..', 'dist/index.html'));
 });
 
 app.use('/api', createAnalyzeRouter());

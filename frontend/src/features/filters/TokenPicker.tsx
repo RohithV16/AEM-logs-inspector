@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useFilterStore } from './useFilters';
 
 interface TokenPickerProps {
@@ -9,31 +10,57 @@ interface TokenPickerProps {
 }
 
 function TokenPicker({ label, tokens, selected, onAdd, onRemove }: TokenPickerProps) {
-  const available = tokens.filter((t) => !selected.includes(t));
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+
+  const filtered = tokens.filter(t => 
+    t.toLowerCase().includes(query.toLowerCase()) && !selected.includes(t)
+  );
 
   return (
-    <div className="token-picker">
-      <fieldset>
-        <legend>{label}</legend>
-        <select onChange={(e) => {
-          if (e.target.value) {
-            onAdd(e.target.value);
-            e.target.value = '';
-          }
-        }}>
-          <option value="">Select {label}</option>
-          {available.map((token) => (
-            <option key={token} value={token}>{token}</option>
-          ))}
-        </select>
-        <div className="selected-tokens">
-          {selected.map((token) => (
-            <button key={token} type="button" onClick={() => onRemove(token)}>
-              {token} ×
-            </button>
-          ))}
+    <div className="filter-group">
+      <div className="filter-section-header">
+        <p className="filter-section-label">{label}</p>
+        <span className="filter-count">{selected.length || ''}</span>
+      </div>
+      <div className="filter-control-row">
+        <div className={`searchable-dropdown ${isOpen ? 'active' : ''}`}>
+          <input
+            type="text"
+            className="filter-input dropdown-search"
+            placeholder={`Search ${label.toLowerCase()}...`}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setIsOpen(true)}
+            onBlur={() => setTimeout(() => setIsOpen(false), 200)}
+          />
+          {isOpen && filtered.length > 0 && (
+            <div className="token-picker-results" style={{ display: 'block' }}>
+              {filtered.slice(0, 10).map(t => (
+                <div 
+                  key={t} 
+                  className="token-result-item"
+                  onClick={() => {
+                    onAdd(t);
+                    setQuery('');
+                    setIsOpen(false);
+                  }}
+                >
+                  {t}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      </fieldset>
+      </div>
+      <div className="filter-tags">
+        {selected.map(token => (
+          <span key={token} className="filter-tag">
+            {token}
+            <button className="tag-remove" onClick={() => onRemove(token)}>&times;</button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

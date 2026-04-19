@@ -8,6 +8,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    open: true,
     proxy: {
       '/api': 'http://localhost:3000',
       '/socket.io': {
