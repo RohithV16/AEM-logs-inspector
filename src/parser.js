@@ -206,7 +206,7 @@ function detectLogTypeFromLine(line) {
   if (trimmed.startsWith('{')) return 'cdn';
   if (/^\d{2}\/\w{3}\/\d{4}:/.test(trimmed)) return 'request';
   if (APACHE_ACCESS_PATTERN.test(trimmed)) return 'request';
-  if (/^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'error';
+  if (/^\d{2}\.\d{2}\.\d{4}/.test(trimmed) || /^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return 'error';
   return null;
 }
 

@@ -3,7 +3,8 @@ const {
   parseLine,
   parseErrorRequestContext,
   parseLogFile,
-  parseAllLevels
+  parseAllLevels,
+  detectLogTypeFromLine
 } = require('../../src/parser');
 
 describe('parser - timestamp parsing', () => {
@@ -216,3 +217,26 @@ describe('parser - simple logger format (ISSUE-002)', () => {
     expect(entry.message).toBe('Async indexer failed');
   });
 });
+
+describe('parser - ISO format support (AEMaaCS)', () => {
+  test('parseLine handles ISO-8601 timestamps', () => {
+    const entry = parseLine('2026-03-29T14:30:15.123Z *ERROR* com.example.Class Something failed');
+    
+    expect(entry).not.toBeNull();
+    expect(entry.timestamp).toBe('2026-03-29T14:30:15.123Z');
+    expect(entry.level).toBe('ERROR');
+    expect(entry.logger).toBe('com.example.Class');
+    expect(entry.message).toBe('Something failed');
+  });
+
+  test('detectLogTypeFromLine correctly identifies ISO error logs', () => {
+    const line = '2026-03-29T14:30:15.123Z *ERROR* com.example.Class msg';
+    expect(detectLogTypeFromLine(line)).toBe('error');
+  });
+
+  test('detectLogTypeFromLine returns null for malformed ISO-like line', () => {
+    const line = '2026-03-29 Something *ERROR*';
+    expect(detectLogTypeFromLine(line)).toBeNull();
+  });
+});
+
