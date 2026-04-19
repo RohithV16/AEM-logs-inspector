@@ -11,6 +11,7 @@ const TEST_DATA_DIR = path.join(ROOT_DIR, config.logs.directory);
 const ERROR_LOG = path.join(TEST_DATA_DIR, config.logs.error);
 const REQUEST_LOG = path.join(TEST_DATA_DIR, config.logs.request);
 const CDN_LOG = path.join(TEST_DATA_DIR, config.logs.cdn);
+const { awaitAnalysisComplete } = require('./helpers');
 
 const TIMEOUTS = config.timeouts;
 
@@ -23,7 +24,7 @@ test.describe('AEM Log Inspector - Log Type Tests', () => {
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
     
-    await page.waitForTimeout(TIMEOUTS.analyze + 2000);
+    await awaitAnalysisComplete(page);
     
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 15000 });
@@ -33,7 +34,7 @@ test.describe('AEM Log Inspector - Log Type Tests', () => {
     await page.locator('#filePath').fill(REQUEST_LOG);
     await page.locator('#analyzeBtn').click();
     
-    await page.waitForTimeout(TIMEOUTS.request_analyze);
+    await awaitAnalysisComplete(page);
     
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 15000 });
@@ -43,7 +44,7 @@ test.describe('AEM Log Inspector - Log Type Tests', () => {
     await page.locator('#filePath').fill(REQUEST_LOG);
     await page.locator('#analyzeBtn').click();
     
-    await page.waitForTimeout(TIMEOUTS.request_analyze);
+    await awaitAnalysisComplete(page);
     
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 15000 });
@@ -53,7 +54,7 @@ test.describe('AEM Log Inspector - Log Type Tests', () => {
     await page.locator('#filePath').fill(CDN_LOG);
     await page.locator('#analyzeBtn').click();
     
-    await page.waitForTimeout(TIMEOUTS.cdn_analyze);
+    await awaitAnalysisComplete(page);
     
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 15000 });
@@ -63,7 +64,7 @@ test.describe('AEM Log Inspector - Log Type Tests', () => {
     await page.locator('#filePath').fill(CDN_LOG);
     await page.locator('#analyzeBtn').click();
     
-    await page.waitForTimeout(TIMEOUTS.cdn_analyze);
+    await awaitAnalysisComplete(page);
     
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 15000 });

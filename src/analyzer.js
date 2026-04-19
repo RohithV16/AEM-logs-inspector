@@ -108,21 +108,22 @@ function filterByRegex(entries, regexPattern) {
 // Extracts top-level package from fully-qualified Java class names
 // e.g., "org.apache.sling.api.ServletResolver" -> "org.apache.sling"
 
-/**
- * Regex to extract package from fully-qualified class name
- * Captures first two package segments (e.g., org.apache from org.apache.sling)
- */
-const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
+function cleanLoggerName(logger) {
+  if (!logger) return '';
+  return String(logger).replace(/^(?:sling-default-\d+-|qtp\d+-\d+-|oak-repository-executor-\d+-|\[[^\]]+\]\s+)/, '');
+}
 
-/**
- * Derives package group from logger class name for high-level categorization
- * @param {string} logger - Full logger class name
- * @returns {string|null} Package name or null
- */
 function derivePackageGroup(logger) {
   if (!logger) return null;
-  const match = logger.match(packageRegex);
-  return match ? match[1] : null;
+  const clean = cleanLoggerName(logger);
+  const parts = clean.split('.');
+  if (parts.length >= 3) {
+    return parts.slice(0, 3).join('.');
+  }
+  if (parts.length >= 2) {
+    return parts.slice(0, 2).join('.');
+  }
+  return parts[0];
 }
 
 function createEmptyErrorFilterStats() {
@@ -135,6 +136,7 @@ function createEmptyErrorFilterStats() {
     packageThreads: {},
     packageExceptions: {},
     categories: {},
+    pods: {},
     timeline: {},
     hourlyHeatmap: {
       heatmap: {},
@@ -150,6 +152,7 @@ function addCount(bucket, key, amount = 1) {
 
 function collectErrorFilterStats(stats, entry) {
   const pkg = derivePackageGroup(entry.logger);
+  
 
   if (entry.logger) {
     addCount(stats.loggers, entry.logger);
@@ -159,11 +162,13 @@ function collectErrorFilterStats(stats, entry) {
     addCount(stats.httpMethods, entry.httpMethod);
   }
 
-  if (entry.thread) {
-    addCount(stats.threads, entry.thread);
+  const packageToken = entry.instanceId || entry.thread;
+  if (packageToken) {
+    if (entry.thread) addCount(stats.threads, entry.thread);
+    if (entry.instanceId) addCount(stats.pods, entry.instanceId);
     if (pkg) {
       if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
-      addCount(stats.packageThreads[pkg], entry.thread);
+      addCount(stats.packageThreads[pkg], packageToken);
     }
   }
 
@@ -187,7 +192,12 @@ function collectErrorFilterStats(stats, entry) {
   }
 
   if (entry.timestamp) {
-    const hour = entry.timestamp.substring(0, 13);
+    // Safely extract the hour bucket key based on timestamp format
+    let hour = entry.timestamp.substring(0, 13);
+    if (entry.timestamp.includes('/') && entry.timestamp.includes(':')) {
+      // Request log (CLF): DD/Mon/YYYY:HH:mm:ss -> DD/Mon/YYYY:HH
+      hour = entry.timestamp.substring(0, 14);
+    }
     if (!stats.timeline[hour]) stats.timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
     stats.timeline[hour].total++;
     if (entry.level === 'ERROR') stats.timeline[hour].ERROR++;

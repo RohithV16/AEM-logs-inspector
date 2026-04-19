@@ -9,9 +9,10 @@ function buildEventMessage(evt, logType) {
   if (logType === 'error') return evt.message || evt.title || '';
   if (logType === 'request') return evt.url || '';
   if (logType === 'cdn') {
-    return evt.url || evt.host
-      || `${evt.method || ''} ${evt.status || ''}`.trim()
-      || '';
+    if (evt.host && evt.url) return `${evt.host}${evt.url}`;
+    if (evt.url) return evt.url;
+    if (evt.host) return evt.host;
+    return `${evt.method || ''} ${evt.status || ''}`.trim() || '';
   }
   return evt.title || evt.message || evt.url || evt.host || '';
 }

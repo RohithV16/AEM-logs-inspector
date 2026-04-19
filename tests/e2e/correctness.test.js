@@ -63,7 +63,7 @@ test.describe('Correctness Tests - Exact Value Assertions', () => {
     expect(response.status()).toBe(200);
     const body = await response.json();
     expect(body.success).toBe(true);
-    expect(body.summary.totalRequests).toBe(20);
+    expect(body.summary.totalRequests).toBe(10);
   });
 
   test('Request log API returns response time metrics', async ({ page }) => {

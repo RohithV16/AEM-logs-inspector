@@ -1,7 +1,10 @@
 const path = require('path');
 const { detectLogType } = require('../parser');
 const { resolveAnalysisTargets } = require('../utils/files');
-const { buildFilterOptionsFromStats } = require('./correlationService');
+const { buildFilterOptionsFromStats, buildCorrelationData } = require('./correlationService');
+const { extractExceptionNames } = require('./errorLogService');
+const { normalizeMessage } = require('../grouper');
+const { categorizeError } = require('../categorizer');
 const {
   analyzeBatch,
   analyzeMergedErrorFilters: analyzeMergedErrorFiltersFromBatch,
@@ -52,7 +55,12 @@ function createEmptyTypeStats() {
     totalErrors: 0,
     totalWarnings: 0,
     cacheHits: 0,
-    cacheMisses: 0
+    cacheMisses: 0,
+    loggers: {},
+    threads: {},
+    packages: {},
+    exceptions: {},
+    categories: {}
   };
 }
 
@@ -93,9 +101,25 @@ function collectTypeStats(stats, event) {
   }
 
   if (event.logType === 'error') {
-    const severity = String(event.severity || '').toUpperCase();
+    const severity = String(event.severity || event.level || '').toUpperCase();
     if (severity === 'ERROR') stats.totalErrors++;
     if (severity === 'WARN') stats.totalWarnings++;
+    if (event.logger) {
+      const parts = event.logger.split('.');
+      const pkg = parts.length >= 2 ? parts[0] : event.logger;
+      incrementBucket(stats.packages, pkg);
+      incrementBucket(stats.loggers, event.logger);
+    }
+    if (event.thread) incrementBucket(stats.threads, event.thread);
+    if (event.message || event.title) {
+      const message = event.message || event.title || '';
+      const exceptions = extractExceptionNames(message);
+      exceptions.forEach(exc => incrementBucket(stats.exceptions, exc));
+      
+      if (severity === 'ERROR' || severity === 'WARN') {
+        incrementBucket(stats.categories, categorizeError(message, event.logger || ''));
+      }
+    }
   } else if (event.status >= 400) {
     stats.totalErrors++;
   }
@@ -113,7 +137,7 @@ function collectTypeStats(stats, event) {
     return;
   }
 
-  const severity = String(event.severity || '').toUpperCase();
+  const severity = String(event.severity || event.level || '').toUpperCase();
   if (severity === 'ERROR') bucket.errors++;
   if (severity === 'WARN') bucket.warnings++;
 }
@@ -122,7 +146,12 @@ function finalizeTypeStats(stats, batchLogType, baseSummary = {}) {
   const response = {
     timeline: stats.timeline,
     logTypes: stats.logTypes,
-    sourceFiles: stats.sourceFiles
+    sourceFiles: stats.sourceFiles,
+    loggers: stats.loggers,
+    threads: stats.threads,
+    packages: stats.packages,
+    exceptions: stats.exceptions,
+    categories: Object.keys(stats.categories || {}).sort()
   };
 
   if (batchLogType === 'request') {
@@ -150,9 +179,18 @@ function finalizeTypeStats(stats, batchLogType, baseSummary = {}) {
       cacheHitRatio
     };
   } else if (batchLogType === 'mixed') {
+    response.methods = stats.methods;
+    response.statuses = stats.statuses;
+    response.pods = stats.pods;
+    response.cacheStatuses = stats.cacheStatuses;
+    response.countries = stats.countries;
+    response.pops = stats.pops;
+    response.hosts = stats.hosts;
     response.summary = {
       ...baseSummary,
-      totalRequests: stats.totalRequests
+      totalRequests: stats.totalRequests,
+      totalErrors: stats.totalErrors,
+      totalWarnings: stats.totalWarnings
     };
   } else {
     response.summary = { ...baseSummary };
@@ -365,11 +403,25 @@ async function getLogBatchPage(input, body = {}) {
   const batchLogType = inferBatchLogType(sources);
 
   const pageResult = await countAndExtractBatchEntries(sources, filters, page, pageSize);
+  
+  /* Optimization: Re-collect non-error specific stats and correlation only if it's a mixed/request/cdn batch,
+     otherwise countAndExtractBatchEntries already provided error stats. */
+  let stats = null;
+  let correlation = null;
+  
   const allEvents = await collectBatchEvents(sources, filters, { includeStackTrace: true });
-  const stats = createEmptyTypeStats();
-  allEvents.forEach(event => collectTypeStats(stats, event));
+  
+  if (batchLogType !== 'error') {
+    stats = createEmptyTypeStats();
+    allEvents.forEach(event => collectTypeStats(stats, event));
+  }
+  
+  if (batchLogType === 'error' || batchLogType === 'mixed') {
+    const { buildCorrelationData } = require('./correlationService');
+    correlation = buildCorrelationData(allEvents);
+  }
 
-  return {
+  const baseResponse = {
     success: true,
     logType: 'batch',
     mode: 'batch',
@@ -381,15 +433,25 @@ async function getLogBatchPage(input, body = {}) {
     totalPages: Math.ceil(pageResult.total / pageSize),
     events: pageResult.entries,
     levelCounts: pageResult.levelCounts,
-    filterOptions: buildFilterOptionsFromStats(stats, batchLogType),
-    ...finalizeTypeStats(stats, batchLogType, {
-      totalFiles: sources.length,
-      totalEvents: pageResult.total,
-      totalRequests: stats.totalRequests,
-      totalErrors: stats.totalErrors,
-      totalWarnings: stats.totalWarnings
-    })
+    correlation,
+    ...pageResult
   };
+
+  if (stats) {
+    return {
+      ...baseResponse,
+      filterOptions: buildFilterOptionsFromStats(stats, batchLogType),
+      ...finalizeTypeStats(stats, batchLogType, {
+        totalFiles: sources.length,
+        totalEvents: pageResult.total,
+        totalRequests: stats.totalRequests,
+        totalErrors: stats.totalErrors,
+        totalWarnings: stats.totalWarnings
+      })
+    };
+  }
+
+  return baseResponse;
 }
 
 module.exports = {

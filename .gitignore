@@ -11,3 +11,7 @@ coverage/
 ~/.aem-log-analyzer/
 .opencode
 .gstack/
+.gemini/
+playwright-report/
+.agents/
+docs/

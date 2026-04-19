@@ -26,8 +26,12 @@ describe('buildEventMessage - event card display messages', () => {
   });
 
   describe('cdn events', () => {
-    test('shows URL when present', () => {
-      expect(buildEventMessage({ url: '/content/dam/image.png', method: 'GET', status: 200, host: 'cdn.example.com' }, 'cdn')).toBe('/content/dam/image.png');
+    test('shows full URL (host + path) when both present', () => {
+      expect(buildEventMessage({ url: '/content/dam/image.png', method: 'GET', status: 200, host: 'cdn.example.com' }, 'cdn')).toBe('cdn.example.com/content/dam/image.png');
+    });
+
+    test('falls back to url when host missing', () => {
+      expect(buildEventMessage({ url: '/content/dam/image.png', method: 'GET', status: 200 }, 'cdn')).toBe('/content/dam/image.png');
     });
 
     test('falls back to host when url missing', () => {

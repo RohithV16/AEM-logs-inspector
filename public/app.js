@@ -188,6 +188,7 @@ let cloudManagerDownloadStatusMessage = '';
 let allLoggers = {};  // Store all loggers for cascading filter
 let allPackages = {};
 let allThreads = {};
+let allPods = {};
 let allExceptions = {};
 let packageThreadsByPackage = {};
 let packageExceptionsByPackage = {};
@@ -2544,13 +2545,15 @@ function extractExceptionNames(text) {
 function formatDateTimeForDisplay(value) {
   if (!value) return '';
   const text = String(value).trim();
-  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{3})?)?$/);
   if (isoMatch) {
-    return `${isoMatch[1]} ${isoMatch[2]}`;
+    const time = isoMatch[3] ? `${isoMatch[2]}:${isoMatch[3]}` : isoMatch[2];
+    return `${isoMatch[1]} ${time}`;
   }
-  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2})(?:\.\d{3})?)?$/);
   if (spaceMatch) {
-    return `${spaceMatch[1]} ${spaceMatch[2]}`;
+    const time = spaceMatch[3] ? `${spaceMatch[2]}:${spaceMatch[3]}` : spaceMatch[2];
+    return `${spaceMatch[1]} ${time}`;
   }
   return text;
 }
@@ -2558,9 +2561,10 @@ function formatDateTimeForDisplay(value) {
 function normalizeDateTimeForApi(value) {
   if (!value) return '';
   const text = String(value).trim();
-  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2}))?(?:\.\d{3})?$/);
   if (spaceMatch) {
-    return `${spaceMatch[1]}T${spaceMatch[2]}`;
+    const time = spaceMatch[3] ? `${spaceMatch[2]}:${spaceMatch[3]}` : `${spaceMatch[2]}:00`;
+    return `${spaceMatch[1]}T${time}`;
   }
   return text;
 }
@@ -2588,8 +2592,8 @@ function setDateRangeBounds(timeline, logType) {
   const first = parseKey(sorted[0]);
   const last = parseKey(sorted[sorted.length - 1]);
 
-  const firstTime = `${first.date} ${first.hour}:00`;
-  const lastTime = `${last.date} ${last.hour}:59`;
+  const firstTime = `${first.date} ${first.hour}:00:00`;
+  const lastTime = `${last.date} ${last.hour}:59:59`;
 
   startDate.min = formatDateTimeForDisplay(firstTime);
   startDate.max = formatDateTimeForDisplay(lastTime);
@@ -3031,7 +3035,7 @@ async function analyzeBatchInput(input) {
       return;
     }
 
-    handleBatchAnalysisComplete(data, input);
+    await handleBatchAnalysisComplete(data, input);
   } catch (error) {
     showError('Batch analysis failed: ' + error.message);
   } finally {
@@ -3060,7 +3064,7 @@ async function analyzeFilePath(filePath) {
     ws.send(JSON.stringify({ action: 'analyze', filePath }));
   };
 
-  ws.onmessage = (e) => {
+  ws.onmessage = async (e) => {
     const data = JSON.parse(e.data);
 
     if (data.type === 'progress') {
@@ -3069,11 +3073,11 @@ async function analyzeFilePath(filePath) {
     }
 
     if (data.type === 'complete') {
-      ws.close();
-      handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
+      await handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
       analyzeBtn.textContent = 'Analyze';
       analyzeBtn.disabled = false;
       progressText.classList.add('hidden');
+      ws.close();
     }
 
     if (data.type === 'error') {
@@ -3333,7 +3337,7 @@ function hideCloudManagerDownloadProgress() {
   }
 }
 
-function handleAnalysisComplete(data, context = {}) {
+async function handleAnalysisComplete(data, context = {}) {
   currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
@@ -3392,7 +3396,7 @@ function handleAnalysisComplete(data, context = {}) {
       });
     }
 
-    if (data.loggers || data.threads || data.packages || data.exceptions) {
+    if (data.loggers || data.threads || data.packages || data.exceptions || data.pods) {
       populateFilterDropdowns(
         data.loggers,
         data.threads,
@@ -3400,7 +3404,8 @@ function handleAnalysisComplete(data, context = {}) {
         data.exceptions,
         data.packageThreads || {},
         data.packageExceptions || {},
-        categories
+        categories,
+        data.pods || {}
       );
     }
   } else if (currentLogType === 'request') {
@@ -3424,10 +3429,10 @@ function handleAnalysisComplete(data, context = {}) {
   updateWorkspaceChrome();
   updateWorkspaceSummary();
   persistWorkspaceState();
-  fetchRawEvents(1);
+  await fetchRawEvents(1);
 }
 
-function handleBatchAnalysisComplete(data, input) {
+async function handleBatchAnalysisComplete(data, input) {
   currentAnalysisMode = 'batch';
   currentBatchLogType = data.batchLogType || 'error';
   currentLogType = currentBatchLogType === 'mixed' ? 'error' : currentBatchLogType;
@@ -3503,7 +3508,7 @@ function handleBatchAnalysisComplete(data, input) {
   updateWorkspaceChrome();
   updateWorkspaceSummary();
   persistWorkspaceState();
-  fetchRawEvents(1);
+  await fetchRawEvents(1);
   updateIncidentIndicator();
 }
 
@@ -3833,7 +3838,7 @@ function updateCascadeCountBadges() {
   const loggerVisible = visibleLoggerOptionCount;
   const loggerTotal = Object.keys(allLoggers || {}).length;
   const threadVisible = threadSelect ? Math.max(0, threadSelect.options.length - 1) : 0;
-  const threadTotal = Object.keys(allThreads || {}).length;
+  const threadTotal = Object.keys(allPods).length || Object.keys(allThreads || {}).length;
   const exceptionVisible = exceptionSelect ? Math.max(0, exceptionSelect.options.length - 1) : 0;
   const exceptionTotal = Object.keys(allExceptions || {}).length;
   const packageTotal = Object.keys(allPackages || {}).length;
@@ -3880,11 +3885,13 @@ function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
 }
 
 function refreshPackageScopedDropdowns() {
-  const scopedThreads = getScopedCountsByPackage(packageThreadsByPackage, allThreads);
+  const sourceThreads = Object.keys(allPods).length > 0 ? allPods : allThreads;
+  const scopedThreads = getScopedCountsByPackage(packageThreadsByPackage, sourceThreads);
   const scopedExceptions = getScopedCountsByPackage(packageExceptionsByPackage, allExceptions);
   populateSingleSelectOptions(threadSelect, document.getElementById('threadFilter'), scopedThreads, 'All Pods');
   populateSingleSelectOptions(exceptionSelect, document.getElementById('exceptionFilter'), scopedExceptions, 'All Exceptions');
   updateCascadeCountBadges();
+  renderSelectionHints();
 }
 
 function populateSelectWithSelection(select, options, defaultLabel, currentValue = '') {
@@ -3908,12 +3915,13 @@ function populateSelectWithSelection(select, options, defaultLabel, currentValue
   }
 }
 
-function populateFilterDropdowns(loggers, threads, packages, exceptions, packageThreads = {}, packageExceptions = {}, categories = []) {
+function populateFilterDropdowns(loggers, threads, packages, exceptions, packageThreads = {}, packageExceptions = {}, categories = [], pods = {}) {
   // Store all loggers for cascading filter
   allLoggers = loggers || {};
   allPackages = packages || {};
   allThreads = threads || {};
   allExceptions = exceptions || {};
+  allPods = pods || {};
   packageThreadsByPackage = packageThreads || {};
   packageExceptionsByPackage = packageExceptions || {};
 
@@ -3942,7 +3950,13 @@ function getCurrentErrorFilterPayload() {
   if (endDate.value) payload.endDate = normalizeDateTimeForApi(endDate.value);
   if (rawEventsLevel && rawEventsLevel !== 'ALL') payload.level = rawEventsLevel;
   if (filters.loggers.length > 0) payload.logger = [...filters.loggers];
-  if (threadSelect?.value) payload.thread = threadSelect.value;
+  if (threadSelect?.value) {
+    if (Object.keys(allPods).length > 0) {
+      payload.pod = threadSelect.value;
+    } else {
+      payload.thread = threadSelect.value;
+    }
+  }
   if (filters.packages.length > 0) payload.package = [...filters.packages];
   if (exceptionSelect?.value) payload.exception = exceptionSelect.value;
   if (categoryFilter?.value) payload.category = categoryFilter.value;
@@ -4033,7 +4047,8 @@ function applyErrorFilterSidebarResponse(data) {
     data.exceptions || {},
     data.packageThreads || {},
     data.packageExceptions || {},
-    categories
+    categories,
+    data.pods || {}
   );
 }
 
@@ -4737,6 +4752,7 @@ async function fetchRawEvents(page = 1, options = {}) {
       });
       const data = await response.json();
       if (!data.success) {
+        progressText.classList.add('hidden');
         showToast(data.error, 'error');
         return;
       }
@@ -4757,10 +4773,12 @@ async function fetchRawEvents(page = 1, options = {}) {
       }
       const renderType = currentBatchLogType === 'mixed' ? 'batch' : currentBatchLogType;
       renderRawEvents(data.events, data.total, data.page, data.perPage, renderType);
+      progressText.classList.add('hidden');
       updateWorkspaceSummary();
       persistWorkspaceState();
       if (scrollToTop) scrollRawEventsToTop();
     } catch (e) {
+      progressText.classList.add('hidden');
       showToast('Failed to load merged batch events: ' + e.message, 'error');
     }
     return;
@@ -4788,9 +4806,21 @@ async function fetchRawEvents(page = 1, options = {}) {
   if (currentLogType === 'error') {
     body.level = rawEventsLevel;
     if (filters.loggers.length > 0) body.logger = filters.loggers;
-    if (threadSelect?.value) body.thread = threadSelect.value;
+    // Pods/Threads
+    const tSelect = document.getElementById('threadSelect');
+    const tFilter = document.getElementById('threadFilter');
+    const podVal = tSelect?.value || tFilter?.value || '';
+    if (podVal) body.pod = podVal;
+
+    // Packages
     if (filters.packages.length > 0) body.package = filters.packages;
-    if (exceptionSelect?.value) body.exception = exceptionSelect.value;
+    
+    // Exceptions
+    const eSelect = document.getElementById('exceptionSelect');
+    const eFilter = document.getElementById('exceptionFilter');
+    const excVal = eSelect?.value || eFilter?.value || '';
+    if (excVal) body.exception = excVal;
+
     if (rawSearchInput.value) body.search = rawSearchInput.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
   } else if (currentLogType === 'request') {
@@ -4831,7 +4861,11 @@ async function fetchRawEvents(page = 1, options = {}) {
       body: JSON.stringify(body)
     });
     const data = await response.json();
-    if (!data.success) { showToast(data.error, 'error'); return; }
+    if (!data.success) { 
+      progressText.classList.add('hidden');
+      showToast(data.error, 'error'); 
+      return; 
+    }
 
     // Update level counts for error logs
     if (data.levelCounts) {
@@ -4846,10 +4880,12 @@ async function fetchRawEvents(page = 1, options = {}) {
     rawEventsData = data.events;
     currentVisibleEventTotal = data.total || data.events.length || 0;
     renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || currentLogType);
+    progressText.classList.add('hidden');
     updateWorkspaceSummary();
     persistWorkspaceState();
     if (scrollToTop) scrollRawEventsToTop();
   } catch (e) {
+    progressText.classList.add('hidden');
     showToast('Failed to load events: ' + e.message, 'error');
   }
 }
@@ -4992,9 +5028,10 @@ function buildEventMessage(evt, logType) {
   if (logType === 'error') return evt.message || evt.title || '';
   if (logType === 'request') return evt.url || '';
   if (logType === 'cdn') {
-    return evt.url || evt.host
-      || `${evt.method || ''} ${evt.status || ''}`.trim()
-      || '';
+    if (evt.host && evt.url) return `${evt.host}${evt.url}`;
+    if (evt.url) return evt.url;
+    if (evt.host) return evt.host;
+    return `${evt.method || ''} ${evt.status || ''}`.trim() || '';
   }
   return evt.title || evt.message || evt.url || evt.host || '';
 }
@@ -5091,9 +5128,22 @@ function renderCDNEvent(evt, i) {
     ttfb: evt.ttfb,
     ttlb: evt.ttlb,
     cache: evt.cache,
+    clientIp: evt.clientIp,
     clientCountry: evt.clientCountry,
+    clientRegion: evt.clientRegion,
     pop: evt.pop,
-    host: evt.host
+    requestId: evt.requestId,
+    userAgent: evt.userAgent && evt.userAgent.length > 100 ? evt.userAgent.slice(0, 100) + '...' : evt.userAgent,
+    aemEnvKind: evt.aemEnvKind,
+    aemTenant: evt.aemTenant,
+    contentType: evt.contentType,
+    debug: evt.debug,
+    resAge: evt.resAge,
+    host: evt.host,
+    rules: evt.rules,
+    alerts: evt.alerts,
+    sample: evt.sample,
+    ddos: evt.ddos
   };
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 

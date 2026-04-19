@@ -59,7 +59,7 @@ function createTempErrorLog(dir, options = {}) {
     lines.push(`${dateStr} [${thread}] *WARN* [${logger}] ${warnMsg}`);
   }
 
-  const filePath = path.join(dir, 'temp_error_' + Date.now() + '.log');
+  const filePath = path.join(dir, 'temp_error_' + Date.now() + '_' + Math.floor(Math.random() * 1000) + '.log');
   fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
 
   return {
@@ -93,7 +93,7 @@ function createTempRequestLog(dir, options = {}) {
   );
 
   let statusIdx = 0;
-  let currentTimestamp = new Date('2026-03-29T00:00:00').getTime();
+  let currentTimestamp = new Date('2026-03-29T00:00:00Z').getTime();
   
   Object.entries(methodCounts).forEach(([method, count]) => {
     for (let i = 0; i < count; i++) {
@@ -112,7 +112,7 @@ function createTempRequestLog(dir, options = {}) {
     }
   });
 
-  const filePath = path.join(dir, 'temp_request_' + Date.now() + '.log');
+  const filePath = path.join(dir, 'temp_request_' + Date.now() + '_' + Math.floor(Math.random() * 1000) + '.log');
   fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
 
   const totalRequests = Object.values(methodCounts).reduce((a, b) => a + b, 0);
@@ -185,7 +185,7 @@ function createTempCdnLog(dir, options = {}) {
     lines.push(JSON.stringify(entry));
   }
 
-  const filePath = path.join(dir, 'temp_cdn_' + Date.now() + '.log');
+  const filePath = path.join(dir, 'temp_cdn_' + Date.now() + '_' + Math.floor(Math.random() * 1000) + '.log');
   fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
 
   const hitCount = cacheStatusCounts.HIT || 0;
@@ -207,29 +207,90 @@ function createTempCdnLog(dir, options = {}) {
 }
 
 function formatDate(date) {
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  const ms = String(date.getMilliseconds()).padStart(3, '0');
-  return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}.${ms}`;
+  const d = date.getUTCDate().toString().padStart(2, '0');
+  const m = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const y = date.getUTCFullYear();
+  const h = date.getUTCHours().toString().padStart(2, '0');
+  const min = date.getUTCMinutes().toString().padStart(2, '0');
+  const s = date.getUTCSeconds().toString().padStart(2, '0');
+  return `${d}.${m}.${y} ${h}:${min}:${s}.000`;
 }
 
 function formatRequestDate(date) {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${day}/${month}/${year}:${hours}:${minutes}:${seconds} +0000`;
+  const d = date.getUTCDate().toString().padStart(2, '0');
+  const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][date.getUTCMonth()];
+  const y = date.getUTCFullYear();
+  const h = date.getUTCHours().toString().padStart(2, '0');
+  const m = date.getUTCMinutes().toString().padStart(2, '0');
+  const s = date.getUTCSeconds().toString().padStart(2, '0');
+  return `${d}/${mon}/${y}:${h}:${m}:${s} +0000`;
+}
+
+function formatCDNDate(date) {
+  return date.toISOString();
+}
+
+function createCloudManagerErrorLog(dir, options = {}) {
+  const {
+    errorCount = 5,
+    pods = ['cm-p123-e456-pod-1', 'cm-p123-e456-pod-2'],
+    loggers = ['com.adobe.cq.Component'],
+    exceptions = ['java.io.IOException'],
+    startDate = '29.03.2026 00:00:00'
+  } = options;
+
+  const lines = [];
+  for (let i = 0; i < errorCount; i++) {
+    // Treat startDate as clock time (UTC-like) for the fixture
+    const [datePart, timePart] = startDate.split(' ');
+    const [dd, mm, yyyy] = datePart.split('.');
+    const timestamp = new Date(`${yyyy}-${mm}-${dd}T${timePart}Z`).getTime() + i * 1000;
+    const dateStr = formatDate(new Date(timestamp));
+    const pod = pods[i % pods.length];
+    const logger = loggers[i % loggers.length];
+    const thread = `sling-default-${i}-thread`;
+    
+    // FORMAT: timestamp [pod] *LEVEL* [thread] [logger] message
+    lines.push(`${dateStr} [${pod}] *ERROR* [${thread}] ${logger} Something failed`);
+    
+    if (i === 0 && exceptions.length > 0) {
+      lines.push(exceptions[0]);
+      lines.push(`    at ${logger}.process(${logger}.java:42)`);
+    }
+  }
+
+  const filePath = path.join(dir, 'cloud_error_' + Date.now() + '_' + Math.floor(Math.random() * 1000) + '.log');
+  fs.writeFileSync(filePath, lines.join('\n'), 'utf8');
+
+  return { filePath, pods, exceptions };
+}
+
+function createBatchFixtures(dir, logType, fileCount, baseOptions = {}) {
+  const filePaths = [];
+  const expectedTotals = { totalEvents: 0 };
+  
+  for (let i = 0; i < fileCount; i++) {
+    let result;
+    const subOptions = { ...baseOptions, startDate: baseOptions.startDate || '29.03.2026 00:00:00' };
+    
+    if (logType === 'error') {
+      result = createCloudManagerErrorLog(dir, { ...subOptions, pods: [`pod-batch-${i}`] });
+    } else if (logType === 'request') {
+      result = createTempRequestLog(dir, { ...subOptions, pods: [`pod-batch-${i}`] });
+    } else {
+      result = createTempCdnLog(dir, { ...subOptions, popCounts: { [`pop-batch-${i}`]: 5 } });
+    }
+    
+    filePaths.push(result.filePath);
+  }
+  
+  return { filePaths, input: filePaths.join(',') };
 }
 
 module.exports = {
   createTempErrorLog,
   createTempRequestLog,
-  createTempCdnLog
+  createTempCdnLog,
+  createCloudManagerErrorLog,
+  createBatchFixtures
 };

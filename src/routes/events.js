@@ -89,8 +89,8 @@ function createEventsRouter() {
         }
       }
 
-      /* Build filter with support for level, logger, thread, package, exception, category */
-      const activeFilters = { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath };
+      /* Build filter with support for level, logger, thread, pod, package, exception, category */
+      const activeFilters = { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath };
       const { entries: events, total, levelCounts } = await extractPageWithBaseCounts(
         targetPath,
         activeFilters,

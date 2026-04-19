@@ -4,6 +4,13 @@ const readline = require('readline');
 const zlib = require('zlib');
 
 /**
+ * Cloud Manager format: timestamp [pod] *LEVEL* [thread] logger message
+ * Example: 05.04.2026 00:00:00.000 [cm-p167805-e1796674-aem-author-5795b955bb-6slp7] *INFO* [sling-default-5-...] com.example.Logger msg
+ * Groups: 1=timestamp, 2=pod, 3=level, 4=thread, 5=loggerCandidate, 6=messageCandidate
+ */
+const LOG_PATTERN_CLOUD = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[(cm-p[^\]]+)\] \*(\w+)\* \[([^\]]+)\] (?:([a-zA-Z][a-zA-Z0-9_.<>$]*) )?([\s\S]+)$/;
+
+/**
  * Simple logger format: timestamp [thread-id] *LEVEL* [logger-class] message
  * No HTTP context — bracket content is the logger name, rest is message.
  * Example: 29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong
@@ -19,6 +26,7 @@ const LOG_PATTERN_SIMPLE = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([
  * Groups: 1=timestamp, 2=thread, 3=level, 4=threadName(=ip context), 5=loggerCandidate, 6=message
  */
 const LOG_PATTERN_HTTP = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[(\d{1,3}(?:\.\d{1,3}){3} \[\d+\] (?:HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) \S+ HTTP\/[\d.]+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
+const LOG_PATTERN_ISO = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s+\*(\w+)\*\s+([a-zA-Z][a-zA-Z0-9_.<>$]*)?\s*(.+)$/;
 
 /* === Request Log Patterns === */
 /**
@@ -88,6 +96,7 @@ function parseLine(line) {
     return {
       timestamp,
       thread: instanceId,
+      instanceId,
       level,
       threadName: thread,
       logger,
@@ -98,7 +107,42 @@ function parseLine(line) {
     };
   }
 
-  // Fall back to simple logger format: [logger-class] message
+  // Try Cloud Manager format: [pod] *LEVEL* [thread] logger message
+  const cloudMatch = line.match(LOG_PATTERN_CLOUD);
+  if (cloudMatch) {
+    const [, timestamp, pod, level, thread, logger, message] = cloudMatch;
+    return {
+      timestamp,
+      thread: thread,
+      instanceId: pod,
+      level,
+      threadName: thread,
+      logger: logger || '',
+      message: message,
+      requestContext: pod,
+      httpMethod: '',
+      requestPath: ''
+    };
+  }
+  
+  // Try ISO format: timestamp *LEVEL* logger message
+  const isoMatch = line.match(LOG_PATTERN_ISO);
+  if (isoMatch) {
+    const [, timestamp, level, logger, message] = isoMatch;
+    return {
+      timestamp,
+      thread: 'main',
+      instanceId: 'local',
+      level,
+      threadName: 'main',
+      logger: logger || '',
+      message,
+      requestContext: 'local',
+      httpMethod: '',
+      requestPath: ''
+    };
+  }
+
   const simpleMatch = line.match(LOG_PATTERN_SIMPLE);
   if (!simpleMatch) return null;
 
@@ -106,6 +150,7 @@ function parseLine(line) {
   return {
     timestamp,
     thread: instanceId,
+    instanceId,
     level,
     threadName: instanceId,
     logger,
@@ -171,7 +216,7 @@ function detectLogFamilyFromLine(line) {
   if (trimmed.startsWith('{')) return 'cdn-json';
   if (REQUEST_PATTERN.test(trimmed) || RESPONSE_PATTERN.test(trimmed)) return 'aem-request';
   if (APACHE_ACCESS_PATTERN.test(trimmed)) return 'apache-access';
-  if (LOG_PATTERN_SIMPLE.test(trimmed) || LOG_PATTERN_HTTP.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'aem-error';
+  if (LOG_PATTERN_SIMPLE.test(trimmed) || LOG_PATTERN_HTTP.test(trimmed) || LOG_PATTERN_CLOUD.test(trimmed) || LOG_PATTERN_ISO.test(trimmed) || /^\d{2}\.\d{2}\.\d{4}/.test(trimmed)) return 'aem-error';
   return null;
 }
 
@@ -467,11 +512,43 @@ async function* createRequestLogStream(filePath) {
 }
 
 async function* createRequestLogStreamFromLines(lines) {
+  const pendingRequests = new Map();
+
   for await (const line of lines) {
     const parsed = parseRequestLine(line);
-    if (parsed) {
+    if (!parsed) continue;
+
+    if (parsed.type === 'access') {
+      // Apache access logs are already complete
       yield parsed;
+      continue;
     }
+
+    if (parsed.direction === 'outbound') {
+      // It's a request start
+      pendingRequests.set(parsed.threadId, parsed);
+    } else if (parsed.direction === 'inbound') {
+      // It's a response end
+      const request = pendingRequests.get(parsed.threadId);
+      if (request) {
+        // Merge request and response
+        const completeEntry = {
+          ...request,
+          ...parsed,
+          type: 'combined_request'
+        };
+        pendingRequests.delete(parsed.threadId);
+        yield completeEntry;
+      } else {
+        // Orphaned response (could happen if log starts mid-rotation)
+        yield parsed;
+      }
+    }
+  }
+
+  // Yield any remaining requests that didn't get a response
+  for (const request of pendingRequests.values()) {
+    yield request;
   }
 }
 

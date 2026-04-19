@@ -46,12 +46,25 @@ function matchesExceptionFilter(entry, exception) {
 
 /* === Package Derivation === */
 
-const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
+function cleanLoggerName(logger) {
+  if (!logger) return '';
+  /* Strip common AEM/Sling thread prefixes that can be prepended to loggers in some configurations */
+  return String(logger).replace(/^(?:sling-default-\d+-|qtp\d+-\d+-|oak-repository-executor-\d+-|\[[^\]]+\]\s+)/, '');
+}
 
 function derivePackageGroup(logger) {
   if (!logger) return null;
-  const match = logger.match(packageRegex);
-  return match ? match[1] : null;
+  const clean = cleanLoggerName(logger);
+  const parts = clean.split('.');
+  /* Standardize on first 3 segments for detailed categorization (e.g. com.adobe.cq) 
+     Falls back to 2 or 1 if fewer segments are available. */
+  if (parts.length >= 3) {
+    return parts.slice(0, 3).join('.');
+  }
+  if (parts.length >= 2) {
+    return parts.slice(0, 2).join('.');
+  }
+  return parts[0];
 }
 
 function matchesFilterText(actualValue, filterValue) {
@@ -131,8 +144,10 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
   const grouped = {};
   const loggers = {};
   const threads = {};
+  const pods = {};
   const packages = {};
   const exceptions = {};
+  const categories = {};
   const httpMethods = {};
   const packageThreads = {};
   const packageExceptions = {};
@@ -184,11 +199,15 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
           stackTrace: entry.stackTrace || ''
         });
       }
+
+      const cat = categorizeError(entry.message, entry.logger);
+      categories[cat] = (categories[cat] || 0) + 1;
     }
 
     const pkg = entry.logger ? derivePackageGroup(entry.logger) : null;
 
     if (entry.logger) {
+      
       loggers[entry.logger] = (loggers[entry.logger] || 0) + 1;
       if (pkg) {
         packages[pkg] = (packages[pkg] || 0) + 1;
@@ -197,12 +216,16 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
     if (entry.httpMethod) {
       httpMethods[entry.httpMethod] = (httpMethods[entry.httpMethod] || 0) + 1;
     }
-    if (entry.thread) {
-      threads[entry.thread] = (threads[entry.thread] || 0) + 1;
+    const packageToken = entry.instanceId || entry.thread;
+    if (packageToken) {
+      if (entry.thread) threads[entry.thread] = (threads[entry.thread] || 0) + 1;
       if (pkg) {
         if (!packageThreads[pkg]) packageThreads[pkg] = {};
-        packageThreads[pkg][entry.thread] = (packageThreads[pkg][entry.thread] || 0) + 1;
+        packageThreads[pkg][packageToken] = (packageThreads[pkg][packageToken] || 0) + 1;
       }
+    }
+    if (entry.instanceId) {
+      pods[entry.instanceId] = (pods[entry.instanceId] || 0) + 1;
     }
 
     const exceptionNames = getEntryExceptionNames(entry);
@@ -244,8 +267,10 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
     results: Object.values(grouped).sort((a, b) => b.count - a.count),
     loggers,
     threads,
+    pods,
     packages,
     exceptions,
+    categories,
     httpMethods,
     packageThreads,
     packageExceptions,
@@ -288,7 +313,7 @@ async function analyzeAllInOnePass(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildEntryFilter(filters = {}) {
-  const { level, search, from, to, logger, thread, package: pkg, exception, category, httpMethod, requestPath } = filters;
+  const { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath } = filters;
   const packages = Array.isArray(pkg) ? pkg : (pkg ? [pkg] : []);
   let searchRegex = null;
 
@@ -301,53 +326,124 @@ function buildEntryFilter(filters = {}) {
     }
   }
 
-  /* Pre-parse date filters to avoid repeated parsing during stream iteration */
-  const fromDate = from ? new Date(from) : null;
-  const toDate = to ? new Date(to) : null;
+  /* Pre-normalize date filters to ensure consistent clock-time comparison regardless of timezone.
+     AEM logs usually reflect server local time, so we treat filter bounds as local if possible. */
+  const parseFilterDate = (dateStr) => {
+    if (!dateStr) return null;
+    // If no timezone/Z, append Z to match how we parse log timestamps
+    const normalized = dateStr.includes('T') && !dateStr.includes('Z') && !dateStr.includes('+') 
+      ? dateStr + 'Z' 
+      : dateStr;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  };
+
+  const fromDate = parseFilterDate(from);
+  const toDate = parseFilterDate(to);
 
   /* AEM logs use DD.MM.YYYY HH:mm:ss format which JavaScript Date doesn't parse natively.
-     This handles both the log format and ISO strings from API requests. */
+     This handles both the log format and returns a Date object. */
+  /**
+   * Robustly parses log timestamps into Date objects.
+   * Handles AEM format (DD.MM.YYYY HH:mm:ss.SSS) and ISO format.
+   * Forced into UTC (Z) to match UI bounds.
+   */
   function parseLogTimestamp(ts) {
     if (!ts) return null;
-    const match = ts.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2}:\d{2})/);
+    const tsStr = String(ts).trim();
+    
+    // AEM format: DD.MM.YYYY HH:mm:ss[.SSS]
+    const match = tsStr.match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2}:\d{2})(?:\.(\d{3}))?/);
     if (match) {
-      return new Date(`${match[3]}-${match[2]}-${match[1]}T${match[4]}`);
+      const ms = match[5] || '000';
+      return new Date(`${match[3]}-${match[2]}-${match[1]}T${match[4]}.${ms}Z`);
     }
-    return new Date(ts);
+
+    // Fallback for ISO format (CDN)
+    const d = new Date(tsStr);
+    if (!isNaN(d.getTime())) {
+      // If no timezone, force UTC
+      if (tsStr.includes('T') && !tsStr.includes('Z') && !tsStr.includes('+')) {
+        return new Date(tsStr + 'Z');
+      }
+      return d;
+    }
+    return null;
   }
 
   /* Returns a filter function that tests each log entry against all criteria.
      Uses early returns for efficiency - fails fast on first non-match. */
   return (entry) => {
-    if (level && level !== 'ALL' && entry.level !== level) return false;
+    if (process.env.DEBUG_FILTERS) console.log('Filtering Error Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
+    if (level && level !== 'ALL' && entry.level !== level) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: level', entry.level, '!==', level);
+      return false;
+    }
     if (searchRegex) {
       const searchText = [entry.message, entry.logger, entry.threadName, entry.stackTrace]
         .filter(Boolean).join(' ');
-      if (!searchRegex.test(searchText)) return false;
+      if (!searchRegex.test(searchText)) {
+        if (process.env.DEBUG_FILTERS) console.log('Mismatch: search');
+        return false;
+      }
     }
     if (fromDate || toDate) {
       const entryDate = parseLogTimestamp(entry.timestamp);
       if (entryDate) {
-        if (fromDate && entryDate < fromDate) return false;
-        if (toDate && entryDate > toDate) return false;
+        const entryTime = entryDate.getTime();
+        if (fromDate && entryTime < fromDate.getTime()) {
+           if (process.env.DEBUG_FILTERS) console.log('Mismatch: fromDate', entryDate.toISOString(), '<', fromDate.toISOString());
+           return false;
+        }
+        if (toDate && entryTime > toDate.getTime()) {
+           if (process.env.DEBUG_FILTERS) console.log('Mismatch: toDate', entryDate.toISOString(), '>', toDate.toISOString());
+           return false;
+        }
+      } else {
+        if (process.env.DEBUG_FILTERS) console.log('Mismatch: entryDate unparseable', entry.timestamp);
       }
     }
-    if (!matchesFilterText(entry.logger, logger)) return false;
-    if (!matchesFilterText(entry.thread, thread)) return false;
-    if (httpMethod && String(entry.httpMethod || '').toUpperCase() !== String(httpMethod).toUpperCase()) return false;
-    if (requestPath && !String(entry.requestPath || '').toLowerCase().includes(String(requestPath).toLowerCase())) return false;
-    /* Package matching supports hierarchical matching - "com.example" matches "com.example.service" */
+    if (!matchesFilterText(entry.logger, logger)) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: logger');
+      return false;
+    }
+    if (!matchesFilterText(entry.thread, thread)) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: thread');
+      return false;
+    }
+    if (pod && entry.instanceId !== pod && entry.thread !== pod) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: pod');
+      return false;
+    }
+    if (httpMethod && String(entry.httpMethod || '').toUpperCase() !== String(httpMethod).toUpperCase()) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: httpMethod');
+      return false;
+    }
+    if (requestPath && !String(entry.requestPath || '').toLowerCase().includes(String(requestPath).toLowerCase())) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: requestPath');
+      return false;
+    }
     if (packages.length > 0) {
-      const entryPkg = derivePackageGroup(entry.logger);
-      if (!entryPkg || !packages.some(p => entryPkg === p || entryPkg.startsWith(p + '.'))) {
+      if (!entry.logger) return false;
+      const matches = packages.some(p => {
+        return entry.logger === p || entry.logger.startsWith(p + '.');
+      });
+      if (!matches) {
+        if (process.env.DEBUG_FILTERS) console.log('Mismatch: package');
         return false;
       }
     }
-    /* Exception filter uses matchesExceptionFilter for flexible matching */
-    if (!matchesExceptionFilter(entry, exception)) return false;
+    if (!matchesExceptionFilter(entry, exception)) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: exception');
+      return false;
+    }
     if (category) {
       const entryCategory = categorizeError(entry.message, entry.logger);
-      if (entryCategory !== category) return false;
+      if (entryCategory !== category) {
+        if (process.env.DEBUG_FILTERS) console.log('Mismatch: category');
+        return false;
+      }
     }
     return true;
   };

@@ -13,14 +13,9 @@ async function awaitAnalysisComplete(page, options = {}) {
     }
 
     const progressHidden = await page.locator('#progressText').evaluate(el => el.classList.contains('hidden')).catch(() => true);
-    const emptyStateHidden = await page.locator('#emptyState').evaluate(el => el.classList.contains('hidden')).catch(() => false);
+    const workspaceVisible = await page.locator('#resultWorkspace').evaluate(el => !el.classList.contains('hidden')).catch(() => false);
 
-    if (!progressHidden) {
-      await page.waitForTimeout(500);
-      continue;
-    }
-
-    if (emptyStateHidden) {
+    if (progressHidden && workspaceVisible) {
       return true;
     }
 
@@ -39,17 +34,20 @@ async function awaitAnalysisComplete(page, options = {}) {
 async function awaitFilterApply(page, options = {}) {
   const { timeout = 15000 } = options;
 
+  // Wait for the progressText to have the 'hidden' class
+  await page.waitForFunction(() => {
+    const el = document.getElementById('progressText');
+    return !el || el.classList.contains('hidden');
+  }, { timeout });
+  
+  // Wait for the container to have content that isn't a "Loading" placeholder
   await page.waitForFunction(() => {
     const rawEvents = document.getElementById('rawEvents');
-    const loading = document.getElementById('progressText');
+    if (!rawEvents || rawEvents.children.length === 0) return false;
     
-    if (loading && !loading.classList.contains('hidden')) {
-      return false;
-    }
-    
-    if (rawEvents && rawEvents.children.length > 0) {
-      return true;
-    }
+    // Check if it still has a loading message
+    const text = rawEvents.textContent || '';
+    if (text.includes('Loading')) return false;
     
     return true;
   }, { timeout });

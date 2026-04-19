@@ -194,19 +194,47 @@ async function analyzeCDNLog(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildCDNFilter(filters = {}) {
-  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb } = filters;
+  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb, from, to } = filters;
+  const targetStatus = status ? Number(status) : null;
+  const targetMinTtfb = minTtfb ? Number(minTtfb) : null;
+  const targetMaxTtfb = maxTtfb ? Number(maxTtfb) : null;
+  const targetMinTtlb = minTtlb ? Number(minTtlb) : null;
+  const targetMaxTtlb = maxTtlb ? Number(maxTtlb) : null;
+
+  /* Pre-normalize date filters to ensure consistent UTC-based comparison */
+  const parseFilterDate = (dateStr) => {
+    if (!dateStr) return null;
+    const normalized = dateStr.includes('T') && !dateStr.includes('Z') && !dateStr.includes('+') 
+      ? dateStr + 'Z' 
+      : dateStr;
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const fromDate = parseFilterDate(from);
+  const toDate = parseFilterDate(to);
 
   return (entry) => {
+    if (process.env.DEBUG_FILTERS) console.log('Filtering CDN Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
     if (method && entry.method !== method) return false;
-    if (status && entry.status !== status) return false;
+    if (targetStatus && entry.status !== targetStatus) return false;
     if (cache && entry.cache !== cache) return false;
     if (country && entry.clientCountry !== country) return false;
     if (pop && entry.pop !== pop) return false;
     if (host && entry.host !== host) return false;
-    if (minTtfb && entry.ttfb < minTtfb) return false;
-    if (maxTtfb && entry.ttfb > maxTtfb) return false;
-    if (minTtlb && entry.ttlb < minTtlb) return false;
-    if (maxTtlb && entry.ttlb > maxTtlb) return false;
+    if (targetMinTtfb && (entry.ttfb || 0) < targetMinTtfb) return false;
+    if (targetMaxTtfb && (entry.ttfb || 0) > targetMaxTtfb) return false;
+    if (targetMinTtlb && (entry.ttlb || 0) < targetMinTtlb) return false;
+    if (targetMaxTtlb && (entry.ttlb || 0) > targetMaxTtlb) return false;
+
+    /* Date Range Filtering - CDN entries use ISO timestamps */
+    if (fromDate || toDate) {
+      if (!entry.timestamp) return false;
+      const entryTime = new Date(entry.timestamp).getTime();
+      if (fromDate && entryTime < fromDate.getTime()) return false;
+      if (toDate && entryTime > toDate.getTime()) return false;
+    }
+    
     return true;
   };
 }
