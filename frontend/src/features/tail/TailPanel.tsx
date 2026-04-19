@@ -66,21 +66,17 @@ export function TailPanel() {
             return (
               <div 
                 key={virtualRow.key} 
-                className={`log-entry ${entry.level.toLowerCase()}`}
+                className={`tail-entry ${entry.level.toLowerCase()}`}
                 style={{
                   position: 'absolute', top: 0, left: 0, width: '100%',
                   height: `${virtualRow.size}px`, transform: `translateY(${virtualRow.start}px)`,
-                  padding: '8px 15px', borderBottom: '1px solid var(--border-color)',
-                  fontFamily: 'var(--font-mono)', fontSize: '12px'
                 }}
               >
-                <span className="log-timestamp" style={{ marginRight: '10px', color: 'var(--text-muted)' }}>
-                  {entry.timestamp}
-                </span>
-                <span className={`level-chip ${entry.level.toLowerCase()}`} style={{ marginRight: '10px' }}>
-                  {entry.level}
-                </span>
-                <span className="log-message">{entry.message}</span>
+                <div className="tail-entry-header">
+                  <span className="entry-time">{entry.timestamp}</span>
+                  <span className={`level-badge ${entry.level.toUpperCase()}`}>{entry.level}</span>
+                  <span className="entry-message">{entry.message}</span>
+                </div>
               </div>
             );
           })}

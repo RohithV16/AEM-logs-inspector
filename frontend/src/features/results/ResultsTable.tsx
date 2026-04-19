@@ -109,23 +109,23 @@ export function ResultsTable() {
         ) : (
           <div id="rawEvents">
             {(data?.events || []).map((event: LogEvent, idx: number) => (
-              <div key={event.id || idx} className={`log-entry ${event.level?.toLowerCase() || 'info'}`}>
-                <div className="log-header">
-                  <span className="log-timestamp">{event.timestamp}</span>
+              <div key={event.id || idx} className={`raw-event ${event.level?.toLowerCase() || 'info'}`}>
+                <div className="raw-event-header">
+                  <span className="event-time">{event.timestamp}</span>
                   {!isCdn && !isRequest && (
-                    <span className={`level-chip ${event.level?.toLowerCase() || 'info'}`}>{event.level || 'INFO'}</span>
+                    <span className={`level-badge ${event.level?.toUpperCase() || 'INFO'}`}>{event.level || 'INFO'}</span>
                   )}
                   {isCdn && (
                     <>
-                      <span className={`level-chip ${event.cache === 'HIT' ? 'info' : 'warn'}`}>{event.cache}</span>
-                      <span className="level-chip info">{event.method}</span>
-                      <span className={`level-chip ${Number(event.status) >= 400 ? 'error' : 'info'}`}>{event.status}</span>
+                      <span className={`level-badge ${event.cache === 'HIT' ? 'INFO' : event.cache === 'ERROR' ? 'ERROR' : 'WARN'}`}>{event.cache}</span>
+                      <span className="level-badge INFO">{event.method}</span>
+                      <span className={`level-badge ${Number(event.status) >= 400 ? 'ERROR' : 'INFO'}`}>{event.status}</span>
                     </>
                   )}
-                </div>
-                <div className="log-message">
-                  {isCdn && <strong style={{color: 'var(--color-primary)', marginRight: '8px'}}>{event.host}</strong>}
-                  {event.message || event.url}
+                  <div className="event-message">
+                    {isCdn && <strong style={{color: 'var(--color-primary)', marginRight: '8px'}}>{event.host}</strong>}
+                    {event.message || event.url}
+                  </div>
                 </div>
               </div>
             ))}
