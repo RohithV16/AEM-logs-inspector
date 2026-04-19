@@ -3,6 +3,7 @@
   "permission": {
     "external_directory": {
       "/Users/rvenat01/Documents/rohith/logs-inspector/**": "allow"
-    }
+    },
+    "*": "allow"
   }
 }

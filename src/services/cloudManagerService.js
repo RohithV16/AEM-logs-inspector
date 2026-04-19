@@ -12,7 +12,7 @@ const CLOUD_MANAGER_CACHE_ROOT = path.join(os.homedir(), '.aem-logs');
 const CLOUD_MANAGER_CACHE_INDEX = 'index.json';
 
 function execAioRawCommand(args) {
-  if (process.env.MOCK_AIO === 'true') {
+  if (process.env.MOCK_AIO === 'true' && !process.env.JEST_WORKER_ID) {
     return mockAioExecution(args);
   }
 
