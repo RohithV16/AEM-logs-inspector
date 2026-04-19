@@ -89,7 +89,7 @@ async function analyzeRequestLogFromStream(stream, filePath, onProgress) {
     }
 
     if (entry.timestamp) {
-      const hour = entry.timestamp.substring(0, 13);
+      const hour = entry.timestamp.substring(0, 14);
       if (!timeline[hour]) timeline[hour] = { requests: 0, errors: 0, slow: 0 };
       timeline[hour].requests++;
       if (entry.status >= 400) timeline[hour].errors++;
@@ -162,14 +162,79 @@ async function analyzeRequestLog(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildRequestFilter(filters = {}) {
-  const { method, status, pod, minTime, maxTime } = filters;
+  const { method, status, pod, minTime, maxTime, search } = filters;
+  const targetStatus = status ? Number(status) : null;
+  const targetMinTime = minTime ? Number(minTime) : null;
+  const targetMaxTime = maxTime ? Number(maxTime) : null;
+
+  /* Pre-normalize date filters to ensure consistent UTC-based comparison */
+  const parseFilterDate = (dateStr) => {
+    if (!dateStr) return null;
+    const normalized = dateStr.includes('T') && !dateStr.includes('Z') && !dateStr.includes('+') 
+      ? dateStr + 'Z' 
+      : dateStr;
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const parseLogDate = (timestamp) => {
+    if (!timestamp) return null;
+    // Format: 28/Mar/2026:18:30:05 +0000
+    const match = timestamp.match(/^(\d{2})\/(\w{3})\/(\d{4}):(\d{2}:\d{2}:\d{2})/);
+    if (!match) return null;
+    const months = { Jan:"01", Feb:"02", Mar:"03", Apr:"04", May:"05", Jun:"06", Jul:"07", Aug:"08", Sep:"09", Oct:"10", Nov:"11", Dec:"12" };
+    return new Date(`${match[3]}-${months[match[2]]}-${match[1]}T${match[4]}Z`);
+  };
+
+  const fromDate = parseFilterDate(filters.from);
+  const toDate = parseFilterDate(filters.to);
 
   return (entry) => {
-    if (method && entry.method !== method) return false;
-    if (status && entry.status !== status) return false;
-    if (pod && entry.pod !== pod) return false;
-    if (minTime && entry.responseTime < minTime) return false;
-    if (maxTime && entry.responseTime > maxTime) return false;
+    if (process.env.DEBUG_FILTERS) console.log('Filtering Request Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
+    
+    if (method && entry.method !== method) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: method', entry.method, '!==', method);
+      return false;
+    }
+    if (targetStatus && entry.status !== targetStatus) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: status', entry.status, '!==', targetStatus);
+      return false;
+    }
+    if (pod && entry.pod !== pod) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: pod', entry.pod, '!==', pod);
+      return false;
+    }
+    if (targetMinTime && Number(entry.responseTime || 0) < targetMinTime) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: minTime', entry.responseTime, '<', targetMinTime);
+      return false;
+    }
+    if (targetMaxTime && Number(entry.responseTime || 0) > targetMaxTime) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: maxTime', entry.responseTime, '>', targetMaxTime);
+      return false;
+    }
+
+    if (fromDate || toDate) {
+      const entryDate = parseLogDate(entry.timestamp);
+      if (entryDate) {
+        const entryTime = entryDate.getTime();
+        if (fromDate && entryTime < fromDate.getTime()) {
+          if (process.env.DEBUG_FILTERS) console.log('Mismatch: fromDate', entryDate.toISOString(), '<', fromDate.toISOString());
+          return false;
+        }
+        if (toDate && entryTime > toDate.getTime()) {
+          if (process.env.DEBUG_FILTERS) console.log('Mismatch: toDate', entryDate.toISOString(), '>', toDate.toISOString());
+          return false;
+        }
+      } else {
+        if (process.env.DEBUG_FILTERS) console.log('Mismatch: entryDate unparseable', entry.timestamp);
+      }
+    }
+
+    if (search && entry.url && !entry.url.toLowerCase().includes(search.toLowerCase())) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: search');
+      return false;
+    }
+    
     return true;
   };
 }

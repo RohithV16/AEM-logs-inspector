@@ -2,18 +2,17 @@
 
 /* === CLI Entry Point === */
 
-const fs = require('fs');
 const { analyzeResolvedLogFile } = require('./services/logAnalysisService');
-const { downloadLogs } = require('./services/cloudManagerService');
+const { downloadLogs, createCloudManagerTailSession } = require('./services/cloudManagerService');
 const { validateFilePath } = require('./utils/files');
 
 function parseArgs(argv) {
   const [firstArg, secondArg, ...rest] = argv;
 
-  if (firstArg === 'cloudmanager' && secondArg === 'analyze') {
+  if (firstArg === 'cloudmanager' && (secondArg === 'analyze' || secondArg === 'tail')) {
     return {
       mode: 'cloudmanager',
-      action: 'analyze',
+      action: secondArg,
       flags: parseFlags(rest)
     };
   }
@@ -57,6 +56,7 @@ function printUsage() {
   console.error('  npm start <path-to-log-file>');
   console.error('  node src/index.js analyze <path-to-log-file>');
   console.error('  node src/index.js cloudmanager analyze --programId <id> --environmentId <id> --service <name> --logName <name> --days <n> --outputDir <path>');
+  console.error('  node src/index.js cloudmanager tail --environmentId <id> --service <name> --logName <name> [--programId <id>]');
 }
 
 function ensureLocalFile(filePath) {
@@ -67,8 +67,17 @@ function ensureLocalFile(filePath) {
   return validateFilePath(filePath);
 }
 
-function ensureCloudManagerFlags(flags = {}) {
+function ensureCloudManagerAnalyzeFlags(flags = {}) {
   const required = ['programId', 'environmentId', 'service', 'logName', 'outputDir'];
+  const missing = required.filter((key) => !flags[key]);
+
+  if (missing.length) {
+    throw new Error(`Missing required flags: ${missing.map((key) => `--${key}`).join(', ')}`);
+  }
+}
+
+function ensureCloudManagerTailFlags(flags = {}) {
+  const required = ['environmentId', 'service', 'logName'];
   const missing = required.filter((key) => !flags[key]);
 
   if (missing.length) {
@@ -138,6 +147,12 @@ function printAnalysisPayload(payload) {
   console.log('');
 }
 
+function formatTailEntry(entry = {}) {
+  if (entry.rawLine) return entry.rawLine;
+  if (entry.message) return entry.message;
+  return JSON.stringify(entry);
+}
+
 async function runLocalAnalysis(filePath) {
   const targetPath = ensureLocalFile(filePath);
   printAnalysisHeader(targetPath);
@@ -146,7 +161,7 @@ async function runLocalAnalysis(filePath) {
 }
 
 async function runCloudManagerAnalysis(flags) {
-  ensureCloudManagerFlags(flags);
+  ensureCloudManagerAnalyzeFlags(flags);
 
   const download = await downloadLogs({
     programId: flags.programId,
@@ -168,11 +183,56 @@ async function runCloudManagerAnalysis(flags) {
   printAnalysisPayload(payload);
 }
 
+async function runCloudManagerTail(flags) {
+  ensureCloudManagerTailFlags(flags);
+
+  await new Promise((resolve) => {
+    const handleSigint = () => {
+      session.stop();
+    };
+
+    const session = createCloudManagerTailSession({
+      programId: flags.programId,
+      environmentId: flags.environmentId,
+      service: flags.service,
+      logName: flags.logName,
+      imsContextName: flags.imsContextName
+    }, {
+      onStatus: ({ status, message, commandPreview }) => {
+        if (status === 'starting') {
+          console.error(`Starting live tail: ${commandPreview}`);
+        }
+        if (message) {
+          console.error(message);
+        }
+      },
+      onEntry: (entry) => {
+        process.stdout.write(`${formatTailEntry(entry)}\n`);
+      },
+      onError: (error) => {
+        process.stderr.write(`Error: ${error.message}\n`);
+      },
+      onStopped: () => {
+        process.removeListener('SIGINT', handleSigint);
+        resolve();
+      }
+    });
+
+    process.once('SIGINT', handleSigint);
+    session.start();
+  });
+}
+
 async function run() {
   const options = parseArgs(process.argv.slice(2));
 
   try {
     if (options.mode === 'cloudmanager') {
+      if (options.action === 'tail') {
+        await runCloudManagerTail(options.flags);
+        return;
+      }
+
       await runCloudManagerAnalysis(options.flags);
       return;
     }

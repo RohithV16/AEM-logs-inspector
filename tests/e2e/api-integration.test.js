@@ -202,6 +202,92 @@ test.describe('API Integration Tests', () => {
     expect(body.events[0].stackTrace).toContain('java.io.IOException');
   });
 
+  test('10b. POST /api/analyze/batch - Analyze multiple CDN files', async ({ page }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-api-batch-cdn-'));
+    const cdnOne = writeTempErrorLog(tempDir, 'cdn-one.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:30:15.123Z',
+        status: 200,
+        method: 'GET',
+        url: '/content/site-a',
+        cache: 'HIT',
+        host: 'example.com',
+        pop: 'dfw',
+        cli_country: 'US',
+        ttfb: 35,
+        ttlb: 70
+      })
+    ]);
+    const cdnTwo = writeTempErrorLog(tempDir, 'cdn-two.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:31:15.123Z',
+        status: 503,
+        method: 'POST',
+        url: '/bin/replicate',
+        cache: 'MISS',
+        host: 'author.example.com',
+        pop: 'sin',
+        cli_country: 'IN',
+        ttfb: 150,
+        ttlb: 190
+      })
+    ]);
+
+    const response = await page.request.post(`${BASE_URL}/api/analyze/batch`, {
+      data: {
+        input: [cdnOne, cdnTwo],
+        filters: {}
+      }
+    });
+
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.logType).toBe('batch');
+    expect(body.batchLogType).toBe('cdn');
+    expect(body.summary.byType.cdn.files).toBe(2);
+    expect(body.sources).toHaveLength(2);
+  });
+
+  test('10c. POST /api/raw-events/batch - Filter mixed batch by logType', async ({ page }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aem-api-batch-mixed-'));
+    const errorOne = writeTempErrorLog(tempDir, 'error-one.log', [
+      '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.A] Failed request'
+    ]);
+    const cdnOne = writeTempErrorLog(tempDir, 'cdn-one.log', [
+      JSON.stringify({
+        timestamp: '2026-03-16T14:31:15.123Z',
+        status: 403,
+        method: 'GET',
+        url: '/',
+        cache: 'ERROR',
+        host: 'example.com',
+        pop: 'iad',
+        cli_country: 'US',
+        ttfb: 80,
+        ttlb: 100
+      })
+    ]);
+
+    const response = await page.request.post(`${BASE_URL}/api/raw-events/batch`, {
+      data: {
+        input: [errorOne, cdnOne],
+        page: 1,
+        perPage: 50,
+        logType: 'cdn'
+      }
+    });
+
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.logType).toBe('batch');
+    expect(body.batchLogType).toBe('mixed');
+    expect(body.total).toBe(1);
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0].logType).toBe('cdn');
+  });
+
   test('11. POST /api/raw-events - Search events with regex', async ({ page }) => {
     const response = await page.request.post(`${BASE_URL}/api/raw-events`, {
       data: {

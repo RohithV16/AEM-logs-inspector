@@ -1,8 +1,9 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
-const { detectLogSignature } = require('../parser');
+const { execFile, spawn } = require('child_process');
+const readline = require('readline');
+const { detectLogSignature, detectLogTypeFromLine, parseLine, parseRequestLine, parseCDNLine } = require('../parser');
 const { isAllowedLogFile } = require('../utils/files');
 
 const AIO_BINARY = 'aio';
@@ -11,6 +12,10 @@ const CLOUD_MANAGER_CACHE_ROOT = path.join(os.homedir(), '.aem-logs');
 const CLOUD_MANAGER_CACHE_INDEX = 'index.json';
 
 function execAioRawCommand(args) {
+  if (process.env.MOCK_AIO === 'true' && !process.env.JEST_WORKER_ID) {
+    return mockAioExecution(args);
+  }
+
   return new Promise((resolve, reject) => {
     execFile(AIO_BINARY, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
@@ -29,6 +34,86 @@ function execAioRawCommand(args) {
     });
   });
 }
+
+function mockAioExecution(args) {
+  const command = args.join(' ');
+  console.log(`[MOCK_AIO] Executing: aio ${command}`);
+
+  if (command.includes('cloudmanager:list-programs')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { id: '12345', name: 'Mock Program A', enabled: true },
+        { id: '67890', name: 'Mock Program B', enabled: true }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('cloudmanager:program:list-environments')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { id: '456', name: 'author', type: 'author', status: 'ready' },
+        { id: '789', name: 'publish', type: 'publish', status: 'ready' }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('cloudmanager:environment:list-available-log-options')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { service: 'author', name: 'aemerror' },
+        { service: 'author', name: 'aemrequest' },
+        { service: 'publish', name: 'aemerror' },
+        { service: 'publish', name: 'aemrequest' }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('download-logs')) {
+    // Extract output directory
+    let outputDir = '.';
+    const dirIndex = args.indexOf('--outputDirectory');
+    if (dirIndex >= 0 && args[dirIndex + 1]) {
+      outputDir = args[dirIndex + 1];
+    }
+
+    // Create a dummy log file to satisfy the analyzer
+    const fs = require('fs');
+    const path = require('path');
+    const dummyLogPath = path.join(outputDir, 'author_aemerror_mock.log');
+    
+    try {
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      fs.writeFileSync(dummyLogPath, [
+        '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.Mock] Mock error message for CI',
+        'java.lang.RuntimeException: Mock stack trace line 1',
+        '\tat com.example.Mock.doSomething(Mock.java:10)'
+      ].join('\n'), 'utf8');
+      
+      return Promise.resolve({
+        stdout: `Downloaded 1 file to ${outputDir}`,
+        stderr: ''
+      });
+    } catch (err) {
+      return Promise.reject({
+        error: err,
+        stdout: '',
+        stderr: `Failed to create mock log file: ${err.message}`
+      });
+    }
+  }
+
+  return Promise.reject({
+    error: { code: 'MOCK_UNSUPPORTED' },
+    stdout: '',
+    stderr: `Mocking for command "aio ${command}" is not implemented.`
+  });
+}
+
 
 async function execAioCommand(args) {
   try {
@@ -294,6 +379,38 @@ function getAioCommandPreview(args) {
   return ['aio', ...args].join(' ');
 }
 
+function parseTailEntry(rawLine) {
+  const line = String(rawLine || '').trim();
+  if (!line) return null;
+
+  const detectedLogType = detectLogTypeFromLine(line);
+  let parsed = null;
+
+  if (detectedLogType === 'error') {
+    parsed = parseLine(line);
+  } else if (detectedLogType === 'request') {
+    parsed = parseRequestLine(line);
+  } else if (detectedLogType === 'cdn') {
+    parsed = parseCDNLine(line);
+  }
+
+  if (parsed) {
+    return {
+      ...parsed,
+      parsed: true,
+      logType: detectedLogType || 'unknown',
+      rawLine: line
+    };
+  }
+
+  return {
+    parsed: false,
+    logType: detectedLogType || 'unknown',
+    rawLine: line,
+    message: line
+  };
+}
+
 function extractDatesFromDownloadedFiles(files = []) {
   return files.map((filePath) => {
     const fileName = path.basename(filePath);
@@ -466,6 +583,33 @@ function buildDownloadCommand(options = {}) {
   ];
 }
 
+function buildTailCommand(options = {}) {
+  const args = [
+    'cloudmanager:environment:tail-log',
+    String(options.environmentId),
+    String(options.service),
+    String(options.logName)
+  ];
+
+  if (options.programId) {
+    args.push('--programId', String(options.programId));
+  }
+
+  if (options.imsContextName) {
+    args.push('--imsContextName', String(options.imsContextName));
+  }
+
+  return args;
+}
+
+function getTailSelectionKey(selection = {}) {
+  return `${String(selection.service || '')}::${String(selection.logName || '')}`;
+}
+
+function getTailSelectionLabel(selection = {}) {
+  return `${String(selection.service || '')}/${String(selection.logName || '')}`;
+}
+
 async function downloadLogs(options) {
   const environmentDirectory = getCloudManagerEnvironmentDirectory(options.programId, options.environmentId);
   fs.mkdirSync(environmentDirectory, { recursive: true });
@@ -558,6 +702,270 @@ async function describeDownloadedFiles(download) {
   return items;
 }
 
+function createCloudManagerTailSession(options = {}, handlers = {}) {
+  const commandArgs = buildTailCommand(options);
+  const sourceKey = getTailSelectionKey(options);
+  const sourceLabel = getTailSelectionLabel(options);
+  let child = null;
+  let stopped = false;
+  let stopEmitted = false;
+
+  const emitStatus = (status, message = '') => {
+    if (typeof handlers.onStatus === 'function') {
+      handlers.onStatus({
+        status,
+        message,
+        source: 'cloudmanager',
+        sourceKey,
+        sourceLabel,
+        commandPreview: getAioCommandPreview(commandArgs)
+      });
+    }
+  };
+
+  const emitEntry = (entry) => {
+    if (entry && typeof handlers.onEntry === 'function') {
+      handlers.onEntry(entry);
+    }
+  };
+
+  const emitError = (error) => {
+    if (typeof handlers.onError === 'function') {
+      handlers.onError(error);
+    }
+  };
+
+  const emitStopped = () => {
+    if (stopEmitted) return;
+    stopEmitted = true;
+    if (typeof handlers.onStopped === 'function') {
+      handlers.onStopped({ source: 'cloudmanager' });
+    }
+  };
+
+  const parseAndEmit = (line) => {
+    const entry = parseTailEntry(line);
+    if (entry) {
+      emitEntry({
+        ...entry,
+        source: 'cloudmanager',
+        sourceKey,
+        sourceLabel,
+        service: String(options.service || ''),
+        logName: String(options.logName || '')
+      });
+    }
+  };
+
+  return {
+    commandArgs,
+    commandPreview: getAioCommandPreview(commandArgs),
+    source: 'cloudmanager',
+    sourceKey,
+    sourceLabel,
+    start() {
+      if (child) return;
+
+      if (process.env.MOCK_AIO === 'true') {
+        emitStatus('starting', 'Starting Mock Cloud Manager live tail...');
+        setTimeout(() => {
+          if (stopped) return;
+          emitStatus('running', 'Mock Cloud Manager live tail connected.');
+          
+          let mockInterval = setInterval(() => {
+            if (stopped) {
+              clearInterval(mockInterval);
+              return;
+            }
+            const ts = new Date().toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
+            const mockLine = `${ts} [mock-thread] *INFO* [com.example.Mock] Periodic mock entry from CI session`;
+            parseAndEmit(mockLine);
+          }, 2000);
+        }, 500);
+        return;
+      }
+
+      emitStatus('starting', 'Starting Cloud Manager live tail...');
+      child = spawn(AIO_BINARY, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+      const stdoutRl = readline.createInterface({ input: child.stdout });
+      stdoutRl.on('line', parseAndEmit);
+
+      let stderrOutput = '';
+      const stderrRl = readline.createInterface({ input: child.stderr });
+      stderrRl.on('line', (line) => {
+        const text = String(line || '').trim();
+        if (!text) return;
+        stderrOutput += `${stderrOutput ? '\n' : ''}${text}`;
+        emitStatus('running', text);
+      });
+
+      child.once('spawn', () => {
+        emitStatus('running', 'Cloud Manager live tail connected.');
+      });
+
+      child.once('error', (error) => {
+        if (stopped) {
+          emitStopped();
+          return;
+        }
+        emitError(createCloudManagerError(error, stderrOutput));
+        emitStopped();
+      });
+
+      child.once('close', (code, signal) => {
+        child = null;
+        stdoutRl.close();
+        stderrRl.close();
+
+        if (stopped) {
+          emitStopped();
+          return;
+        }
+
+        if (code === 0 || signal === 'SIGTERM' || signal === 'SIGINT') {
+          emitStopped();
+          return;
+        }
+
+        emitError(createCloudManagerError({ message: `Process exited with code ${code}` }, stderrOutput));
+        emitStopped();
+      });
+    },
+    stop() {
+      stopped = true;
+      if (child && !child.killed) {
+        child.kill('SIGTERM');
+      } else {
+        emitStopped();
+      }
+    }
+  };
+}
+
+function createCloudManagerTailGroupSession(options = {}, handlers = {}) {
+  const selections = Array.isArray(options.selections) ? options.selections : [];
+  if (!selections.length) {
+    throw new Error('At least one Cloud Manager log selection is required for tailing.');
+  }
+
+  const sessions = new Map();
+  const sessionStates = new Map();
+  let stopped = false;
+  let stopEmitted = false;
+
+  const emitStatus = (status, message = '', extra = {}) => {
+    if (typeof handlers.onStatus !== 'function') return;
+    handlers.onStatus({
+      status,
+      message,
+      source: 'cloudmanager',
+      totalSources: selections.length,
+      ...extra
+    });
+  };
+
+  const emitError = (error, extra = {}) => {
+    if (typeof handlers.onError !== 'function') return;
+    handlers.onError(error, { source: 'cloudmanager', totalSources: selections.length, ...extra });
+  };
+
+  const emitStopped = () => {
+    if (stopEmitted) return;
+    stopEmitted = true;
+    if (typeof handlers.onStopped === 'function') {
+      handlers.onStopped({ source: 'cloudmanager', totalSources: selections.length });
+    }
+  };
+
+  const updateAggregateStatus = () => {
+    const values = Array.from(sessionStates.values());
+    const idle = values.filter((state) => state.status === 'idle').length;
+    const running = values.filter((state) => state.status === 'running').length;
+    const failed = values.filter((state) => state.status === 'failed').length;
+    const starting = values.filter((state) => state.status === 'starting').length;
+    const stoppedCount = values.filter((state) => state.status === 'stopped').length;
+
+    if (!stopped && (running || starting)) {
+      const status = failed > 0 ? 'partial' : (starting > 0 ? 'starting' : 'running');
+      const parts = [];
+      if (running) parts.push(`${running} running`);
+      if (starting) parts.push(`${starting} starting`);
+      if (failed) parts.push(`${failed} failed`);
+      emitStatus(status, `Cloud Manager live tail: ${parts.join(', ')}.`, { runningSources: running, failedSources: failed, stoppedSources: stoppedCount });
+    }
+
+    if (!stopped && idle === 0 && running === 0 && starting === 0) {
+      emitStopped();
+    }
+  };
+
+  selections.forEach((selection) => {
+    const normalized = {
+      ...options,
+      service: selection.service,
+      logName: selection.logName
+    };
+    const sourceKey = getTailSelectionKey(normalized);
+    const sourceLabel = getTailSelectionLabel(normalized);
+    sessionStates.set(sourceKey, { status: 'idle', sourceKey, sourceLabel });
+
+    const session = createCloudManagerTailSession(normalized, {
+      onStatus: (status) => {
+        if (stopped) return;
+        const nextStatus = status.status === 'starting' ? 'starting' : 'running';
+        sessionStates.set(sourceKey, { status: nextStatus, sourceKey, sourceLabel });
+        emitStatus(status.status, status.message, {
+          sourceKey,
+          sourceLabel,
+          commandPreview: status.commandPreview
+        });
+        updateAggregateStatus();
+      },
+      onEntry: (entry) => {
+        if (stopped) return;
+        if (typeof handlers.onEntry === 'function') {
+          handlers.onEntry(entry);
+        }
+      },
+      onError: (error) => {
+        if (stopped) return;
+        sessionStates.set(sourceKey, { status: 'failed', sourceKey, sourceLabel });
+        emitError(error, { sourceKey, sourceLabel });
+        updateAggregateStatus();
+      },
+      onStopped: () => {
+        const current = sessionStates.get(sourceKey);
+        if (!current || current.status !== 'failed') {
+          sessionStates.set(sourceKey, { status: 'stopped', sourceKey, sourceLabel });
+        }
+        updateAggregateStatus();
+      }
+    });
+
+    sessions.set(sourceKey, session);
+  });
+
+  return {
+    source: 'cloudmanager',
+    totalSources: selections.length,
+    selections: selections.map((selection) => ({
+      ...selection,
+      sourceKey: getTailSelectionKey(selection),
+      sourceLabel: getTailSelectionLabel(selection)
+    })),
+    start() {
+      emitStatus('starting', `Starting Cloud Manager live tail for ${selections.length} log${selections.length === 1 ? '' : 's'}...`);
+      sessions.forEach((session) => session.start());
+    },
+    stop() {
+      stopped = true;
+      sessions.forEach((session) => session.stop());
+      emitStopped();
+    }
+  };
+}
+
 function getEstimatedDateRange(days = 1) {
   const parsedDays = Number(days || 1);
   const now = new Date();
@@ -572,12 +980,15 @@ function getEstimatedDateRange(days = 1) {
 
 module.exports = {
   buildDownloadCommand,
+  buildTailCommand,
   getAioCommandPreview,
   getEstimatedDateRange,
   fetchProgramsFromCloudManager,
   fetchEnvironmentsFromCloudManager,
   listAvailableLogOptions,
   downloadLogs,
+  createCloudManagerTailSession,
+  createCloudManagerTailGroupSession,
   describeDownloadedFiles,
   validateOutputDirectory,
   getCloudManagerCacheRoot,

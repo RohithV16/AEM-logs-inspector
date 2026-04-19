@@ -1,0 +1,7 @@
+29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong
+java.lang.NullPointerException
+    at com.example.Component.process(Component.java:42)
+    at com.example.Service.handle(Service.java:100)
+29.03.2026 00:00:01.000 [thread-1] *WARN* [com.example.Cache] Cache miss for /content/page
+29.03.2026 00:00:02.000 [thread-2] *ERROR* [org.apache.sling.SlingServlet] Servlet error
+29.03.2026 00:00:03.000 [thread-1] *ERROR* [com.example.Component] Something went wrong

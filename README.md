@@ -27,6 +27,7 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both 
 ### CLI Analysis
 - Analyze local log files from the command line
 - Download and analyze logs from Adobe Cloud Manager
+- Live tail Cloud Manager logs without caching them locally
 - Support for error, request, and CDN log types
 - Automatic log type detection
 - Summary statistics with top repeated errors/warnings
@@ -63,6 +64,7 @@ A Node.js tool for analyzing Adobe Experience Manager (AEM) logs. Provides both 
 
 ### Cloud Manager Integration
 - Download logs from Adobe Cloud Manager environments
+- Live tail a selected Cloud Manager log from the dashboard or CLI
 - Program and environment selection via live `aio` data
 - Download caching in `~/.aem-logs/`
 - Progress tracking with real-time updates
@@ -88,7 +90,7 @@ npm install
 ```
 
 ### Cloud Manager Prerequisites
-To use Cloud Manager log download features, you need the Adobe I/O CLI:
+To use Cloud Manager log download and tail features, you need the Adobe I/O CLI:
 
 1. **Install Adobe I/O CLI:**
    ```bash
@@ -143,6 +145,7 @@ node src/index.js cloudmanager analyze \
 - `--logName`: Log name (error, request, access)
 - `--outputDir`: Directory to save downloaded logs
 - `--days`: Number of days of logs to download (default: 1)
+- `cloudmanager tail` does not cache logs; it streams entries directly to stdout until stopped
 
 ### Web Dashboard
 
@@ -257,7 +260,8 @@ JSON-formatted CDN logs with cache performance data including TTFB, TTLB, cache 
 2. Select "Cloud Manager" as your source
 3. Choose a program and environment
 4. Select service and log type
-5. Download and analyze
+5. Choose either `Cache Selected Logs` or `Tail Logs`
+6. Downloaded logs are cached; live tail output is streamed only
 
 **Via CLI:**
 ```bash

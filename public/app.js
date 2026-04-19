@@ -28,8 +28,15 @@ const cmEnvironmentHint = document.getElementById('cmEnvironmentHint');
 const cmLogHint = document.getElementById('cmLogHint');
 const cmOutputDirectoryHint = document.getElementById('cmOutputDirectoryHint');
 const cmAnalyzeBtn = document.getElementById('cmAnalyzeBtn');
+const cmTailBtn = document.getElementById('cmTailBtn');
 const cmProgressText = document.getElementById('cmProgressText');
 const cmDownloadSummary = document.getElementById('cmDownloadSummary');
+const cmTailPanel = document.getElementById('cmTailPanel');
+const cmTailTitle = document.getElementById('cmTailTitle');
+const cmTailStatus = document.getElementById('cmTailStatus');
+const cmTailFeed = document.getElementById('cmTailFeed');
+const cmTailStopBtn = document.getElementById('cmTailStopBtn');
+const cmAdvancedSettingsToggle = document.getElementById('cmAdvancedSettingsToggle');
 const cmDownloadProgressPanel = document.getElementById('cmDownloadProgressPanel');
 const cmDownloadProgressTitle = document.getElementById('cmDownloadProgressTitle');
 const cmDownloadProgressCount = document.getElementById('cmDownloadProgressCount');
@@ -76,7 +83,46 @@ const runSearchBuilderBtn = document.getElementById('runSearchBuilderBtn');
 const sidebar = document.getElementById('sidebar');
 const sidebarBody = document.getElementById('sidebarBody');
 const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+const tailPanel = document.getElementById('tailPanel');
+const tailTitle = document.getElementById('tailTitle');
+const tailSource = document.getElementById('tailSource');
+const tailStopBtn = document.getElementById('tailStopBtn');
+const tailLevelFilters = document.getElementById('tailLevelFilters');
+const tailSearchInput = document.getElementById('tailSearchInput');
+const tailRegexToggle = document.getElementById('tailRegexToggle');
+const tailPackageFilter = document.getElementById('tailPackageFilter');
+const tailPackageResults = document.getElementById('tailPackageResults');
+const tailPackageTags = document.getElementById('tailPackageTags');
+const tailLoggerFilter = document.getElementById('tailLoggerFilter');
+const tailLoggerResults = document.getElementById('tailLoggerResults');
+const tailLoggerTags = document.getElementById('tailLoggerTags');
+const tailAutoScrollBtn = document.getElementById('tailAutoScrollBtn');
+const tailClearBtn = document.getElementById('tailClearBtn');
+const tailExportBtn = document.getElementById('tailExportBtn');
+const tailExportMenu = document.getElementById('tailExportMenu');
+const tailExportJson = document.getElementById('tailExportJson');
+const tailExportCsv = document.getElementById('tailExportCsv');
+const tailStatus = document.getElementById('tailStatus');
+const tailFeed = document.getElementById('tailFeed');
+const tailNewIndicator = document.getElementById('tailNewIndicator');
+const tailScrollToNew = document.getElementById('tailScrollToNew');
 const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'));
+const resultWorkspace = document.getElementById('resultWorkspace');
+const workspaceTitle = document.getElementById('workspaceTitle');
+const workspaceModeBadge = document.getElementById('workspaceModeBadge');
+const workspaceStatus = document.getElementById('workspaceStatus');
+const workspaceClearBtn = document.getElementById('workspaceClearBtn');
+const pinnedEvents = document.getElementById('pinnedEvents');
+const resultViewTabs = Array.from(document.querySelectorAll('[data-result-view]'));
+const resultViewEventsTab = document.getElementById('resultViewEventsTab');
+const resultViewChartsTab = document.getElementById('resultViewChartsTab');
+const resultViewPinnedTab = document.getElementById('resultViewPinnedTab');
+const resultViewTailTab = document.getElementById('resultViewTailTab');
+const eventsView = document.getElementById('eventsView');
+const incidentIndicator = document.getElementById('incidentIndicator');
+const incidentIndicatorBtn = document.getElementById('incidentIndicatorBtn');
+const incidentCountEl = document.getElementById('incidentCount');
+const incidentsPanel = document.getElementById('incidentsPanel');
 const THEME_STORAGE_KEY = 'aem_themePreference';
 const RAW_EVENTS_PAGE_SIZE_STORAGE_KEY = 'aem_rawEventsPerPage';
 const SOURCE_MODE_STORAGE_KEY = 'aem_sourceMode';
@@ -85,6 +131,7 @@ const CM_SELECTIONS_STORAGE_KEY = 'aem_cmSelections';
 const CM_PROGRAMS_CACHE_KEY = 'aem_cmProgramsCache';
 const CM_ENVIRONMENTS_CACHE_KEY = 'aem_cmEnvironmentsCache';
 const CM_LOG_OPTIONS_CACHE_KEY = 'aem_cmLogOptionsCache';
+const WORKSPACE_STORAGE_KEY = 'aem_workspaceState';
 const THEME_OPTIONS = new Set(['system', 'light', 'dark']);
 let themePreference = localStorage.getItem(THEME_STORAGE_KEY);
 if (!THEME_OPTIONS.has(themePreference)) {
@@ -103,6 +150,7 @@ let currentSourceMode = localStorage.getItem(SOURCE_MODE_STORAGE_KEY) === 'cloud
 let currentAnalyzedFilePath = '';
 let currentBatchInput = null;
 let currentBatchSummary = null;
+let currentBatchLogType = '';
 let cloudManagerProgramsLoaded = false;
 let cloudManagerCommandPreviewPending = false;
 let cloudManagerLogOptions = [];
@@ -131,12 +179,16 @@ let popoverEnvironmentId = '';
 let selectedLocalDownloadFiles = [];
 let localDownloadsPopoverOpen = false;
 let cloudManagerDownloadPending = false;
+let tailSocket = null;
+let activeTailSource = '';
+let cloudManagerTailSession = null;
+let cloudManagerTailEntries = [];
 let cloudManagerDownloadStatusMessage = '';
-let selectedLoggers = [];
-let selectedPackages = [];
+// Unified filter state now in filters object above
 let allLoggers = {};  // Store all loggers for cascading filter
 let allPackages = {};
 let allThreads = {};
+let allPods = {};
 let allExceptions = {};
 let packageThreadsByPackage = {};
 let packageExceptionsByPackage = {};
@@ -146,6 +198,31 @@ let advancedRulesState = [];
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'aem_sidebarCollapsed';
 const SIDEBAR_COLLAPSE_BREAKPOINT = 768;
 let sidebarCollapsedPreference = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1';
+
+let tailEntries = [];
+let tailAutoScroll = true;
+let tailHasNewEntries = false;
+let tailAllPackages = {};
+let tailAllLoggers = {};
+
+let activeView = 'analyzer';
+let currentResultView = 'events';
+let currentAnalysisSummary = null;
+let currentVisibleEventTotal = 0;
+let pinnedEntries = [];
+let currentCorrelation = null;
+let incidentsPanelOpen = false;
+let filters = {
+  packages: [],
+  loggers: [],
+  level: 'ALL',
+  search: '',
+  regex: false
+};
+
+function replaceArrayContents(target, nextValues = []) {
+  target.splice(0, target.length, ...nextValues);
+}
 
 const EXCEPTION_TOKEN_REGEX = /\b(?:[a-zA-Z_$][\w$]*\.)*[A-Z][\w$]*(?:Exception|Error)\b/g;
 
@@ -220,7 +297,7 @@ function setThemePreference(nextPreference) {
 }
 
 function getActiveAnalysisFilePath() {
-  if (currentAnalysisMode === 'multi-error') return '';
+  if (currentAnalysisMode === 'batch') return '';
   if (currentAnalyzedFilePath) return currentAnalyzedFilePath;
   if (currentSourceMode === 'local') return filePathInput.value.trim();
   return '';
@@ -228,6 +305,411 @@ function getActiveAnalysisFilePath() {
 
 function setCurrentAnalyzedFilePath(filePath) {
   currentAnalyzedFilePath = filePath ? String(filePath).trim() : '';
+}
+
+function getWorkspaceStorageSnapshot() {
+  return {
+    sourceMode: currentSourceMode,
+    resultView: currentResultView,
+    filePath: filePathInput?.value.trim() || '',
+    rawSearch: rawSearchInput?.value || '',
+    rawLevel: rawEventsLevel,
+    startDate: startDate?.value || '',
+    endDate: endDate?.value || '',
+    filters: {
+      packages: [...filters.packages],
+      loggers: [...filters.loggers],
+      level: filters.level,
+      search: filters.search,
+      regex: filters.regex
+    },
+    thread: threadSelect?.value || '',
+    exception: exceptionSelect?.value || '',
+    category: categoryFilter?.value || '',
+    request: {
+      method: document.getElementById('methodFilter')?.value || '',
+      status: document.getElementById('statusFilter')?.value || '',
+      pod: document.getElementById('podFilter')?.value || '',
+      minResponseTime: document.getElementById('minResponseTime')?.value || '',
+      maxResponseTime: document.getElementById('maxResponseTime')?.value || ''
+    },
+    cdn: {
+      method: document.getElementById('cdnMethodFilter')?.value || '',
+      status: document.getElementById('cdnStatusFilter')?.value || '',
+      cache: document.getElementById('cacheStatusFilter')?.value || '',
+      country: document.getElementById('countryFilter')?.value || '',
+      pop: document.getElementById('popFilter')?.value || '',
+      host: document.getElementById('hostFilter')?.value || '',
+      minTtfb: document.getElementById('minTtfb')?.value || '',
+      maxTtfb: document.getElementById('maxTtfb')?.value || ''
+    },
+    pinnedEntries
+  };
+}
+
+function persistWorkspaceState() {
+  localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(getWorkspaceStorageSnapshot()));
+}
+
+function countActiveFilters() {
+  let count = 0;
+  if (startDate?.value) count++;
+  if (endDate?.value) count++;
+  if (rawEventsLevel && rawEventsLevel !== 'ALL') count++;
+  if (rawSearchInput?.value.trim()) count++;
+  if (filters.packages.length) count += filters.packages.length;
+  if (filters.loggers.length) count += filters.loggers.length;
+  if (threadSelect?.value) count++;
+  if (exceptionSelect?.value) count++;
+  if (categoryFilter?.value) count++;
+
+  [
+    'methodFilter', 'statusFilter', 'podFilter', 'minResponseTime', 'maxResponseTime',
+    'cdnMethodFilter', 'cdnStatusFilter', 'cacheStatusFilter', 'countryFilter',
+    'popFilter', 'hostFilter', 'minTtfb', 'maxTtfb'
+  ].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element?.value) count++;
+  });
+
+  if (Array.isArray(advancedRulesState) && advancedRulesState.length) count += advancedRulesState.length;
+  return count;
+}
+
+function buildWorkspaceTitle() {
+  if (currentAnalysisMode === 'batch' && currentBatchSummary) {
+    const totalFiles = currentBatchSummary.totalFiles || parseBatchInput(currentBatchInput || '').length;
+    const batchLabel = currentBatchLogType === 'mixed'
+      ? 'mixed log'
+      : `${currentBatchLogType || 'batch'} log`;
+    return `Merged ${batchLabel} analysis across ${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
+  }
+
+  if (currentAnalyzedFilePath) {
+    const segments = currentAnalyzedFilePath.split(/[\\/]/);
+    return segments[segments.length - 1] || currentAnalyzedFilePath;
+  }
+
+  if (activeTailSource === 'cloudmanager' && cloudManagerTailSession) {
+    return `Live tail: ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId || 'Cloud Manager'}`;
+  }
+
+  return 'No active analysis';
+}
+
+function updateWorkspaceChrome() {
+  const hasAnalysis = Boolean(currentAnalysisSummary || currentBatchSummary || activeTailSource);
+  if (resultWorkspace) resultWorkspace.classList.toggle('hidden', !hasAnalysis);
+  const emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.classList.toggle('hidden', hasAnalysis);
+
+  if (workspaceTitle) workspaceTitle.textContent = buildWorkspaceTitle();
+  if (workspaceModeBadge) {
+    const badgeLabel = activeTailSource
+      ? 'Live'
+      : currentAnalysisMode === 'batch'
+        ? 'Merged'
+        : (currentLogType || 'Idle');
+    workspaceModeBadge.textContent = badgeLabel;
+  }
+  if (workspaceStatus) {
+    if (activeTailSource === 'cloudmanager') {
+      workspaceStatus.textContent = `Live tail is active. Use filters to focus the stream or switch back to Events and Charts without stopping the session.`;
+    } else if (currentAnalysisMode === 'batch' && currentBatchSummary) {
+      workspaceStatus.textContent = `Merged batch analysis is active. Refine filters to narrow the cross-file result set or pin events to keep them visible while you investigate.`;
+    } else if (currentAnalysisSummary) {
+      workspaceStatus.textContent = `Analysis loaded. Use the sidebar to refine results, open Charts for distribution trends, or pin events that matter before changing filters.`;
+    } else {
+      workspaceStatus.textContent = 'Analyze a log file to populate events, charts, and investigation context.';
+    }
+  }
+}
+
+function updateWorkspaceSummary() {
+  updateWorkspaceChrome();
+}
+
+function setResultView(view, { persist = true } = {}) {
+  const nextView = ['events', 'charts', 'pinned', 'live-tail'].includes(view) ? view : 'events';
+  currentResultView = nextView;
+  chartsVisible = nextView === 'charts';
+
+  const views = {
+    events: eventsView,
+    charts: chartsTab,
+    pinned: document.getElementById('pinnedView'),
+    'live-tail': tailPanel
+  };
+
+  resultViewTabs.forEach((button) => {
+    const isActive = button.dataset.resultView === nextView;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  Object.entries(views).forEach(([key, element]) => {
+    if (!element) return;
+    element.classList.toggle('hidden', key !== nextView);
+    element.classList.toggle('active', key === nextView);
+  });
+
+  if (chartsToggleBtn) {
+    chartsToggleBtn.classList.toggle('active', nextView === 'charts');
+  }
+
+  if (nextView === 'charts') {
+    fetchChartsData();
+  }
+
+  if (persist) persistWorkspaceState();
+}
+
+function updateIncidentIndicator() {
+  const incidents = currentCorrelation?.incidents || [];
+  if (!incidents.length || currentAnalysisMode !== 'batch') {
+    if (incidentIndicator) incidentIndicator.classList.add('hidden');
+    if (incidentsPanel) incidentsPanel.classList.add('hidden');
+    incidentsPanelOpen = false;
+    return;
+  }
+
+  const maxSeverity = currentCorrelation.summary?.maxSeverity || 'default';
+  const count = incidents.length;
+  if (incidentCountEl) incidentCountEl.textContent = count;
+  if (incidentIndicatorBtn) {
+    incidentIndicatorBtn.classList.remove('severity-error');
+    if (maxSeverity === 'ERROR') incidentIndicatorBtn.classList.add('severity-error');
+  }
+  if (incidentIndicator) incidentIndicator.classList.remove('hidden');
+}
+
+function toggleIncidentsPanel() {
+  incidentsPanelOpen = !incidentsPanelOpen;
+  if (incidentIndicatorBtn) incidentIndicatorBtn.setAttribute('data-expanded', String(incidentsPanelOpen));
+  if (!incidentsPanelOpen) {
+    incidentsPanel.classList.add('hidden');
+    return;
+  }
+  incidentsPanel.classList.remove('hidden');
+  renderIncidents();
+}
+
+function renderIncidents() {
+  if (!incidentsPanel) return;
+  const incidents = currentCorrelation?.incidents || [];
+  if (!incidents.length) {
+    incidentsPanel.innerHTML = '<div class="incidents-empty">No incidents detected.</div>';
+    return;
+  }
+
+  const summary = currentCorrelation.summary || {};
+  const timeRange = summary.firstTimestamp && summary.lastTimestamp
+    ? `from ${summary.firstTimestamp} to ${summary.lastTimestamp}`
+    : '';
+
+  let html = '<div class="incidents-panel-header">';
+  html += '<h3>Incident Timeline</h3>';
+  html += `<span class="incidents-panel-summary">${escapeHtml(timeRange)}</span>`;
+  html += '<button id="incidentsPanelCloseBtn" class="incidents-panel-close" type="button" aria-label="Close incidents panel">&times;</button>';
+  html += '</div>';
+
+  incidents.forEach((incident, idx) => {
+    const maxSev = (incident.severities || []).reduce((best, s) => {
+      if (s.name === 'ERROR') return 'error';
+      if (s.name === 'WARN' && best !== 'error') return 'warn';
+      return best;
+    }, 'default');
+
+    const sevLabel = escapeHtml((incident.severities || []).map(s => `${s.name}:${s.count}`).join(', '));
+    const sources = (incident.sources || []).map(s => `<span class="incident-source-badge">${escapeHtml(s.name)} (${s.count})</span>`).join('');
+    const eventCount = incident.total || incident.events?.length || 0;
+    const timeLabel = incident.startTimestamp && incident.lastTimestamp
+      ? `${incident.startTimestamp} → ${incident.lastTimestamp}`
+      : incident.startTimestamp || '';
+
+    html += `<div class="incident-row" data-incident-idx="${idx}">`;
+    html += '<div class="incident-row-meta">';
+    html += `<span class="incident-severity-pill ${maxSev}">${sevLabel}</span>`;
+    html += `<span class="incident-time-range">${timeLabel}</span>`;
+    html += `<span class="incident-event-count">${eventCount} events</span>`;
+    html += '</div>';
+    if (sources) html += `<div class="incident-sources">${sources}</div>`;
+    html += '</div>';
+  });
+
+  incidentsPanel.innerHTML = html;
+
+  const closeBtn = document.getElementById('incidentsPanelCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      incidentsPanel.classList.add('hidden');
+      incidentsPanelOpen = false;
+      if (incidentIndicatorBtn) incidentIndicatorBtn.setAttribute('data-expanded', 'false');
+    });
+  }
+
+  incidentsPanel.querySelectorAll('.incident-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const idx = Number(row.dataset.incidentIdx);
+      const incident = incidents[idx];
+      if (!incident) return;
+
+      if (row.classList.contains('expanded')) {
+        row.classList.remove('expanded');
+        const existing = row.querySelector('.incident-events-list');
+        if (existing) existing.remove();
+        return;
+      }
+
+      row.classList.add('expanded');
+      const events = incident.events || [];
+      if (!events.length) return;
+
+      let eventsHtml = '<div class="incident-events-list">';
+      events.forEach(evt => {
+        const evtLevel = (evt.level || evt.severity || 'INFO').toLowerCase();
+        const evtClass = evtLevel === 'error' ? 'error' : evtLevel === 'warn' ? 'warn' : 'default';
+        const ts = escapeHtml(evt.timestamp || '');
+        const msg = evt.message || evt.title || evt.url || JSON.stringify(evt).substring(0, 120);
+        eventsHtml += '<div class="incident-event">';
+        eventsHtml += `<span class="incident-event-level ${evtClass}">${escapeHtml(evtLevel)}</span>`;
+        eventsHtml += `<span class="incident-event-timestamp">${ts}</span>`;
+        eventsHtml += `<span class="incident-event-message">${escapeHtml(msg)}</span>`;
+        eventsHtml += '</div>';
+      });
+      eventsHtml += '</div>';
+      row.insertAdjacentHTML('beforeend', eventsHtml);
+    });
+  });
+}
+
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function createPinnedEntryKey(evt = {}, logType = currentLogType) {
+  return [
+    logType,
+    evt.timestamp || '',
+    evt.logger || evt.sourceName || evt.sourceFile || evt.url || '',
+    evt.message || evt.title || evt.rawLine || '',
+    evt.status || '',
+    evt.method || ''
+  ].join('::');
+}
+
+function isPinnedEvent(evt = {}, logType = currentLogType) {
+  const key = createPinnedEntryKey(evt, logType);
+  return pinnedEntries.some((entry) => entry.key === key);
+}
+
+function renderPinnedEvents() {
+  if (!pinnedEvents) return;
+  if (!pinnedEntries.length) {
+    pinnedEvents.innerHTML = '<div class="pinned-empty">No findings pinned yet. Pin events from the Events view to keep them visible while you adjust filters.</div>';
+    updateWorkspaceSummary();
+    return;
+  }
+
+  pinnedEvents.innerHTML = pinnedEntries.map((entry) => `
+    <article class="pinned-event-card">
+      <div class="pinned-event-meta">
+        <span class="level-badge ${escapeHtml(entry.levelClass || 'INFO')}">${escapeHtml(entry.levelLabel || entry.logType || 'Event')}</span>
+        <span>${escapeHtml(entry.timestamp || '')}</span>
+        <span>${escapeHtml(entry.context || '')}</span>
+      </div>
+      <p class="pinned-event-message">${highlightText(entry.message || '', rawEventsSearch)}</p>
+      <div class="pinned-event-actions">
+        <button class="tail-action-btn" type="button" data-remove-pinned-key="${escapeHtml(entry.key)}">Remove</button>
+      </div>
+    </article>
+  `).join('');
+  updateWorkspaceSummary();
+}
+
+function buildPinnedEntry(evt = {}, logType = currentLogType) {
+  const levelClass = String(evt.level || evt.severity || evt.method || 'INFO').toUpperCase();
+  const context = evt.logger || evt.sourceName || evt.sourceFile || evt.url || evt.host || '';
+  return {
+    key: createPinnedEntryKey(evt, logType),
+    logType,
+    timestamp: evt.timestamp || '',
+    context,
+    message: evt.message || evt.title || evt.rawLine || evt.url || '',
+    levelLabel: evt.level || evt.method || evt.severity || logType,
+    levelClass
+  };
+}
+
+function togglePinnedEvent(entry, logType = currentLogType) {
+  const pinnedKey = createPinnedEntryKey(entry, logType);
+  const existingIndex = pinnedEntries.findIndex((item) => item.key === pinnedKey);
+  if (existingIndex >= 0) {
+    pinnedEntries.splice(existingIndex, 1);
+  } else {
+    pinnedEntries.unshift(buildPinnedEntry(entry, logType));
+  }
+  renderPinnedEvents();
+  persistWorkspaceState();
+}
+
+function restoreWorkspaceState() {
+  const saved = safeJsonParse(localStorage.getItem(WORKSPACE_STORAGE_KEY), {});
+  if (!saved || typeof saved !== 'object') return;
+
+  if (saved.filePath && filePathInput) {
+    filePathInput.value = saved.filePath;
+  }
+  if (saved.rawSearch && rawSearchInput) {
+    rawSearchInput.value = saved.rawSearch;
+    rawEventsSearch = saved.rawSearch;
+  }
+  if (saved.rawLevel) {
+    rawEventsLevel = saved.rawLevel;
+  }
+  if (saved.startDate && startDate) startDate.value = saved.startDate;
+  if (saved.endDate && endDate) endDate.value = saved.endDate;
+
+  if (saved.filters && typeof saved.filters === 'object') {
+    replaceArrayContents(filters.packages, Array.isArray(saved.filters.packages) ? saved.filters.packages : []);
+    replaceArrayContents(filters.loggers, Array.isArray(saved.filters.loggers) ? saved.filters.loggers : []);
+    filters.level = saved.filters.level || 'ALL';
+    filters.search = saved.filters.search || '';
+    filters.regex = Boolean(saved.filters.regex);
+  }
+
+  if (threadSelect && saved.thread) threadSelect.value = saved.thread;
+  if (exceptionSelect && saved.exception) exceptionSelect.value = saved.exception;
+  if (categoryFilter && saved.category) categoryFilter.value = saved.category;
+
+  const requestState = saved.request || {};
+  const cdnState = saved.cdn || {};
+  const valueMap = {
+    methodFilter: requestState.method,
+    statusFilter: requestState.status,
+    podFilter: requestState.pod,
+    minResponseTime: requestState.minResponseTime,
+    maxResponseTime: requestState.maxResponseTime,
+    cdnMethodFilter: cdnState.method,
+    cdnStatusFilter: cdnState.status,
+    cacheStatusFilter: cdnState.cache,
+    countryFilter: cdnState.country,
+    popFilter: cdnState.pop,
+    hostFilter: cdnState.host,
+    minTtfb: cdnState.minTtfb,
+    maxTtfb: cdnState.maxTtfb
+  };
+  Object.entries(valueMap).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element && value) element.value = value;
+  });
+
+  pinnedEntries = Array.isArray(saved.pinnedEntries) ? saved.pinnedEntries : [];
+  renderPinnedEvents();
+
+  updateLevelChips(rawEventsLevel || 'ALL');
+  currentResultView = saved.resultView || 'events';
 }
 
 function getCloudManagerSelectionState() {
@@ -239,6 +721,27 @@ function getCloudManagerSelectionState() {
     days: cmDaysInput?.value.trim() || '1',
     outputDirectory: cmOutputDirectoryInput?.value.trim() || ''
   };
+}
+
+function isCloudManagerErrorLogSelection(selection = {}) {
+  const logName = String(selection.logName || selection.name || '').toLowerCase();
+  return logName.includes('error');
+}
+
+function getActiveCloudManagerTailSelections() {
+  return selectedCloudManagerLogs;
+}
+
+function getCloudManagerCommandPreviewState(mode = 'download') {
+  const state = getCloudManagerSelectionState();
+  if (mode === 'tail') {
+    state.selections = getActiveCloudManagerTailSelections();
+    state.mode = 'tail';
+    return state;
+  }
+
+  state.mode = 'download';
+  return state;
 }
 
 function persistCloudManagerSelectionState() {
@@ -373,6 +876,9 @@ function toggleCloudManagerAdvancedSettings() {
     // Save preference to localStorage
     const isExpanded = accordion.classList.contains('expanded');
     localStorage.setItem('aem_cmAdvancedExpanded', isExpanded ? 'true' : 'false');
+    if (cmAdvancedSettingsToggle) {
+      cmAdvancedSettingsToggle.setAttribute('aria-expanded', String(isExpanded));
+    }
   }
 }
 
@@ -383,6 +889,15 @@ function restoreCloudManagerTabState() {
     localStorage.setItem('aem_cmActiveTab', nextTab);
   }
   switchCloudManagerTab(nextTab);
+
+  const accordion = document.querySelector('.cloudmanager-advanced-settings');
+  const isExpanded = localStorage.getItem('aem_cmAdvancedExpanded') === 'true';
+  if (accordion) {
+    accordion.classList.toggle('expanded', isExpanded);
+  }
+  if (cmAdvancedSettingsToggle) {
+    cmAdvancedSettingsToggle.setAttribute('aria-expanded', String(isExpanded));
+  }
 }
 
 function renderCloudManagerSummary(data) {
@@ -431,7 +946,7 @@ function renderCloudManagerSummary(data) {
 
   cmDownloadSummary.innerHTML = `
     <div><strong>Downloaded ${files.length}</strong> Cloud Manager file(s).</div>
-    <div>Cached under: <code>${escapeHtml(data.environmentDirectory || data.outputDirectory || '')}</code></div>
+    <div>Downloaded to: <code>${escapeHtml(data.environmentDirectory || data.outputDirectory || '')}</code></div>
     ${dates ? `<div>Extracted dates: <span>${escapeHtml(dates)}</span></div>` : ''}
     <div>Analyze these files from <strong>Cloud Manager Logs</strong> in Local Path mode.</div>
     ${fileItems}
@@ -471,6 +986,10 @@ function renderCloudManagerHistory() {
         <span>${escapeHtml((entry.selections || []).map(item => `${item.service}/${item.logName}`).join(', '))}</span><br>
         <span>${escapeHtml(`${entry.summary?.fileCount || 0} files • ${entry.summary?.supportedFiles || 0} supported`)}</span><br>
         <code>${escapeHtml(entry.outputDirectory || '')}</code>
+      </div>
+      <div class="cloudmanager-history-actions">
+        <button class="tail-action-btn" type="button" data-history-action="reuse" data-run-id="${escapeHtml(entry.runId || '')}">Reuse Setup</button>
+        <button class="tail-action-btn" type="button" data-history-action="analyze" data-run-id="${escapeHtml(entry.runId || '')}" ${entry.analyzedFile || entry.downloadedFilesDetailed?.some((file) => file.supported !== false) ? '' : 'disabled'}>Analyze Latest</button>
       </div>
     </div>
   `).join('');
@@ -586,11 +1105,11 @@ function updateLocalDownloadsTrigger(candidates = []) {
   if (!localDownloadsTrigger || !localDownloadsTriggerMeta) return;
   const selectedCount = selectedLocalDownloadFiles.filter((id) => candidates.some((candidate) => candidate.id === id)).length;
   const environmentLabel = localDownloadsPopoverOpen ? getPopoverEnvironmentLabel() : getCloudManagerSelectedEnvironmentLabel();
-  let summary = environmentLabel ? 'No cached logs yet' : 'Choose an environment';
+  let summary = environmentLabel ? 'No downloads yet' : 'Choose an environment';
   if (environmentLabel && candidates.length) {
     summary = selectedCount
-      ? `${selectedCount} selected • ${candidates.length} cached`
-      : `${candidates.length} cached in ${environmentLabel}`;
+      ? `${selectedCount} selected • ${candidates.length} downloaded`
+      : `${candidates.length} downloaded in ${environmentLabel}`;
   }
   localDownloadsTriggerMeta.textContent = summary;
 }
@@ -601,7 +1120,7 @@ function setCloudManagerDownloadStatus(message = '', { pending = false } = {}) {
 
   if (cmAnalyzeBtn) {
     cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && selectedCloudManagerLogs.length);
-    cmAnalyzeBtn.textContent = cloudManagerDownloadPending ? 'Caching…' : 'Cache Selected Logs';
+    cmAnalyzeBtn.textContent = cloudManagerDownloadPending ? 'Downloading…' : 'Download Selected Logs';
   }
 
   if (refreshLocalDownloadsBtn) {
@@ -616,6 +1135,87 @@ function setCloudManagerDownloadStatus(message = '', { pending = false } = {}) {
   if (localDownloadsOverlayStatus) {
     localDownloadsOverlayStatus.textContent = cloudManagerDownloadStatusMessage;
     localDownloadsOverlayStatus.classList.toggle('hidden', !cloudManagerDownloadStatusMessage);
+  }
+
+  updateTailControls();
+}
+
+function formatTailEntryMarkup(entry = {}) {
+  const level = entry.level || entry.type || entry.logType || 'raw';
+  const timestamp = entry.timestamp || '';
+  const body = entry.rawLine || entry.message || JSON.stringify(entry);
+  const sourceLabel = entry.sourceLabel || `${entry.service || ''}/${entry.logName || ''}`.replace(/^\/|\/$/g, '');
+  const severityClass = level === 'ERROR' ? 'error' : (level === 'WARN' ? 'warn' : '');
+  return `
+    <div class="cloudmanager-tail-entry ${severityClass}">
+      <div class="cloudmanager-tail-entry-meta">
+        <span>${escapeHtml(String(level))}</span>
+        <span>${escapeHtml(String(timestamp))}</span>
+        <span>${escapeHtml(String(sourceLabel || 'Cloud Manager'))}</span>
+      </div>
+      <code>${escapeHtml(String(body))}</code>
+    </div>
+  `;
+}
+
+function renderCloudManagerTailPanel() {
+  if (!cmTailPanel || !cmTailFeed || !cmTailStatus || !cmTailTitle) return;
+
+  const hasSession = Boolean(cloudManagerTailSession);
+  const hasEntries = cloudManagerTailEntries.length > 0;
+  cmTailPanel.classList.toggle('hidden', !(hasSession || hasEntries));
+
+  if (!hasSession && !hasEntries) {
+    cmTailFeed.innerHTML = '';
+    cmTailStatus.textContent = 'Select a Cloud Manager log and start tailing.';
+    cmTailTitle.textContent = 'No active Cloud Manager tail';
+    updateTailControls();
+    return;
+  }
+
+  cmTailTitle.textContent = cloudManagerTailSession
+    ? `Tailing ${cloudManagerTailSession.selectionCount} log${cloudManagerTailSession.selectionCount === 1 ? '' : 's'} on ${cloudManagerTailSession.environmentName || cloudManagerTailSession.environmentId}`
+    : 'Recent live tail output';
+  cmTailFeed.innerHTML = cloudManagerTailEntries.map(formatTailEntryMarkup).join('');
+  cmTailFeed.scrollTop = 0;
+  updateTailControls();
+}
+
+function setCloudManagerTailStatus(message = '') {
+  if (!cmTailStatus) return;
+  cmTailStatus.textContent = message || 'Select a Cloud Manager log and start tailing.';
+  renderCloudManagerTailPanel();
+}
+
+function pushCloudManagerTailEntry(entry) {
+  cloudManagerTailEntries = [entry, ...cloudManagerTailEntries].slice(0, 100);
+  renderCloudManagerTailPanel();
+}
+
+function resetCloudManagerTailState({ preserveEntries = false } = {}) {
+  cloudManagerTailSession = null;
+  if (!preserveEntries) {
+    cloudManagerTailEntries = [];
+  }
+  activeTailSource = activeTailSource === 'cloudmanager' ? '' : activeTailSource;
+  renderCloudManagerTailPanel();
+}
+
+function updateTailControls() {
+  const tailSelections = getActiveCloudManagerTailSelections();
+  const cloudManagerTailActive = activeTailSource === 'cloudmanager';
+  if (cmTailBtn) {
+    cmTailBtn.disabled = cloudManagerDownloadPending || (!cloudManagerTailActive && !(cloudManagerLiveMetadata.programsAvailable && cmProgramSelect?.value && cmEnvironmentSelect?.value && tailSelections.length));
+    cmTailBtn.textContent = cloudManagerTailActive ? 'Tailing…' : 'Tail Logs';
+    cmTailBtn.classList.toggle('active', cloudManagerTailActive);
+    cmTailBtn.title = 'Start live tailing for the selected Cloud Manager logs';
+  }
+
+  if (cmTailStopBtn) {
+    cmTailStopBtn.disabled = !cloudManagerTailActive;
+  }
+  if (resultViewTailTab) {
+    resultViewTailTab.disabled = !cloudManagerTailActive && !tailEntries.length;
   }
 }
 
@@ -644,7 +1244,7 @@ async function loadCloudManagerCacheBrowser(programId = cmProgramSelect?.value |
   }
 
   if (localDownloadsList && !silent) {
-    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">Loading cached Cloud Manager logs...</div>';
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">Loading downloaded Cloud Manager logs...</div>';
   }
 
   try {
@@ -652,7 +1252,7 @@ async function loadCloudManagerCacheBrowser(programId = cmProgramSelect?.value |
     const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
     const data = await response.json();
     if (!data.success) {
-      throw new Error(data.error || 'Unable to load cached Cloud Manager logs');
+      throw new Error(data.error || 'Unable to load downloaded Cloud Manager logs');
     }
     cloudManagerCacheData = {
       cacheRoot: data.cacheRoot || cmOutputDirectoryInput?.value.trim() || '',
@@ -817,7 +1417,7 @@ async function loadPopoverCache(programId, environmentId, { silent = false } = {
     localDownloadsList.innerHTML = `
       <div class="popover-loading-container">
         <div class="popover-loading-spinner"></div>
-        <div class="popover-loading-text">Loading cached logs...</div>
+        <div class="popover-loading-text">Loading downloaded logs...</div>
       </div>
     `;
   }
@@ -827,7 +1427,7 @@ async function loadPopoverCache(programId, environmentId, { silent = false } = {
     const response = await fetch(`/api/cloudmanager/cache/logs?${params.toString()}`);
     const data = await response.json();
     if (!data.success) {
-      throw new Error(data.error || 'Unable to load cached logs');
+      throw new Error(data.error || 'Unable to load downloaded logs');
     }
     popoverCacheData = {
       cacheRoot: data.cacheRoot || '',
@@ -876,19 +1476,21 @@ function applySelectedDownloadsToInput() {
     .filter(Boolean);
 
   if (!selectedFiles.length) {
-    filePathInput.value = '';
+    persistLocalPathInput('');
     return;
   }
 
   if (selectedFiles.length > 1) {
-    const nonErrorSelection = selectedFiles.find((file) => file.logType && file.logType !== 'error');
-    if (nonErrorSelection) {
-      showToast('Multiple-file analysis is only supported for error logs', 'warning');
-      return;
+    const allErrorLogs = selectedFiles.every((file) => file.logType === 'error');
+    if (!allErrorLogs) {
+      const hasNonError = selectedFiles.some((file) => file.logType && file.logType !== 'error');
+      if (hasNonError) {
+        showToast('Multiple-file analysis for CDN/request logs uses batch analysis (no error correlation)', 'warning');
+      }
     }
   }
 
-  filePathInput.value = selectedFiles.map((file) => file.filePath).join(',');
+  persistLocalPathInput(selectedFiles.map((file) => file.filePath).join(','));
 }
 
 function renderLocalDownloadsList() {
@@ -926,8 +1528,8 @@ function renderLocalDownloadsList() {
 
   if (!activeProgramId || !activeEnvironmentId) {
     const hint = usePopoverData
-      ? 'Select a program and environment to browse the cache.'
-      : 'Select a program and environment in the Cloud Manager tab to browse the cache.';
+      ? 'Select a program and environment to browse downloads.'
+      : 'Select a program and environment in the Cloud Manager tab to browse downloads.';
     localDownloadsList.innerHTML = `<div class="cloudmanager-hint">${hint}</div>`;
     if (cmLogTypeTabs) cmLogTypeTabs.innerHTML = '';
     return;
@@ -965,7 +1567,7 @@ function renderLocalDownloadsList() {
     : sortedTypes.filter((t) => t === activeLogTypeFilter);
 
   if (!filteredTypes.length) {
-    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">No cached logs found for this environment.</div>';
+    localDownloadsList.innerHTML = '<div class="cloudmanager-hint">No downloaded logs found for this environment.</div>';
     return;
   }
 
@@ -976,11 +1578,11 @@ function renderLocalDownloadsList() {
     <div class="cm-picker-meta-card">
       <div>
         <strong>${escapeHtml(environmentLabel || 'Cloud Manager environment')}</strong>
-        <span>${escapeHtml(activeCacheData.environmentDirectory || activeCacheData.cacheRoot || 'Cache path not available')}</span>
+        <span>${escapeHtml(activeCacheData.environmentDirectory || activeCacheData.cacheRoot || 'Download path not available')}</span>
       </div>
       <div class="cm-picker-stat">
         <strong>${escapeHtml(String(totalCached))}</strong>
-        <span>cached logs</span>
+        <span>downloaded logs</span>
       </div>
     </div>
   `;
@@ -1160,9 +1762,9 @@ function getSelectedCloudManagerLogOptions() {
   });
 }
 
-async function refreshCloudManagerCommandPreview() {
+async function refreshCloudManagerCommandPreview(mode = cloudManagerTailSession ? 'tail' : 'download') {
   if (!cmCommandPreview) return;
-  const state = getCloudManagerSelectionState();
+  const state = getCloudManagerCommandPreviewState(mode);
   if (!state.days) state.days = '1';
   if (cmEstimatedDateRange) {
     const parsedDays = Math.max(Number(state.days || 1), 1);
@@ -1189,9 +1791,13 @@ async function refreshCloudManagerCommandPreview() {
     if (!data.success) return;
 
     const commands = (data.commands || []).map((entry) => `<code>${escapeHtml(entry.command)}</code>`).join('');
+    const title = mode === 'tail' ? 'Tail command preview' : 'Command preview';
+    const detail = mode === 'tail'
+      ? 'Live tail streams entries directly from Cloud Manager and does not save them.'
+      : escapeHtml(data.estimatedDateRange?.label || '');
     cmCommandPreview.innerHTML = `
-      <div><strong>Command preview</strong></div>
-      <div>${escapeHtml(data.estimatedDateRange?.label || '')}</div>
+      <div><strong>${title}</strong></div>
+      <div>${detail}</div>
       ${commands}
     `;
     cmCommandPreview.classList.remove('hidden');
@@ -1207,8 +1813,8 @@ async function validateCloudManagerOutputDirectory() {
   const outputDirectory = cmOutputDirectoryInput.value.trim();
   if (cmOutputDirectoryHint) {
     cmOutputDirectoryHint.textContent = outputDirectory
-      ? `Persistent cache root: ${outputDirectory}`
-      : 'Cloud Manager downloads are cached automatically for browsing and analysis.';
+      ? `Download folder: ${outputDirectory}`
+      : 'Cloud Manager downloads are stored automatically for browsing and analysis.';
   }
   updateCloudManagerActionState(Boolean(outputDirectory));
   return Boolean(outputDirectory);
@@ -1223,6 +1829,7 @@ function updateCloudManagerActionState(outputDirectoryValid) {
     cmAnalyzeBtn.disabled = cloudManagerDownloadPending || !(hasSelection && outputReady);
   }
   updateCloudManagerHintState();
+  updateTailControls();
 }
 
 function restoreCloudManagerSelections() {
@@ -1246,12 +1853,7 @@ function setSourceMode(mode, { persist = true } = {}) {
 
   if (localSourcePanel) localSourcePanel.classList.toggle('hidden', currentSourceMode !== 'local');
   if (cloudManagerPanel) cloudManagerPanel.classList.toggle('hidden', currentSourceMode !== 'cloudmanager');
-  if (tailBtn) {
-    tailBtn.disabled = currentSourceMode !== 'local';
-    tailBtn.title = currentSourceMode === 'local'
-      ? 'Watch a log file for new entries in real-time'
-      : 'Tail is only available for local file paths';
-  }
+  updateTailControls();
 
   if (persist) {
     localStorage.setItem(SOURCE_MODE_STORAGE_KEY, currentSourceMode);
@@ -1271,6 +1873,9 @@ function setSourceMode(mode, { persist = true } = {}) {
     renderCloudManagerHistory();
     ensureCloudManagerProgramsLoaded();
   }
+
+  updateWorkspaceChrome();
+  if (persist) persistWorkspaceState();
 }
 
 function renderCloudManagerResultBadges() {}
@@ -1553,8 +2158,50 @@ themeButtons.forEach(button => {
 sourceModeButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setSourceMode(button.dataset.sourceMode);
+    persistWorkspaceState();
   });
 });
+
+if (cmAdvancedSettingsToggle) {
+  cmAdvancedSettingsToggle.addEventListener('click', () => {
+    toggleCloudManagerAdvancedSettings();
+  });
+}
+
+resultViewTabs.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.disabled) return;
+    setResultView(button.dataset.resultView);
+  });
+});
+
+if (incidentIndicatorBtn) {
+  incidentIndicatorBtn.addEventListener('click', () => {
+    toggleIncidentsPanel();
+  });
+}
+
+if (workspaceClearBtn) {
+  workspaceClearBtn.addEventListener('click', () => {
+    currentAnalysisSummary = null;
+    currentVisibleEventTotal = 0;
+    rawEventsData = [];
+    currentAnalysisMode = 'single';
+    currentBatchInput = null;
+    currentBatchSummary = null;
+    currentBatchLogType = '';
+    currentCorrelation = null;
+    pinnedEntries = [];
+    setCurrentAnalyzedFilePath('');
+    if (rawEventsSection) rawEventsSection.innerHTML = '';
+    if (pinnedEvents) pinnedEvents.innerHTML = '<div class="pinned-empty">No findings pinned yet. Pin events from the Events view to keep them visible while you adjust filters.</div>';
+    setResultView('events', { persist: false });
+    updateWorkspaceChrome();
+    updateWorkspaceSummary();
+    persistWorkspaceState();
+    updateIncidentIndicator();
+  });
+}
 
 if (cmProgramSelect) {
   cmProgramSelect.addEventListener('change', async () => {
@@ -1657,6 +2304,7 @@ document.querySelectorAll('.cloudmanager-tab').forEach(tabBtn => {
   tabBtn.addEventListener('click', () => {
     const tabName = tabBtn.dataset.tab;
     switchCloudManagerTab(tabName);
+    persistWorkspaceState();
   });
 });
 
@@ -1741,7 +2389,7 @@ if (clearSelectedDownloadsBtn) {
   clearSelectedDownloadsBtn.addEventListener('click', () => {
     selectedLocalDownloadFiles = [];
     renderLocalDownloadsList();
-    filePathInput.value = '';
+    persistLocalPathInput('');
   });
 }
 
@@ -1897,13 +2545,15 @@ function extractExceptionNames(text) {
 function formatDateTimeForDisplay(value) {
   if (!value) return '';
   const text = String(value).trim();
-  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const isoMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2})(?:\.\d{3})?)?$/);
   if (isoMatch) {
-    return `${isoMatch[1]} ${isoMatch[2]}`;
+    const time = isoMatch[3] ? `${isoMatch[2]}:${isoMatch[3]}` : isoMatch[2];
+    return `${isoMatch[1]} ${time}`;
   }
-  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2})(?:\.\d{3})?)?$/);
   if (spaceMatch) {
-    return `${spaceMatch[1]} ${spaceMatch[2]}`;
+    const time = spaceMatch[3] ? `${spaceMatch[2]}:${spaceMatch[3]}` : spaceMatch[2];
+    return `${spaceMatch[1]} ${time}`;
   }
   return text;
 }
@@ -1911,9 +2561,10 @@ function formatDateTimeForDisplay(value) {
 function normalizeDateTimeForApi(value) {
   if (!value) return '';
   const text = String(value).trim();
-  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::\d{2}(?:\.\d{3})?)?$/);
+  const spaceMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2}))?(?:\.\d{3})?$/);
   if (spaceMatch) {
-    return `${spaceMatch[1]}T${spaceMatch[2]}`;
+    const time = spaceMatch[3] ? `${spaceMatch[2]}:${spaceMatch[3]}` : `${spaceMatch[2]}:00`;
+    return `${spaceMatch[1]}T${time}`;
   }
   return text;
 }
@@ -1941,8 +2592,8 @@ function setDateRangeBounds(timeline, logType) {
   const first = parseKey(sorted[0]);
   const last = parseKey(sorted[sorted.length - 1]);
 
-  const firstTime = `${first.date} ${first.hour}:00`;
-  const lastTime = `${last.date} ${last.hour}:59`;
+  const firstTime = `${first.date} ${first.hour}:00:00`;
+  const lastTime = `${last.date} ${last.hour}:59:59`;
 
   startDate.min = formatDateTimeForDisplay(firstTime);
   startDate.max = formatDateTimeForDisplay(lastTime);
@@ -2036,11 +2687,31 @@ function renderAdvancedRuleBuilder() {
   }
 }
 
-function parseMultiErrorInput(value) {
+function parseBatchInput(value) {
   return String(value || '')
     .split(/[\n,]+/)
     .map(item => item.trim())
     .filter(Boolean);
+}
+
+function normalizeLocalPathInputValue(value) {
+  return parseBatchInput(value).join(',');
+}
+
+function persistLocalPathInput(value = filePathInput?.value || '') {
+  const normalized = normalizeLocalPathInputValue(value);
+  if (filePathInput && filePathInput.value !== normalized) {
+    filePathInput.value = normalized;
+  }
+
+  if (normalized) {
+    localStorage.setItem('aem_lastPath', normalized);
+  } else {
+    localStorage.removeItem('aem_lastPath');
+  }
+
+  persistWorkspaceState();
+  return normalized;
 }
 
 /* ============================================================
@@ -2088,6 +2759,7 @@ function setActiveErrorLevel(level = 'ALL') {
   const chip = document.querySelector(`.level-chip[data-level="${level}"]`) || document.querySelector('.level-chip[data-level="ALL"]');
   if (chip) chip.classList.add('active');
   rawEventsLevel = chip?.dataset.level || 'ALL';
+  filters.level = rawEventsLevel;
 }
 
 function clearDropdownSearchInputs() {
@@ -2110,8 +2782,8 @@ function selectMultiValues(allowedValues, selectedArray, values = []) {
 
 function getCurrentErrorPresetState() {
   return {
-    selectedLoggers: [...selectedLoggers],
-    selectedPackages: [...selectedPackages],
+    selectedLoggers: [...filters.loggers],
+    selectedPackages: [...filters.packages],
     thread: threadSelect?.value || '',
     exception: exceptionSelect?.value || '',
     category: categoryFilter.value || '',
@@ -2124,13 +2796,13 @@ function getCurrentErrorPresetState() {
 function applyLegacyPresetSelections(preset) {
   if (preset.package) {
     const matchingPackage = Object.prototype.hasOwnProperty.call(allPackages, preset.package);
-    if (matchingPackage) selectedPackages.push(preset.package);
+    if (matchingPackage) filters.packages.push(preset.package);
     else packageFilter.value = preset.package;
   }
 
   if (preset.logger) {
     const matchingLogger = Object.prototype.hasOwnProperty.call(allLoggers, preset.logger);
-    if (matchingLogger) selectedLoggers.push(preset.logger);
+    if (matchingLogger) filters.loggers.push(preset.logger);
     else loggerFilter.value = preset.logger;
   }
 
@@ -2157,8 +2829,11 @@ function applyCurrentSelectionsToFilterUI() {
 
 function resetErrorFilterState(options = {}) {
   const { preserveDates = false } = options;
-  selectedLoggers.splice(0, selectedLoggers.length);
-  selectedPackages.splice(0, selectedPackages.length);
+  replaceArrayContents(filters.packages);
+  replaceArrayContents(filters.loggers);
+  filters.level = 'ALL';
+  filters.search = '';
+  filters.regex = false;
   clearDropdownSearchInputs();
   if (threadSelect) threadSelect.value = '';
   if (exceptionSelect) exceptionSelect.value = '';
@@ -2168,18 +2843,20 @@ function resetErrorFilterState(options = {}) {
     endDate.value = '';
   }
   setActiveErrorLevel('ALL');
+  updateLevelChips('ALL');
 }
 
 function applyErrorPresetState(preset = {}) {
-  selectedPackages.splice(0, selectedPackages.length);
-  selectedLoggers.splice(0, selectedLoggers.length);
+  replaceArrayContents(filters.packages);
+  replaceArrayContents(filters.loggers);
+  filters.level = 'ALL';
   clearDropdownSearchInputs();
 
-  selectMultiValues(Object.keys(allPackages), selectedPackages, preset.selectedPackages);
+  selectMultiValues(Object.keys(allPackages), filters.packages, preset.filters.packages);
   applyCurrentSelectionsToFilterUI();
 
-  if (preset.selectedLoggers?.length) {
-    selectMultiValues(Object.keys(allLoggers), selectedLoggers, preset.selectedLoggers);
+  if (preset.filters.loggers?.length) {
+    selectMultiValues(Object.keys(allLoggers), filters.loggers, preset.filters.loggers);
     renderLoggerTags();
   } else {
     applyLegacyPresetSelections(preset);
@@ -2283,8 +2960,8 @@ savePresetBtn.addEventListener('click', () => {
    ============================================================ */
 
 analyzeBtn.addEventListener('click', async () => {
-  const filePath = filePathInput.value.trim();
-  const multiPaths = parseMultiErrorInput(filePath);
+  const filePath = persistLocalPathInput(filePathInput.value).trim();
+  const multiPaths = parseBatchInput(filePath);
 
   if (multiPaths.length > 1) {
     await analyzeBatchInput(multiPaths);
@@ -2292,7 +2969,6 @@ analyzeBtn.addEventListener('click', async () => {
   }
 
   if (filePath) {
-    localStorage.setItem('aem_lastPath', filePath);
     await analyzeFilePath(filePath);
   } else {
     showToast('Please enter a file path', 'warning');
@@ -2313,7 +2989,7 @@ async function downloadSelectedCloudManagerLogs(options = {}) {
   }
 
   if (!outputDirectory || !(await validateCloudManagerOutputDirectory())) {
-    showToast('Cloud Manager cache root is not ready yet', 'warning');
+    showToast('Cloud Manager download folder is not ready yet', 'warning');
     return;
   }
 
@@ -2343,11 +3019,11 @@ async function analyzeBatchInput(input) {
   analyzeBtn.textContent = 'Analyzing...';
   analyzeBtn.disabled = true;
   progressText.classList.remove('hidden');
-  progressText.textContent = 'Analyzing error files...';
+  progressText.textContent = 'Analyzing log files...';
   document.getElementById('emptyState').classList.add('hidden');
 
   try {
-    const response = await fetch('/api/analyze/multi-error', {
+    const response = await fetch('/api/analyze/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input, filters: { advancedRules: advancedRulesState } })
@@ -2355,13 +3031,13 @@ async function analyzeBatchInput(input) {
     const data = await response.json();
 
     if (!data.success) {
-      showError(data.error || 'Multi-error analysis failed');
+      showError(data.error || 'Batch analysis failed');
       return;
     }
 
-    handleMultiErrorAnalysisComplete(data, input);
+    await handleBatchAnalysisComplete(data, input);
   } catch (error) {
-    showError('Multi-error analysis failed: ' + error.message);
+    showError('Batch analysis failed: ' + error.message);
   } finally {
     analyzeBtn.textContent = 'Analyze';
     analyzeBtn.disabled = false;
@@ -2388,7 +3064,7 @@ async function analyzeFilePath(filePath) {
     ws.send(JSON.stringify({ action: 'analyze', filePath }));
   };
 
-  ws.onmessage = (e) => {
+  ws.onmessage = async (e) => {
     const data = JSON.parse(e.data);
 
     if (data.type === 'progress') {
@@ -2397,11 +3073,11 @@ async function analyzeFilePath(filePath) {
     }
 
     if (data.type === 'complete') {
-      ws.close();
-      handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
+      await handleAnalysisComplete(data, { analyzedFile: filePath, source: 'local' });
       analyzeBtn.textContent = 'Analyze';
       analyzeBtn.disabled = false;
       progressText.classList.add('hidden');
+      ws.close();
     }
 
     if (data.type === 'error') {
@@ -2437,14 +3113,14 @@ async function analyzeCloudManagerSelection(options) {
 
   console.log('[AEM] Starting Cloud Manager download with options:', options);
 
-  setCloudManagerDownloadStatus('Caching log files from Cloud Manager...', { pending: true });
-  setCloudManagerStatus('Caching log files from Cloud Manager...');
+  setCloudManagerDownloadStatus('Downloading log files from Cloud Manager...', { pending: true });
+  setCloudManagerStatus('Downloading log files from Cloud Manager...');
   document.getElementById('emptyState').classList.add('hidden');
   resetCloudManagerSummary();
 
   if (cmAnalyzeBtn) {
     cmAnalyzeBtn.disabled = true;
-    cmAnalyzeBtn.textContent = 'Caching...';
+    cmAnalyzeBtn.textContent = 'Downloading...';
   }
 
   showCloudManagerDownloadProgress(options.selections || []);
@@ -2467,8 +3143,8 @@ async function analyzeCloudManagerSelection(options) {
       return;
     }
 
-    setCloudManagerDownloadStatus('Cache updated.');
-    setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+    setCloudManagerDownloadStatus('Downloads updated.');
+    setCloudManagerStatus('Downloads updated. You can analyze the downloaded files from the Cloud Manager picker.');
     const labels = buildCloudManagerSelectionLabels();
     const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
     currentCloudManagerRunContext = {
@@ -2507,7 +3183,7 @@ async function analyzeCloudManagerSelection(options) {
     }
     finishedSuccessfully = true;
     hideCloudManagerDownloadProgress();
-    showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+    showToast('Downloads updated. Open Cloud Manager Logs to analyze the new files.', 'success');
     persistCloudManagerSelectionState();
   } catch (error) {
     console.error('[AEM] Catch block error:', error);
@@ -2518,7 +3194,7 @@ async function analyzeCloudManagerSelection(options) {
   } finally {
     if (cmAnalyzeBtn) {
       cmAnalyzeBtn.disabled = false;
-      cmAnalyzeBtn.textContent = 'Cache Selected Logs';
+      cmAnalyzeBtn.textContent = 'Download Selected Logs';
     }
     if (!finishedSuccessfully) {
       setCloudManagerDownloadStatus('');
@@ -2533,8 +3209,8 @@ async function handleCloudManagerDownloadComplete(data, options) {
     return;
   }
 
-  setCloudManagerDownloadStatus('Cache updated.');
-  setCloudManagerStatus('Cache updated. You can analyze the cached files from the Cloud Manager picker.');
+  setCloudManagerDownloadStatus('Downloads updated.');
+  setCloudManagerStatus('Downloads updated. You can analyze the downloaded files from the Cloud Manager picker.');
   const labels = buildCloudManagerSelectionLabels();
   const environmentMeta = getCloudManagerEnvironmentMeta(options.environmentId);
   currentCloudManagerRunContext = {
@@ -2572,7 +3248,7 @@ async function handleCloudManagerDownloadComplete(data, options) {
     setLocalDownloadsPopoverOpen(true);
   }
   hideCloudManagerDownloadProgress();
-  showToast('Cache updated. Open Cloud Manager Logs to analyze the new files.', 'success');
+  showToast('Downloads updated. Open Cloud Manager Logs to analyze the new files.', 'success');
   persistCloudManagerSelectionState();
 }
 
@@ -2661,10 +3337,12 @@ function hideCloudManagerDownloadProgress() {
   }
 }
 
-function handleAnalysisComplete(data, context = {}) {
+async function handleAnalysisComplete(data, context = {}) {
   currentAnalysisMode = 'single';
   currentBatchInput = null;
   currentBatchSummary = null;
+  currentBatchLogType = '';
+  currentAnalysisSummary = data.summary || null;
   setCurrentAnalyzedFilePath(context.analyzedFile || data.analyzedFile || '');
   chartsToggleBtn.disabled = false;
 
@@ -2718,7 +3396,7 @@ function handleAnalysisComplete(data, context = {}) {
       });
     }
 
-    if (data.loggers || data.threads || data.packages || data.exceptions) {
+    if (data.loggers || data.threads || data.packages || data.exceptions || data.pods) {
       populateFilterDropdowns(
         data.loggers,
         data.threads,
@@ -2726,7 +3404,8 @@ function handleAnalysisComplete(data, context = {}) {
         data.exceptions,
         data.packageThreads || {},
         data.packageExceptions || {},
-        categories
+        categories,
+        data.pods || {}
       );
     }
   } else if (currentLogType === 'request') {
@@ -2746,16 +3425,23 @@ function handleAnalysisComplete(data, context = {}) {
     populateSelect('hostFilter', filterOptions.hosts || [], 'All Hosts');
   }
 
-  fetchRawEvents(1);
+  setResultView('events', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+  persistWorkspaceState();
+  await fetchRawEvents(1);
 }
 
-function handleMultiErrorAnalysisComplete(data, input) {
-  currentAnalysisMode = 'multi-error';
-  currentLogType = 'error';
+async function handleBatchAnalysisComplete(data, input) {
+  currentAnalysisMode = 'batch';
+  currentBatchLogType = data.batchLogType || 'error';
+  currentLogType = currentBatchLogType === 'mixed' ? 'error' : currentBatchLogType;
+  currentAnalysisSummary = data.summary || null;
   setCurrentAnalyzedFilePath('');
   currentBatchInput = input;
   currentBatchSummary = data.summary || null;
-  chartsToggleBtn.disabled = true;
+  currentCorrelation = data.correlation || null;
+  chartsToggleBtn.disabled = currentBatchLogType === 'mixed';
   exportCsvBtn.disabled = true;
   exportJsonBtn.disabled = true;
   exportPdfBtn.disabled = true;
@@ -2766,20 +3452,83 @@ function handleMultiErrorAnalysisComplete(data, input) {
   }
 
   document.querySelectorAll('.log-filter-panel').forEach(p => p.classList.add('hidden'));
-  const filterPanel = document.getElementById('errorFilters');
+  const filterPanel = document.getElementById(
+    currentBatchLogType === 'request'
+      ? 'requestFilters'
+      : currentBatchLogType === 'cdn'
+        ? 'cdnFilters'
+        : currentBatchLogType === 'mixed'
+          ? 'mixedFilters'
+          : 'errorFilters'
+  );
   if (filterPanel) filterPanel.classList.remove('hidden');
-  applyErrorFilterSidebarResponse(data);
-  if (data.levelCounts) {
+
+  if (currentBatchLogType === 'error') {
+    applyErrorFilterSidebarResponse(data);
+  } else if (currentBatchLogType === 'request') {
+    const filterOptions = data.filterOptions || {};
+    populateSelect('methodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('statusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('podFilter', filterOptions.pods || [], 'All Pods');
+  } else if (currentBatchLogType === 'cdn') {
+    const filterOptions = data.filterOptions || {};
+    populateSelect('cdnMethodFilter', filterOptions.methods || [], 'All Methods');
+    populateSelect('cdnStatusFilter', filterOptions.statuses || [], 'All Status Codes');
+    populateSelect('cacheStatusFilter', filterOptions.cacheStatuses || [], 'All Cache Status');
+    populateSelect('countryFilter', filterOptions.countries || [], 'All Countries');
+    populateSelect('popFilter', filterOptions.pops || [], 'All POPs');
+    populateSelect('hostFilter', filterOptions.hosts || [], 'All Hosts');
+  } else if (currentBatchLogType === 'mixed') {
+    setupMixedFilterTabs();
+    const filterOptions = data.filterOptions || {};
+    const requestOpts = filterOptions.request || {};
+    const cdnOpts = filterOptions.cdn || {};
+    populateSelect('mixedMethodFilter', requestOpts.methods || [], 'All Methods');
+    populateSelect('mixedStatusFilter', requestOpts.statuses || [], 'All Status Codes');
+    populateSelect('mixedPodFilter', requestOpts.pods || [], 'All Pods');
+    populateSelect('mixedCdnMethodFilter', cdnOpts.methods || [], 'All Methods');
+    populateSelect('mixedCdnStatusFilter', cdnOpts.statuses || [], 'All Status Codes');
+    populateSelect('mixedCacheStatusFilter', cdnOpts.cacheStatuses || [], 'All Cache Status');
+    populateSelect('mixedCountryFilter', cdnOpts.countries || [], 'All Countries');
+    populateSelect('mixedPopFilter', cdnOpts.pops || [], 'All POPs');
+    populateSelect('mixedHostFilter', cdnOpts.hosts || [], 'All Hosts');
+  }
+
+  if (data.levelCounts && (currentBatchLogType === 'error' || currentBatchLogType === 'mixed')) {
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
     const lc = data.levelCounts;
-    set('countALL', lc.ALL);
+    set('countALL', lc.ALL || 0);
     set('countERROR', lc.ERROR);
     set('countWARN', lc.WARN);
     set('countINFO', lc.INFO);
     set('countDEBUG', lc.DEBUG);
   }
-  chartsTab.classList.add('hidden');
-  fetchRawEvents(1);
+  chartsTab.classList.toggle('hidden', currentBatchLogType === 'mixed');
+  setResultView('events', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+  persistWorkspaceState();
+  await fetchRawEvents(1);
+  updateIncidentIndicator();
+}
+
+function setupMixedFilterTabs() {
+  const tabs = document.querySelectorAll('.mixed-filter-tab');
+  const sections = document.querySelectorAll('.mixed-filter-section');
+  tabs.forEach(tab => {
+    if (tab.dataset.tabInitialized) return;
+    tab.dataset.tabInitialized = 'true';
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      sections.forEach(s => s.classList.add('hidden'));
+      tab.classList.add('active');
+      const targetSection = document.getElementById(tab.dataset.tab);
+      if (targetSection) targetSection.classList.remove('hidden');
+    });
+  });
+  if (tabs.length > 0) {
+    tabs[0].click();
+  }
 }
 
 function populateSelect(selectId, options, defaultLabel) {
@@ -2803,23 +3552,22 @@ const chartsTab = document.getElementById('chartsTab');
 let chartsVisible = false;
 
 chartsToggleBtn.addEventListener('click', () => {
-  chartsVisible = !chartsVisible;
-  chartsTab.classList.toggle('hidden', !chartsVisible);
-  chartsToggleBtn.classList.toggle('active', chartsVisible);
-  if (chartsVisible) fetchChartsData();
+  setResultView('charts');
+  chartsToggleBtn.classList.add('active');
 });
 
 async function fetchChartsData() {
-  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
+  const isBatch = currentAnalysisMode === 'batch' && currentBatchInput;
   const filePath = getActiveAnalysisFilePath();
-  if (!isMultiError && !filePath) return;
+  if (!isBatch && !filePath) return;
+  if (isBatch && currentBatchLogType !== 'error') return;
 
-  const body = isMultiError
+  const body = isBatch
     ? { input: currentBatchInput, filters: getCurrentErrorFilterPayload() }
     : { filePath, filters: getCurrentLogFilterPayload() };
 
   try {
-    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
+    const response = await fetch(isBatch ? '/api/filter/batch' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -2926,7 +3674,7 @@ function renderCharts(timeline, loggerDist, hourlyHeatmap, threadDist) {
       onClick: (e, elements) => {
         if (elements.length > 0) {
           const loggerName = sortedLoggers[elements[0].index][0];
-          selectMultiValues(Object.keys(allLoggers), selectedLoggers, [loggerName]);
+          selectMultiValues(Object.keys(allLoggers), filters.loggers, [loggerName]);
           renderLoggerTags();
           renderLoggerPicker();
           scheduleErrorFilterRefresh();
@@ -3030,8 +3778,8 @@ function getScopedCountsByPackage(scopeMap, fallbackCounts = {}) {
     return { ...(fallbackCounts || {}) };
   }
 
-  const activePackages = selectedPackages.length > 0
-    ? selectedPackages
+  const activePackages = filters.packages.length > 0
+    ? filters.packages
     : packageNames;
 
   activePackages.forEach((pkgName) => {
@@ -3090,7 +3838,7 @@ function updateCascadeCountBadges() {
   const loggerVisible = visibleLoggerOptionCount;
   const loggerTotal = Object.keys(allLoggers || {}).length;
   const threadVisible = threadSelect ? Math.max(0, threadSelect.options.length - 1) : 0;
-  const threadTotal = Object.keys(allThreads || {}).length;
+  const threadTotal = Object.keys(allPods).length || Object.keys(allThreads || {}).length;
   const exceptionVisible = exceptionSelect ? Math.max(0, exceptionSelect.options.length - 1) : 0;
   const exceptionTotal = Object.keys(allExceptions || {}).length;
   const packageTotal = Object.keys(allPackages || {}).length;
@@ -3098,7 +3846,7 @@ function updateCascadeCountBadges() {
   updateFilterCountBadge(loggerVisibleCount, loggerVisible, loggerTotal, 'logger');
   updateFilterCountBadge(threadVisibleCount, threadVisible, threadTotal, 'pod');
   updateFilterCountBadge(exceptionVisibleCount, exceptionVisible, exceptionTotal, 'exception');
-  updateFilterCountBadge(packageVisibleCount, selectedPackages.length, packageTotal, 'package', 'selected');
+  updateFilterCountBadge(packageVisibleCount, filters.packages.length, packageTotal, 'package', 'selected');
 }
 
 function renderSelectionHint(element, selectedValues, label, searchValue = '') {
@@ -3123,8 +3871,8 @@ function renderSelectionHint(element, selectedValues, label, searchValue = '') {
 }
 
 function renderSelectionHints() {
-  renderSelectionHint(packageSelectionHint, selectedPackages, 'package', packageFilter?.value || '');
-  renderSelectionHint(loggerSelectionHint, selectedLoggers, 'logger', loggerFilter?.value || '');
+  renderSelectionHint(packageSelectionHint, filters.packages, 'package', packageFilter?.value || '');
+  renderSelectionHint(loggerSelectionHint, filters.loggers, 'logger', loggerFilter?.value || '');
 }
 
 function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
@@ -3133,14 +3881,17 @@ function syncSelectedMultiSelectValues(selectedArray, visibleValues) {
       selectedArray.splice(i, 1);
     }
   }
+  filterTailEntries();
 }
 
 function refreshPackageScopedDropdowns() {
-  const scopedThreads = getScopedCountsByPackage(packageThreadsByPackage, allThreads);
+  const sourceThreads = Object.keys(allPods).length > 0 ? allPods : allThreads;
+  const scopedThreads = getScopedCountsByPackage(packageThreadsByPackage, sourceThreads);
   const scopedExceptions = getScopedCountsByPackage(packageExceptionsByPackage, allExceptions);
   populateSingleSelectOptions(threadSelect, document.getElementById('threadFilter'), scopedThreads, 'All Pods');
   populateSingleSelectOptions(exceptionSelect, document.getElementById('exceptionFilter'), scopedExceptions, 'All Exceptions');
   updateCascadeCountBadges();
+  renderSelectionHints();
 }
 
 function populateSelectWithSelection(select, options, defaultLabel, currentValue = '') {
@@ -3164,17 +3915,18 @@ function populateSelectWithSelection(select, options, defaultLabel, currentValue
   }
 }
 
-function populateFilterDropdowns(loggers, threads, packages, exceptions, packageThreads = {}, packageExceptions = {}, categories = []) {
+function populateFilterDropdowns(loggers, threads, packages, exceptions, packageThreads = {}, packageExceptions = {}, categories = [], pods = {}) {
   // Store all loggers for cascading filter
   allLoggers = loggers || {};
   allPackages = packages || {};
   allThreads = threads || {};
   allExceptions = exceptions || {};
+  allPods = pods || {};
   packageThreadsByPackage = packageThreads || {};
   packageExceptionsByPackage = packageExceptions || {};
 
   const visiblePackageValues = new Set(Object.keys(allPackages));
-  syncSelectedMultiSelectValues(selectedPackages, visiblePackageValues);
+  syncSelectedMultiSelectValues(filters.packages, visiblePackageValues);
   renderPackagePicker();
   renderPackageTags();
 
@@ -3192,18 +3944,24 @@ function populateFilterDropdowns(loggers, threads, packages, exceptions, package
 }
 
 function getCurrentErrorFilterPayload() {
-  const filters = {};
+  const payload = {};
 
-  if (startDate.value) filters.startDate = normalizeDateTimeForApi(startDate.value);
-  if (endDate.value) filters.endDate = normalizeDateTimeForApi(endDate.value);
-  if (rawEventsLevel && rawEventsLevel !== 'ALL') filters.level = rawEventsLevel;
-  if (selectedLoggers.length > 0) filters.logger = [...selectedLoggers];
-  if (threadSelect?.value) filters.thread = threadSelect.value;
-  if (selectedPackages.length > 0) filters.package = [...selectedPackages];
-  if (exceptionSelect?.value) filters.exception = exceptionSelect.value;
-  if (categoryFilter?.value) filters.category = categoryFilter.value;
+  if (startDate.value) payload.startDate = normalizeDateTimeForApi(startDate.value);
+  if (endDate.value) payload.endDate = normalizeDateTimeForApi(endDate.value);
+  if (rawEventsLevel && rawEventsLevel !== 'ALL') payload.level = rawEventsLevel;
+  if (filters.loggers.length > 0) payload.logger = [...filters.loggers];
+  if (threadSelect?.value) {
+    if (Object.keys(allPods).length > 0) {
+      payload.pod = threadSelect.value;
+    } else {
+      payload.thread = threadSelect.value;
+    }
+  }
+  if (filters.packages.length > 0) payload.package = [...filters.packages];
+  if (exceptionSelect?.value) payload.exception = exceptionSelect.value;
+  if (categoryFilter?.value) payload.category = categoryFilter.value;
 
-  return filters;
+  return payload;
 }
 
 function getCurrentRequestFilterPayload() {
@@ -3229,6 +3987,30 @@ function getCurrentCDNFilterPayload() {
   if (document.getElementById('hostFilter')?.value) filters.host = document.getElementById('hostFilter').value;
   if (document.getElementById('minTtfb')?.value) filters.minTtfb = document.getElementById('minTtfb').value;
   if (document.getElementById('maxTtfb')?.value) filters.maxTtfb = document.getElementById('maxTtfb').value;
+
+  return filters;
+}
+
+function getCurrentMixedFilterPayload() {
+  const filters = {};
+
+  if (document.getElementById('mixedMethodFilter')?.value) filters.method = document.getElementById('mixedMethodFilter').value;
+  if (document.getElementById('mixedStatusFilter')?.value) filters.status = document.getElementById('mixedStatusFilter').value;
+  if (document.getElementById('mixedPodFilter')?.value) filters.pod = document.getElementById('mixedPodFilter').value;
+  if (document.getElementById('mixedMinResponseTime')?.value) filters.minTime = document.getElementById('mixedMinResponseTime').value;
+  if (document.getElementById('mixedMaxResponseTime')?.value) filters.maxTime = document.getElementById('mixedMaxResponseTime').value;
+  if (document.getElementById('mixedCacheStatusFilter')?.value) filters.cache = document.getElementById('mixedCacheStatusFilter').value;
+  if (document.getElementById('mixedCountryFilter')?.value) filters.country = document.getElementById('mixedCountryFilter').value;
+  if (document.getElementById('mixedHostFilter')?.value) filters.host = document.getElementById('mixedHostFilter').value;
+  if (document.getElementById('mixedMinTtfb')?.value) filters.minTtfb = document.getElementById('mixedMinTtfb').value;
+  if (document.getElementById('mixedMaxTtfb')?.value) filters.maxTtfb = document.getElementById('mixedMaxTtfb').value;
+
+  const cdnMethod = document.getElementById('mixedCdnMethodFilter')?.value;
+  const cdnStatus = document.getElementById('mixedCdnStatusFilter')?.value;
+  const cdnPop = document.getElementById('mixedPopFilter')?.value;
+  if (cdnMethod && !filters.method) filters.method = cdnMethod;
+  if (cdnStatus && !filters.status) filters.status = cdnStatus;
+  if (cdnPop && !filters.pod) filters.pod = cdnPop;
 
   return filters;
 }
@@ -3265,7 +4047,8 @@ function applyErrorFilterSidebarResponse(data) {
     data.exceptions || {},
     data.packageThreads || {},
     data.packageExceptions || {},
-    categories
+    categories,
+    data.pods || {}
   );
 }
 
@@ -3284,17 +4067,18 @@ function scheduleErrorFilterApply() {
 async function refreshErrorFilterOptions() {
   if (currentLogType !== 'error') return;
 
-  const isMultiError = currentAnalysisMode === 'multi-error' && currentBatchInput;
+  const isBatch = currentAnalysisMode === 'batch' && currentBatchInput;
   const filePath = getActiveAnalysisFilePath();
-  if (!isMultiError && !filePath) return;
+  if (!isBatch && !filePath) return;
+  if (isBatch && currentBatchLogType !== 'error') return;
 
   const seq = ++errorFilterRefreshSeq;
-  const payload = isMultiError
+  const payload = isBatch
     ? { input: currentBatchInput, filters: getSidebarErrorFilterPayload() }
     : { filePath, filters: getSidebarErrorFilterPayload() };
 
   try {
-    const response = await fetch(isMultiError ? '/api/filter/multi-error' : '/api/filter', {
+    const response = await fetch(isBatch ? '/api/filter/batch' : '/api/filter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -3326,12 +4110,17 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function highlightText(text, searchTerm) {
+function highlightText(text, searchTerm, isRegex = false) {
   if (!searchTerm || !text) return escapeHtml(text || '');
   const escaped = escapeHtml(text);
   try {
-    const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
-    return escaped.replace(regex, '<mark>$1</mark>');
+    if (isRegex) {
+      const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
+      return escaped.replace(regex, '<mark>$1</mark>');
+    } else {
+      const regex = new RegExp(`(${escapeRegex(searchTerm)})`, 'gi');
+      return escaped.replace(regex, '<mark>$1</mark>');
+    }
   } catch {
     return escaped;
   }
@@ -3340,7 +4129,7 @@ function highlightText(text, searchTerm) {
 function renderLoggerTags() {
   const container = document.getElementById('loggerTags');
   if (!container) return;
-  container.innerHTML = selectedLoggers.map(val =>
+  container.innerHTML = filters.loggers.map(val =>
     `<span class="filter-tag"><span title="${escapeHtml(val)}">${escapeHtml(val.split('.').pop())}</span> <button onclick="removeLogger('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
   renderSelectionHints();
@@ -3349,7 +4138,7 @@ function renderLoggerTags() {
 function renderPackageTags() {
   const container = document.getElementById('packageTags');
   if (!container) return;
-  container.innerHTML = selectedPackages.map(val =>
+  container.innerHTML = filters.packages.map(val =>
     `<span class="filter-tag"><span>${escapeHtml(val)}</span> <button onclick="removePackage('${escapeHtml(val)}')">&times;</button></span>`
   ).join('');
   renderSelectionHints();
@@ -3357,7 +4146,13 @@ function renderPackageTags() {
 
 function getFilteredPackageEntries() {
   const query = packageFilter.value.trim().toLowerCase();
-  return Object.entries(allPackages || {})
+  let sourcePackages = allPackages || {};
+  
+  if (activeTailSource && tailAllPackages) {
+    sourcePackages = { ...sourcePackages, ...tailAllPackages };
+  }
+  
+  return Object.entries(sourcePackages)
     .sort((a, b) => b[1] - a[1])
     .filter(([name]) => !query || name.toLowerCase().includes(query));
 }
@@ -3381,29 +4176,31 @@ function renderTokenPickerResults(container, entries, selectedArray, { showActio
 function renderPackagePicker() {
   const entries = getFilteredPackageEntries();
   visiblePackageOptionCount = entries.length;
-  renderTokenPickerResults(packageResults, entries, selectedPackages);
+  renderTokenPickerResults(packageResults, entries, filters.packages);
   updateCascadeCountBadges();
   renderSelectionHints();
 }
 
 window.removeLogger = (val) => {
-  const idx = selectedLoggers.indexOf(val);
-  if (idx !== -1) selectedLoggers.splice(idx, 1);
+  const idx = filters.loggers.indexOf(val);
+  if (idx !== -1) filters.loggers.splice(idx, 1);
   renderLoggerTags();
   renderLoggerPicker();
   scheduleErrorFilterRefresh();
   scheduleErrorFilterApply();
+  filterTailEntries();
 };
 
 window.removePackage = (val) => {
-  const idx = selectedPackages.indexOf(val);
-  if (idx !== -1) selectedPackages.splice(idx, 1);
+  const idx = filters.packages.indexOf(val);
+  if (idx !== -1) filters.packages.splice(idx, 1);
   renderPackageTags();
   renderPackagePicker();
   filterAndPopulateLoggers();
   refreshPackageScopedDropdowns();
   scheduleErrorFilterRefresh();
   scheduleErrorFilterApply();
+  filterTailEntries();
 };
 
 /* ============================================================
@@ -3411,12 +4208,18 @@ window.removePackage = (val) => {
    ============================================================ */
 
 function loggerMatchesSelectedPackages(loggerName) {
-  if (!selectedPackages.length) return true;
-  return selectedPackages.some((pkg) => loggerName === pkg || loggerName.startsWith(`${pkg}.`));
+  if (!filters.packages.length) return true;
+  return filters.packages.some((pkg) => loggerName === pkg || loggerName.startsWith(`${pkg}.`));
 }
 
 function getAvailableLoggerEntries() {
-  return Object.entries(allLoggers || {})
+  let sourceLoggers = allLoggers || {};
+  
+  if (activeTailSource && tailAllLoggers) {
+    sourceLoggers = { ...sourceLoggers, ...tailAllLoggers };
+  }
+  
+  return Object.entries(sourceLoggers)
     .sort((a, b) => b[1] - a[1])
     .filter(([name]) => loggerMatchesSelectedPackages(name));
 }
@@ -3430,7 +4233,7 @@ function getFilteredLoggerEntries() {
 function renderLoggerPicker() {
   const entries = getFilteredLoggerEntries();
   visibleLoggerOptionCount = entries.length;
-  renderTokenPickerResults(loggerResults, entries, selectedLoggers, { showActionLabel: false });
+  renderTokenPickerResults(loggerResults, entries, filters.loggers, { showActionLabel: false });
   updateCascadeCountBadges();
   renderSelectionHints();
 }
@@ -3439,9 +4242,9 @@ function filterAndPopulateLoggers() {
   if (!allLoggers) return;
   const availableValues = new Set(getAvailableLoggerEntries().map(([name]) => name));
   // Mutate array in-place instead of reassigning to preserve reference
-  for (let i = selectedLoggers.length - 1; i >= 0; i--) {
-    if (!availableValues.has(selectedLoggers[i])) {
-      selectedLoggers.splice(i, 1);
+  for (let i = filters.loggers.length - 1; i >= 0; i--) {
+    if (!availableValues.has(filters.loggers[i])) {
+      filters.loggers.splice(i, 1);
     }
   }
   renderLoggerTags();
@@ -3488,8 +4291,19 @@ function commitTopTokenPickerMatch(resultsEl, query = '') {
 function applyRawEventFilters() {
   rawEventsSearch = rawSearchInput.value;
   rawEventsLevel = document.querySelector('.level-chip.active')?.dataset.level || 'ALL';
+  filters.level = rawEventsLevel;
+  filters.search = rawEventsSearch;
+  updateWorkspaceSummary();
+  persistWorkspaceState();
 
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (activeTailSource === 'cloudmanager') {
+    renderTailFeed();
+    updateTailCounts();
+    updateTailDropdownOptions();
+    return;
+  }
+
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
     fetchRawEvents(1);
     return;
   }
@@ -3518,6 +4332,11 @@ clearFiltersBtn.addEventListener('click', () => {
   refreshPackageScopedDropdowns();
   scheduleErrorFilterRefresh();
   advancedSearchRules.innerHTML = '';
+  if (activeTailSource === 'cloudmanager') {
+    renderTailFeed();
+    updateTailCounts();
+    updateTailDropdownOptions();
+  }
   renderAdvancedRuleBuilder();
   advancedRulesState = [];
   applyRawEventFilters();
@@ -3558,7 +4377,7 @@ runSearchBuilderBtn.addEventListener('click', () => {
    ============================================================ */
 
 exportCsvBtn.addEventListener('click', async () => {
-  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+  const body = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
   const response = await fetch('/api/export/csv', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3568,7 +4387,7 @@ exportCsvBtn.addEventListener('click', async () => {
 });
 
 exportJsonBtn.addEventListener('click', async () => {
-  const body = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
+  const body = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
   const response = await fetch('/api/export/json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3579,8 +4398,8 @@ exportJsonBtn.addEventListener('click', async () => {
 
 exportPdfBtn.addEventListener('click', async () => {
   const summary = getSummaryFromDOM();
-  const body = currentAnalysisMode === 'multi-error'
-    ? { ...getBatchExportPayload(), summary, mode: 'multi-error' }
+  const body = currentAnalysisMode === 'batch'
+    ? { ...getBatchExportPayload(), summary, mode: 'batch' }
     : { summary, events: rawEventsData };
 
   const response = await fetch('/api/export/pdf', {
@@ -3592,16 +4411,27 @@ exportPdfBtn.addEventListener('click', async () => {
 });
 
 function getBatchExportPayload() {
+  let batchFilters;
+  if (currentBatchLogType === 'request') {
+    batchFilters = getCurrentRequestFilterPayload();
+  } else if (currentBatchLogType === 'cdn') {
+    batchFilters = getCurrentCDNFilterPayload();
+  } else if (currentBatchLogType === 'mixed') {
+    batchFilters = getCurrentMixedFilterPayload();
+  } else {
+    batchFilters = getActiveErrorFilterPayload();
+  }
   return {
     input: currentBatchInput,
-    filters: getActiveErrorFilterPayload(),
+    filters: batchFilters,
     advancedRules: advancedRulesState,
-    search: rawEventsSearch
+    search: rawEventsSearch,
+    logType: currentBatchLogType === 'mixed' ? '' : currentBatchLogType
   };
 }
 
 function getSummaryFromDOM() {
-  if (currentAnalysisMode === 'multi-error' && currentBatchSummary) {
+  if (currentAnalysisMode === 'batch' && currentBatchSummary) {
     return {
       totalErrors: currentBatchSummary.totalErrors || 0,
       totalWarnings: currentBatchSummary.totalWarnings || 0,
@@ -3612,12 +4442,28 @@ function getSummaryFromDOM() {
     };
   }
 
-  const getText = (id) => document.getElementById(id)?.textContent || '(0)';
+  const summary = currentAnalysisSummary || {};
+  if (currentLogType === 'request') {
+    return {
+      totalErrors: summary.totalRequests || 0,
+      totalWarnings: summary.slowRequests || 0,
+      uniqueErrors: summary.p95ResponseTime || 0,
+      uniqueWarnings: 0
+    };
+  }
+  if (currentLogType === 'cdn') {
+    return {
+      totalErrors: summary.totalRequests || 0,
+      totalWarnings: summary.cacheMisses || 0,
+      uniqueErrors: summary.cacheHitRatio || 0,
+      uniqueWarnings: 0
+    };
+  }
   return {
-    totalErrors: getText('totalErrors'),
-    totalWarnings: getText('totalWarnings'),
-    uniqueErrors: getText('uniqueErrors'),
-    uniqueWarnings: getText('uniqueWarnings')
+    totalErrors: summary.totalErrors || 0,
+    totalWarnings: summary.totalWarnings || 0,
+    uniqueErrors: summary.uniqueErrors || 0,
+    uniqueWarnings: summary.uniqueWarnings || 0
   };
 }
 
@@ -3625,9 +4471,9 @@ document.getElementById('exportAllBtn').addEventListener('click', async () => {
   showToast('Generating all exports...', 'info');
   const summary = getSummaryFromDOM();
   try {
-    const csvBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
-    const jsonBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), mode: 'multi-error' } : { events: rawEventsData };
-    const pdfBody = currentAnalysisMode === 'multi-error' ? { ...getBatchExportPayload(), summary, mode: 'multi-error' } : { summary, events: rawEventsData };
+    const csvBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
+    const jsonBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), mode: 'batch' } : { events: rawEventsData };
+    const pdfBody = currentAnalysisMode === 'batch' ? { ...getBatchExportPayload(), summary, mode: 'batch' } : { summary, events: rawEventsData };
     const [csvRes, jsonRes, pdfRes] = await Promise.all([
       fetch('/api/export/csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(csvBody) }),
       fetch('/api/export/json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(jsonBody) }),
@@ -3676,57 +4522,181 @@ document.addEventListener('keydown', (e) => {
    WebSocket Tail
    ============================================================ */
 
-let ws = null;
+function closeTailSocket({ sendStop = false } = {}) {
+  if (!tailSocket) return;
 
-tailBtn.addEventListener('click', () => {
-  if (currentSourceMode !== 'local') {
-    showToast('Tail is only available for local file paths', 'warning');
+  if (sendStop && tailSocket.readyState === WebSocket.OPEN) {
+    tailSocket.send(JSON.stringify({ action: 'tail-stop', source: activeTailSource || 'cloudmanager' }));
     return;
   }
 
-  const tailPathInput = document.getElementById('tailPath');
-  const filePath = tailPathInput ? tailPathInput.value.trim() : filePathInput.value.trim();
-  if (!filePath) { showToast('Enter a file path to tail', 'warning'); return; }
-
-  // Save path to localStorage for persistence
-  localStorage.setItem('aem_lastPath', filePath);
-  console.log('[AEM] Saved path on tail:', filePath);
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ action: 'stop' }));
-    ws.close();
-    ws = null;
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
-    showToast('Stopped tailing', 'info');
-    return;
+  if (tailSocket.readyState === WebSocket.OPEN || tailSocket.readyState === WebSocket.CONNECTING) {
+    tailSocket.close();
   }
 
-  ws = new WebSocket(`ws://${location.host}`);
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ action: 'watch', filePath }));
-    tailBtn.textContent = 'Stop Tail';
-    tailBtn.classList.add('active');
-    showToast(`Tailing ${filePath}`, 'success');
-  };
-  ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.error) {
-      showToast('Tail error: ' + data.error, 'error');
-    } else {
-      showToast(`[${data.level}] ${data.message.substring(0, 80)}`, data.level === 'ERROR' ? 'error' : 'warning');
+  tailSocket = null;
+}
+
+function handleTailSocketMessage(data) {
+  if (data.type === 'tail-status') {
+    if (data.source === 'cloudmanager') {
+      setCloudManagerTailStatus(data.message || 'Cloud Manager live tail connected.');
+    } else if (data.message) {
+      showToast(data.message, 'info');
     }
+    if (activeTailSource === 'local' || data.source === 'cloudmanager') {
+      if (tailStatus) {
+        tailStatus.textContent = data.message || 'Tailing in progress...';
+      }
+    }
+    return;
+  }
+
+  if (data.type === 'tail-entry') {
+    if (data.source === 'cloudmanager') {
+      pushCloudManagerTailEntry(data.entry || {});
+      pushTailEntry({ ...data.entry, source: 'cloudmanager' });
+    }
+    return;
+  }
+
+  if (data.type === 'tail-error') {
+    if (data.source === 'cloudmanager') {
+      setCloudManagerTailStatus(data.sourceLabel
+        ? `${data.sourceLabel}: ${data.error || 'Cloud Manager live tail failed.'}`
+        : (data.error || 'Cloud Manager live tail failed.'));
+      if (cloudManagerTailSession?.sourceFailures) {
+        cloudManagerTailSession.sourceFailures[data.sourceKey || data.sourceLabel || `failure-${Date.now()}`] = data.error || 'Cloud Manager live tail failed.';
+      }
+      renderCloudManagerTailPanel();
+      showToast(`Tail error: ${data.error || 'Unknown error'}`, 'error');
+      updateWorkspaceChrome();
+      updateWorkspaceSummary();
+      return;
+    }
+  }
+
+  if (data.type === 'tail-stopped') {
+    if (data.source === 'cloudmanager') {
+      cloudManagerTailSession = null;
+      activeTailSource = '';
+      setCloudManagerTailStatus('Cloud Manager live tail stopped.');
+      renderCloudManagerTailPanel();
+      refreshCloudManagerCommandPreview('download');
+    }
+    if (tailStatus) {
+      tailStatus.textContent = 'Tail stopped';
+    }
+    if (tailStopBtn) {
+      tailStopBtn.disabled = true;
+    }
+    closeTailSocket();
+    hideTailPanel();
+    persistWorkspaceState();
+  }
+}
+
+function openTailSocket(onOpen) {
+  closeTailSocket();
+  tailSocket = new WebSocket(`ws://${location.host}`);
+  tailSocket.onopen = onOpen;
+  tailSocket.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    handleTailSocketMessage(data);
   };
-  ws.onerror = () => {
+  tailSocket.onerror = () => {
     showToast('WebSocket connection error', 'error');
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
+    activeTailSource = '';
+    cloudManagerTailSession = null;
+    updateTailControls();
+    hideTailPanel();
+    persistWorkspaceState();
   };
-  ws.onclose = () => {
-    tailBtn.textContent = '\u25B6 Tail';
-    tailBtn.classList.remove('active');
+  tailSocket.onclose = () => {
+    tailSocket = null;
+    if (activeTailSource === 'cloudmanager') {
+      activeTailSource = '';
+      cloudManagerTailSession = null;
+      setCloudManagerTailStatus('Cloud Manager live tail disconnected.');
+      refreshCloudManagerCommandPreview('download');
+    }
+    updateTailControls();
+    hideTailPanel();
+    persistWorkspaceState();
   };
-});
+}
+
+function startCloudManagerTail() {
+  const selections = getActiveCloudManagerTailSelections();
+  const programId = cmProgramSelect?.value || '';
+  const environmentId = cmEnvironmentSelect?.value || '';
+
+  if (!programId || !environmentId || !selections.length) {
+    showToast('Select one or more Cloud Manager logs to tail', 'warning');
+    return;
+  }
+
+  if (activeTailSource === 'cloudmanager') {
+    closeTailSocket({ sendStop: true });
+    return;
+  }
+
+  const labels = buildCloudManagerSelectionLabels();
+  cloudManagerTailEntries = [];
+  tailEntries = [];
+  tailAllPackages = {};
+  tailAllLoggers = {};
+  resetErrorFilterState();
+  applyCurrentSelectionsToFilterUI();
+  renderTailFilterTags();
+  updateTailCounts();
+
+  cloudManagerTailSession = {
+    programId,
+    environmentId,
+    programName: labels.programName,
+    environmentName: labels.environmentName,
+    selectionCount: selections.length,
+    selections: selections.map((selection) => ({ ...selection })),
+    sourceFailures: {}
+  };
+  activeTailSource = 'cloudmanager';
+  setCloudManagerTailStatus('Starting Cloud Manager live tail...');
+  renderCloudManagerTailPanel();
+  refreshCloudManagerCommandPreview('tail');
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+
+  const cmSource = `${labels.programName} / ${labels.environmentName} - ${selections.length} log${selections.length === 1 ? '' : 's'}`;
+  showTailPanel('cloudmanager', cmSource);
+
+  openTailSocket(() => {
+    tailSocket.send(JSON.stringify({
+      action: 'tail-start',
+      source: 'cloudmanager',
+      programId,
+      environmentId,
+      selections
+    }));
+  });
+}
+
+if (cmTailBtn) {
+  cmTailBtn.addEventListener('click', startCloudManagerTail);
+}
+
+if (cmTailStopBtn) {
+  cmTailStopBtn.addEventListener('click', () => {
+    closeTailSocket({ sendStop: true });
+  });
+}
+
+if (tailStopBtn) {
+  tailStopBtn.addEventListener('click', () => {
+    closeTailSocket({ sendStop: true });
+    hideTailPanel();
+  });
+}
 
 /* ============================================================
    Raw Events View
@@ -3753,44 +4723,63 @@ async function fetchRawEvents(page = 1, options = {}) {
   const { scrollToTop = false } = options;
   rawEventsPage = page;
 
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
+    let batchFilters;
+    if (currentBatchLogType === 'request') {
+      batchFilters = getCurrentRequestFilterPayload();
+    } else if (currentBatchLogType === 'cdn') {
+      batchFilters = getCurrentCDNFilterPayload();
+    } else if (currentBatchLogType === 'mixed') {
+      batchFilters = getCurrentMixedFilterPayload();
+    } else {
+      batchFilters = getActiveErrorFilterPayload();
+    }
     const body = {
       input: currentBatchInput,
       page,
       perPage: rawEventsPerPage,
-      filters: getActiveErrorFilterPayload(),
+      filters: batchFilters,
       search: rawEventsSearch
     };
 
-    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading merged error events...</div>';
+    rawEventsSection.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--color-text-secondary);">Loading merged batch events...</div>';
 
     try {
-      const response = await fetch('/api/raw-events/multi-error', {
+      const response = await fetch('/api/raw-events/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
       const data = await response.json();
       if (!data.success) {
+        progressText.classList.add('hidden');
         showToast(data.error, 'error');
         return;
       }
 
       rawEventsData = data.events;
-      if (data.levelCounts) {
+      currentVisibleEventTotal = data.total || data.events.length || 0;
+      if (data.levelCounts && (currentBatchLogType === 'error' || currentBatchLogType === 'mixed')) {
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = `(${val || 0})`; };
         const lc = data.levelCounts;
-        set('countALL', lc.ALL);
+        set('countALL', lc.ALL || 0);
         set('countERROR', lc.ERROR);
         set('countWARN', lc.WARN);
         set('countINFO', lc.INFO);
         set('countDEBUG', lc.DEBUG);
       }
-      applyErrorFilterSidebarResponse(data);
-      renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || 'error');
+      if (currentBatchLogType === 'error') {
+        applyErrorFilterSidebarResponse(data);
+      }
+      const renderType = currentBatchLogType === 'mixed' ? 'batch' : currentBatchLogType;
+      renderRawEvents(data.events, data.total, data.page, data.perPage, renderType);
+      progressText.classList.add('hidden');
+      updateWorkspaceSummary();
+      persistWorkspaceState();
       if (scrollToTop) scrollRawEventsToTop();
     } catch (e) {
-      showToast('Failed to load merged error events: ' + e.message, 'error');
+      progressText.classList.add('hidden');
+      showToast('Failed to load merged batch events: ' + e.message, 'error');
     }
     return;
   }
@@ -3816,10 +4805,22 @@ async function fetchRawEvents(page = 1, options = {}) {
   // Error log filters
   if (currentLogType === 'error') {
     body.level = rawEventsLevel;
-    if (selectedLoggers.length > 0) body.logger = selectedLoggers;
-    if (threadSelect?.value) body.thread = threadSelect.value;
-    if (selectedPackages.length > 0) body.package = selectedPackages;
-    if (exceptionSelect?.value) body.exception = exceptionSelect.value;
+    if (filters.loggers.length > 0) body.logger = filters.loggers;
+    // Pods/Threads
+    const tSelect = document.getElementById('threadSelect');
+    const tFilter = document.getElementById('threadFilter');
+    const podVal = tSelect?.value || tFilter?.value || '';
+    if (podVal) body.pod = podVal;
+
+    // Packages
+    if (filters.packages.length > 0) body.package = filters.packages;
+    
+    // Exceptions
+    const eSelect = document.getElementById('exceptionSelect');
+    const eFilter = document.getElementById('exceptionFilter');
+    const excVal = eSelect?.value || eFilter?.value || '';
+    if (excVal) body.exception = excVal;
+
     if (rawSearchInput.value) body.search = rawSearchInput.value;
     if (categoryFilter.value) body.category = categoryFilter.value;
   } else if (currentLogType === 'request') {
@@ -3860,7 +4861,11 @@ async function fetchRawEvents(page = 1, options = {}) {
       body: JSON.stringify(body)
     });
     const data = await response.json();
-    if (!data.success) { showToast(data.error, 'error'); return; }
+    if (!data.success) { 
+      progressText.classList.add('hidden');
+      showToast(data.error, 'error'); 
+      return; 
+    }
 
     // Update level counts for error logs
     if (data.levelCounts) {
@@ -3873,9 +4878,14 @@ async function fetchRawEvents(page = 1, options = {}) {
     }
 
     rawEventsData = data.events;
+    currentVisibleEventTotal = data.total || data.events.length || 0;
     renderRawEvents(data.events, data.total, data.page, data.perPage, data.logType || currentLogType);
+    progressText.classList.add('hidden');
+    updateWorkspaceSummary();
+    persistWorkspaceState();
     if (scrollToTop) scrollRawEventsToTop();
   } catch (e) {
+    progressText.classList.add('hidden');
     showToast('Failed to load events: ' + e.message, 'error');
   }
 }
@@ -3893,6 +4903,7 @@ function extractedExceptionBadge(evt) {
 }
 
 function renderRawEvents(events, total, page, perPage, logType = 'error') {
+  currentVisibleEventTotal = total || events.length || 0;
   if (exportRow) {
     exportRow.classList.toggle('export-row-hidden', total <= 0);
     exportRow.setAttribute('aria-hidden', total > 0 ? 'false' : 'true');
@@ -3923,7 +4934,9 @@ function renderRawEvents(events, total, page, perPage, logType = 'error') {
   `;
 
   events.forEach((evt, i) => {
-    if (logType === 'request') {
+    if (logType === 'batch') {
+      html += renderBatchEvent(evt, i);
+    } else if (logType === 'request') {
       html += renderRequestEvent(evt, i);
     } else if (logType === 'cdn') {
       html += renderCDNEvent(evt, i);
@@ -4011,12 +5024,25 @@ function formatStackTrace(trace) {
   }).join('\n');
 }
 
+function buildEventMessage(evt, logType) {
+  if (logType === 'error') return evt.message || evt.title || '';
+  if (logType === 'request') return evt.url || '';
+  if (logType === 'cdn') {
+    if (evt.host && evt.url) return `${evt.host}${evt.url}`;
+    if (evt.url) return evt.url;
+    if (evt.host) return evt.host;
+    return `${evt.method || ''} ${evt.status || ''}`.trim() || '';
+  }
+  return evt.title || evt.message || evt.url || evt.host || '';
+}
+
 function renderErrorEvent(evt, i) {
   const level = evt.level || evt.severity || 'INFO';
   const loggerName = evt.logger || evt.sourceName || '';
-  const messageText = evt.message || evt.title || '';
+  const messageText = buildEventMessage(evt, 'error');
   const hasStack = evt.stackTrace && evt.stackTrace.trim();
   const stackHtml = hasStack ? formatStackTrace(evt.stackTrace) : '';
+  const pinned = isPinnedEvent(evt, 'error');
 
   const jsonEntry = {
     timestamp: evt.timestamp,
@@ -4038,6 +5064,7 @@ function renderErrorEvent(evt, i) {
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
         <span class="event-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop())}</span>
         <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'error')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4055,6 +5082,8 @@ function renderErrorEvent(evt, i) {
 
 function renderRequestEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const pinned = isPinnedEvent(evt, 'request');
+  const messageText = buildEventMessage(evt, 'request');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -4070,9 +5099,10 @@ function renderRequestEvent(evt, i) {
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="response-time">${evt.responseTime}ms</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'request')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4088,6 +5118,8 @@ function renderRequestEvent(evt, i) {
 
 function renderCDNEvent(evt, i) {
   const statusClass = evt.status >= 400 ? 'error' : evt.status >= 300 ? 'warn' : 'success';
+  const pinned = isPinnedEvent(evt, 'cdn');
+  const messageText = buildEventMessage(evt, 'cdn');
   const jsonEntry = {
     timestamp: evt.timestamp,
     method: evt.method,
@@ -4096,9 +5128,22 @@ function renderCDNEvent(evt, i) {
     ttfb: evt.ttfb,
     ttlb: evt.ttlb,
     cache: evt.cache,
+    clientIp: evt.clientIp,
     clientCountry: evt.clientCountry,
+    clientRegion: evt.clientRegion,
     pop: evt.pop,
-    host: evt.host
+    requestId: evt.requestId,
+    userAgent: evt.userAgent && evt.userAgent.length > 100 ? evt.userAgent.slice(0, 100) + '...' : evt.userAgent,
+    aemEnvKind: evt.aemEnvKind,
+    aemTenant: evt.aemTenant,
+    contentType: evt.contentType,
+    debug: evt.debug,
+    resAge: evt.resAge,
+    host: evt.host,
+    rules: evt.rules,
+    alerts: evt.alerts,
+    sample: evt.sample,
+    ddos: evt.ddos
   };
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(jsonEntry, null, 2), rawEventsSearch)}</pre>`;
 
@@ -4107,9 +5152,10 @@ function renderCDNEvent(evt, i) {
       <div class="raw-event-header">
         <span class="level-badge ${statusClass}">${evt.method}</span>
         <span class="event-time">${escapeHtml(evt.timestamp)}</span>
-        <span class="event-message" title="${escapeHtml(evt.url)}">${highlightText(evt.url, rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
         <span class="status-badge ${statusClass}">${evt.status}</span>
         <span class="cache-badge">${evt.cache || '-'}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'cdn')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4124,7 +5170,9 @@ function renderCDNEvent(evt, i) {
 }
 
 function renderBatchEvent(evt, i) {
+  const pinned = isPinnedEvent(evt, 'batch');
   const jsonHtml = `<pre class="json-view">${highlightText(JSON.stringify(evt, null, 2), rawEventsSearch)}</pre>`;
+  const messageText = buildEventMessage(evt, 'batch');
 
   return `
     <div class="raw-event ${getSeverityClass(evt.severity)}" data-index="${i}" style="animation-delay:${i * 30}ms">
@@ -4132,7 +5180,8 @@ function renderBatchEvent(evt, i) {
         <span class="level-badge ${getSeverityClass(evt.severity)}">${escapeHtml(evt.severity)}</span>
         <span class="event-time">${escapeHtml(evt.timestamp || '')}</span>
         <span class="event-logger" title="${escapeHtml(evt.sourceName || evt.sourceFile || '')}">${escapeHtml(evt.sourceName || evt.sourceFile || '')}</span>
-        <span class="event-message" title="${escapeHtml(evt.title || evt.message || '')}">${highlightText(evt.title || evt.message || '', rawEventsSearch)}</span>
+        <span class="event-message" title="${escapeHtml(messageText)}">${highlightText(messageText, rawEventsSearch)}</span>
+        <button class="raw-event-pin ${pinned ? 'active' : ''}" type="button" onclick="event.stopPropagation(); togglePinnedEventByIndex(${i}, 'batch')">${pinned ? 'Pinned' : 'Pin'}</button>
         <span class="expand-arrow">&#9654;</span>
       </div>
       <div class="event-details">
@@ -4157,6 +5206,33 @@ window.copyEventJson = (btn, index) => {
   }
 };
 
+window.togglePinnedEventByIndex = (index, logType = currentLogType) => {
+  const entry = rawEventsData[index];
+  if (!entry) return;
+  togglePinnedEvent(entry, logType);
+  const renderType = currentAnalysisMode === 'batch' && currentBatchLogType === 'mixed'
+    ? 'batch'
+    : currentLogType;
+  renderRawEvents(rawEventsData, currentVisibleEventTotal || rawEventsData.length, rawEventsPage, rawEventsPerPage, renderType);
+  updateWorkspaceSummary();
+};
+
+window.removePinnedEvent = (key) => {
+  pinnedEntries = pinnedEntries.filter((entry) => entry.key !== key);
+  renderPinnedEvents();
+  persistWorkspaceState();
+};
+
+if (pinnedEvents) {
+  pinnedEvents.addEventListener('click', (event) => {
+    const removeButton = event.target.closest('[data-remove-pinned-key]');
+    if (!removeButton) return;
+    const key = removeButton.dataset.removePinnedKey || '';
+    if (!key) return;
+    window.removePinnedEvent(key);
+  });
+}
+
 document.querySelectorAll('.level-chip').forEach(chip => {
   if (chip.id === 'chartsToggleBtn') return;
   chip.addEventListener('click', () => {
@@ -4165,7 +5241,11 @@ document.querySelectorAll('.level-chip').forEach(chip => {
     });
     chip.classList.add('active');
     rawEventsLevel = chip.dataset.level;
-    fetchRawEvents(1);
+    filters.level = rawEventsLevel;
+    filterTailEntries();
+    if (!activeTailSource) {
+      fetchRawEvents(1);
+    }
   });
 });
 
@@ -4173,20 +5253,27 @@ const rawSearchInput = document.getElementById('rawSearchInput');
 const rawSearchBtn = document.getElementById('rawSearchBtn');
 rawSearchBtn.addEventListener('click', () => {
   rawEventsSearch = rawSearchInput.value;
-  if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
+  filters.search = rawSearchInput.value;
+  if (activeTailSource) {
+    return;
+  }
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
     applyRawEventFilters();
   } else {
     fetchRawEvents(1);
   }
 });
 rawSearchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    rawEventsSearch = rawSearchInput.value;
-    if (currentAnalysisMode === 'multi-error' && currentBatchInput) {
-      applyRawEventFilters();
-    } else {
-      fetchRawEvents(1);
-    }
+  if (e.key !== 'Enter') return;
+  rawEventsSearch = rawSearchInput.value;
+  filters.search = rawSearchInput.value;
+  if (activeTailSource) {
+    return;
+  }
+  if (currentAnalysisMode === 'batch' && currentBatchInput) {
+    applyRawEventFilters();
+  } else {
+    fetchRawEvents(1);
   }
 });
 
@@ -4195,7 +5282,53 @@ window.changeRawEventsPage = changeRawEventsPage;
 window.changeRawEventsPerPage = changeRawEventsPerPage;
 
 if (cmHistoryList) {
-  cmHistoryList.addEventListener('click', () => {});
+  cmHistoryList.addEventListener('click', (event) => {
+    const actionButton = event.target.closest('[data-history-action]');
+    if (!actionButton) return;
+
+    const runId = actionButton.dataset.runId || '';
+    const entry = readCloudManagerHistory().find((item) => item.runId === runId);
+    if (!entry) return;
+
+    if (actionButton.dataset.historyAction === 'reuse') {
+      setSourceMode('cloudmanager');
+      if (cmProgramSelect) cmProgramSelect.value = entry.programId || '';
+      persistCloudManagerSelectionState();
+      ensureCloudManagerProgramsLoaded({ force: false, silent: false }).then(async () => {
+        if (entry.programId) {
+          cmProgramSelect.value = entry.programId;
+          await loadCloudManagerEnvironments(entry.programId, { silent: false });
+        }
+        if (cmEnvironmentSelect && entry.environmentId) {
+          cmEnvironmentSelect.value = entry.environmentId;
+          await loadCloudManagerLogOptions(entry.programId, entry.environmentId, { silent: false });
+        }
+        selectedCloudManagerLogs = Array.isArray(entry.selections) ? entry.selections.map((selection) => ({ ...selection })) : [];
+        currentCloudManagerTier = entry.tier || '';
+        renderCloudManagerLogOptions();
+        syncCloudManagerWorkspace();
+        persistCloudManagerSelectionState();
+        showToast('Cloud Manager run restored into the current setup', 'success');
+      }).catch((error) => {
+        showToast(error.message || 'Failed to restore Cloud Manager run', 'error');
+      });
+      return;
+    }
+
+    if (actionButton.dataset.historyAction === 'analyze') {
+      const supportedFile = entry.analyzedFile
+        || entry.downloadedFilesDetailed?.find((file) => file.supported !== false)?.filePath
+        || entry.downloadedFiles?.[0]
+        || '';
+      if (!supportedFile) {
+        showToast('No supported downloaded file found for this history entry', 'warning');
+        return;
+      }
+      setSourceMode('local');
+      filePathInput.value = supportedFile;
+      analyzeBtn.click();
+    }
+  });
 }
 
 // Single-select searchable dropdown behavior
@@ -4355,7 +5488,7 @@ initMultiSelectDropdown(
   'loggerDropdown',
   'loggerFilter',
   'loggerResults',
-  selectedLoggers,
+  filters.loggers,
   renderLoggerTags,
   renderLoggerPicker,
   () => {
@@ -4369,7 +5502,7 @@ initMultiSelectDropdown(
   'packageDropdown',
   'packageFilter',
   'packageResults',
-  selectedPackages,
+  filters.packages,
   renderPackageTags,
   () => {
     renderPackagePicker();
@@ -4403,6 +5536,7 @@ updateCascadeCountBadges();
 renderSelectionHints();
 applyThemePreference();
 applySidebarState();
+restoreWorkspaceState();
 restoreCloudManagerSelections();
 restoreCloudManagerTabState();
 ensureCloudManagerProgramsLoaded().catch((error) => {
@@ -4412,20 +5546,22 @@ renderCloudManagerHistory();
 renderLocalDownloadsList();
 updateCloudManagerHintState();
 renderCloudManagerLogOptions();
+renderCloudManagerTailPanel();
 setSourceMode(currentSourceMode, { persist: false });
 refreshCloudManagerCommandPreview();
 updateCloudManagerActionState();
+updateTailControls();
 syncCloudManagerWorkspace();
+setResultView(currentResultView || 'events', { persist: false });
+renderPinnedEvents();
+updateWorkspaceChrome();
+updateWorkspaceSummary();
 
 // Restore last used file path on page load
 const lastPath = localStorage.getItem('aem_lastPath');
 if (lastPath) {
-  if (parseMultiErrorInput(lastPath).length > 1) {
-    localStorage.removeItem('aem_lastPath');
-  } else {
-    filePathInput.value = lastPath;
-    console.log('[AEM] Restored path:', lastPath);
-  }
+  filePathInput.value = normalizeLocalPathInputValue(lastPath);
+  console.log('[AEM] Restored path:', filePathInput.value);
 }
 
 // Debounced save on input for instant persistence
@@ -4433,9 +5569,8 @@ let savePathTimeout;
 filePathInput.addEventListener('input', () => {
   clearTimeout(savePathTimeout);
   savePathTimeout = setTimeout(() => {
-    const val = filePathInput.value.trim();
-    if (val && parseMultiErrorInput(val).length <= 1) {
-      localStorage.setItem('aem_lastPath', val);
+    const val = persistLocalPathInput(filePathInput.value);
+    if (val) {
       console.log('[AEM] Saved path on input:', val);
     }
   }, 300);
@@ -4443,8 +5578,526 @@ filePathInput.addEventListener('input', () => {
 
 // Also save on blur (immediate)
 filePathInput.addEventListener('blur', () => {
-  const val = filePathInput.value.trim();
-  if (val && parseMultiErrorInput(val).length <= 1) {
-    localStorage.setItem('aem_lastPath', val);
-  }
+  persistLocalPathInput(filePathInput.value);
 });
+
+// ============================================================
+// New Tail Panel - Initialization & Event Handlers
+// ============================================================
+
+function initTailPanel() {
+  setupTailLevelFilters();
+  setupTailSearch();
+  setupTailFilters();
+  setupTailActions();
+}
+
+function syncLevelChips(source) {
+  const targetSelector = source === 'analyzer' ? '.tail-level-chip' : '.level-chip';
+  document.querySelectorAll(targetSelector).forEach(c => {
+    c.classList.toggle('active', c.dataset.level === filters.level);
+  });
+}
+
+function updateLevelChips(level) {
+  filters.level = level;
+  syncLevelChips('analyzer');
+  syncLevelChips('tail');
+}
+
+function switchToView(view) {
+  activeView = view;
+  syncLevelChips(view);
+}
+
+function setupTailLevelFilters() {
+  if (!tailLevelFilters) return;
+  tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      tailLevelFilters.querySelectorAll('.tail-level-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      filters.level = chip.dataset.level || 'ALL';
+      filterTailEntries();
+    });
+  });
+}
+
+function setupTailSearch() {
+  if (tailSearchInput) {
+    tailSearchInput.addEventListener('input', () => {
+      filters.search = tailSearchInput.value;
+      filterTailEntries();
+    });
+  }
+  if (tailRegexToggle) {
+    tailRegexToggle.addEventListener('click', () => {
+      filters.regex = !filters.regex;
+      tailRegexToggle.classList.toggle('active', filters.regex);
+      filterTailEntries();
+    });
+  }
+}
+
+function setupTailFilters() {
+  if (tailPackageFilter) {
+    tailPackageFilter.addEventListener('input', () => {
+      filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
+    });
+    tailPackageFilter.addEventListener('focus', () => {
+      filterDropdown(tailPackageFilter, tailPackageResults, tailAllPackages, renderTailPackageOptions);
+    });
+  }
+  if (tailLoggerFilter) {
+    tailLoggerFilter.addEventListener('input', () => {
+      filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
+    });
+    tailLoggerFilter.addEventListener('focus', () => {
+      filterDropdown(tailLoggerFilter, tailLoggerResults, tailAllLoggers, renderTailLoggerOptions);
+    });
+  }
+}
+
+function setupTailActions() {
+  if (tailAutoScrollBtn) {
+    tailAutoScrollBtn.addEventListener('click', () => {
+      tailAutoScroll = !tailAutoScroll;
+      tailAutoScrollBtn.classList.toggle('active', tailAutoScroll);
+      if (tailAutoScroll && tailHasNewEntries) {
+        scrollTailToTop();
+      }
+    });
+  }
+  if (tailClearBtn) {
+    tailClearBtn.addEventListener('click', () => {
+      tailEntries = [];
+      tailAllPackages = {};
+      tailAllLoggers = {};
+      renderTailFeed();
+      updateTailCounts();
+    });
+  }
+  if (tailExportBtn) {
+    tailExportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      tailExportMenu.classList.toggle('hidden');
+    });
+  }
+  if (tailExportJson) {
+    tailExportJson.addEventListener('click', () => {
+      exportTailBuffer('json');
+      tailExportMenu.classList.add('hidden');
+    });
+  }
+  if (tailExportCsv) {
+    tailExportCsv.addEventListener('click', () => {
+      exportTailBuffer('csv');
+      tailExportMenu.classList.add('hidden');
+    });
+  }
+  if (tailScrollToNew) {
+    tailScrollToNew.addEventListener('click', () => {
+      scrollTailToTop();
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (tailExportBtn && tailExportMenu && !tailExportBtn.contains(e.target) && !tailExportMenu.contains(e.target)) {
+      tailExportMenu.classList.add('hidden');
+    }
+  });
+}
+
+function renderTailPackageOptions(filter = '') {
+  if (!tailPackageResults) return;
+  const filterLower = filter.toLowerCase();
+  const options = Object.keys(tailAllPackages).filter(p => p.toLowerCase().includes(filterLower)).slice(0, 50);
+  if (!options.length) {
+    tailPackageResults.innerHTML = '<div class="token-picker-empty">No packages found</div>';
+    return;
+  }
+  tailPackageResults.innerHTML = options.map(pkg => `
+    <label class="token-picker-option">
+      <input type="checkbox" value="${escapeHtml(pkg)}" ${filters.packages.includes(pkg) ? 'checked' : ''}>
+      <span>${escapeHtml(pkg)}</span>
+      <span class="token-count">${tailAllPackages[pkg]}</span>
+    </label>
+  `).join('');
+  tailPackageResults.querySelectorAll('input').forEach(input => {
+    input.addEventListener('change', () => {
+      replaceArrayContents(filters.packages, Array.from(tailPackageResults.querySelectorAll('input:checked')).map(i => i.value));
+      renderTailFilterTags();
+      filterTailEntries();
+    });
+  });
+}
+
+function renderTailLoggerOptions(filter = '') {
+  if (!tailLoggerResults) return;
+  const filterLower = filter.toLowerCase();
+  const options = Object.keys(tailAllLoggers).filter(l => l.toLowerCase().includes(filterLower)).slice(0, 50);
+  if (!options.length) {
+    tailLoggerResults.innerHTML = '<div class="token-picker-empty">No loggers found</div>';
+    return;
+  }
+  tailLoggerResults.innerHTML = options.map(logger => `
+    <label class="token-picker-option">
+      <input type="checkbox" value="${escapeHtml(logger)}" ${filters.loggers.includes(logger) ? 'checked' : ''}>
+      <span>${escapeHtml(logger)}</span>
+      <span class="token-count">${tailAllLoggers[logger]}</span>
+    </label>
+  `).join('');
+  tailLoggerResults.querySelectorAll('input').forEach(input => {
+    input.addEventListener('change', () => {
+      replaceArrayContents(filters.loggers, Array.from(tailLoggerResults.querySelectorAll('input:checked')).map(i => i.value));
+      renderTailFilterTags();
+      filterTailEntries();
+    });
+  });
+}
+
+function renderTailFilterTags() {
+  if (tailPackageTags) {
+    tailPackageTags.innerHTML = filters.packages.map(pkg => `
+      <span class="filter-tag" data-package="${escapeHtml(pkg)}">
+        ${escapeHtml(pkg.split('.').pop())}
+        <button type="button" onclick="removeTailPackageFilter('${escapeHtml(pkg)}')">&times;</button>
+      </span>
+    `).join('');
+  }
+  if (tailLoggerTags) {
+    tailLoggerTags.innerHTML = filters.loggers.map(logger => `
+      <span class="filter-tag" data-logger="${escapeHtml(logger)}">
+        ${escapeHtml(logger.split('.').pop())}
+        <button type="button" onclick="removeTailLoggerFilter('${escapeHtml(logger)}')">&times;</button>
+      </span>
+    `).join('');
+  }
+}
+
+function removeTailPackageFilter(pkg) {
+  replaceArrayContents(filters.packages, filters.packages.filter(p => p !== pkg));
+  renderTailFilterTags();
+  if (tailPackageResults) {
+    tailPackageResults.querySelectorAll(`input[value="${cssEscape(pkg)}"]`).forEach(i => i.checked = false);
+  }
+  filterTailEntries();
+}
+
+function removeTailLoggerFilter(logger) {
+  replaceArrayContents(filters.loggers, filters.loggers.filter(l => l !== logger));
+  renderTailFilterTags();
+  if (tailLoggerResults) {
+    tailLoggerResults.querySelectorAll(`input[value="${cssEscape(logger)}"]`).forEach(i => i.checked = false);
+  }
+  filterTailEntries();
+}
+
+function showTailPanel(source = 'local', path = '') {
+  if (!tailPanel) return;
+  if (resultViewTailTab) resultViewTailTab.disabled = false;
+  if (tailTitle) {
+    tailTitle.textContent = 'Cloud Manager Tail';
+  }
+  if (tailSource) {
+    tailSource.textContent = path;
+  }
+  if (tailStopBtn) {
+    tailStopBtn.disabled = false;
+  }
+  if (tailStatus) {
+    tailStatus.textContent = 'Tailing in progress...';
+  }
+  setResultView('live-tail', { persist: false });
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+}
+
+function hideTailPanel() {
+  if (!tailPanel) return;
+  tailPanel.classList.add('hidden');
+  if (resultViewTailTab) resultViewTailTab.disabled = true;
+  if (currentResultView === 'live-tail') {
+    setResultView('events', { persist: false });
+  }
+  updateWorkspaceChrome();
+  updateWorkspaceSummary();
+}
+
+function pushTailEntry(entry) {
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
+
+  if (packageName && packageName !== 'null') {
+    tailAllPackages[packageName] = (tailAllPackages[packageName] || 0) + 1;
+  }
+  if (loggerName) {
+    tailAllLoggers[loggerName] = (tailAllLoggers[loggerName] || 0) + 1;
+  }
+
+  entry._index = tailEntries.length;
+  tailEntries.push(entry);
+
+  if (tailEntries.length > 500) {
+    tailEntries = tailEntries.slice(-500);
+  }
+
+  const shouldShow = checkTailEntryShouldShow(entry);
+  
+  if (shouldShow) {
+    addTailEntryToFeed(entry);
+  }
+
+  updateTailCounts();
+  updateTailDropdownOptions();
+
+  if (tailAutoScroll) {
+    scrollTailToTop();
+  } else {
+    tailHasNewEntries = true;
+    if (tailNewIndicator) tailNewIndicator.classList.remove('hidden');
+  }
+}
+
+function addTailEntryToFeed(entry) {
+  if (!tailFeed) return;
+  const html = renderTailEntryHtml(entry);
+  tailFeed.insertAdjacentHTML('beforeend', html);
+  
+  const lastEntry = tailFeed.lastElementChild;
+  if (lastEntry) {
+    setupTailEntryEvents(lastEntry);
+  }
+}
+
+function renderTailEntryHtml(entry) {
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const messageText = entry.message || entry.rawLine || '';
+  const hasStack = entry.stackTrace && entry.stackTrace.trim();
+  const timestamp = entry.timestamp || '';
+  const sourceLabel = entry.sourceLabel || `${entry.service || ''}/${entry.logName || ''}`.replace(/^\/|\/$/g, '');
+
+  return `
+    <div class="tail-entry ${String(level).toLowerCase()}" data-index="${entry._index}" style="animation-delay: ${(entry._index % 20) * 30}ms">
+      <div class="tail-entry-header">
+        <span class="level-badge ${level}">${level}</span>
+        <span class="entry-time">${escapeHtml(timestamp)}</span>
+        <span class="entry-logger" title="${escapeHtml(sourceLabel)}">${escapeHtml(sourceLabel || 'Cloud Manager')}</span>
+        <span class="entry-logger" title="${escapeHtml(loggerName)}">${escapeHtml((loggerName || '').split('.').pop() || loggerName)}</span>
+        <span class="entry-message" title="${escapeHtml(messageText)}">${highlightText(messageText, filters.search, filters.regex)}</span>
+        <span class="expand-arrow">▶</span>
+      </div>
+      <div class="tail-entry-details">
+        <div class="tail-entry-tabs">
+          ${hasStack ? '<button class="tail-entry-tab active" data-tab="stack">Stack Trace</button>' : ''}
+          <button class="tail-entry-tab ${hasStack ? '' : 'active'}" data-tab="json">JSON</button>
+          <button class="tail-copy-btn" onclick="event.stopPropagation(); copyTailEntry(${entry._index})">Copy</button>
+        </div>
+        ${hasStack ? `<div class="tail-entry-content stack-tab active"><div class="stack-trace">${formatStackTrace(entry.stackTrace)}</div></div>` : ''}
+        <div class="tail-entry-content json-tab ${hasStack ? '' : 'active'}"><pre class="json-view">${highlightText(JSON.stringify(entry, null, 2), filters.search, filters.regex)}</pre></div>
+      </div>
+    </div>
+  `;
+}
+
+function setupTailEntryEvents(entryEl) {
+  const header = entryEl.querySelector('.tail-entry-header');
+  if (header) {
+    header.addEventListener('click', () => {
+      entryEl.classList.toggle('expanded');
+    });
+  }
+  entryEl.querySelectorAll('.tail-entry-tab').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      entryEl.querySelectorAll('.tail-entry-tab').forEach(t => t.classList.remove('active'));
+      entryEl.querySelectorAll('.tail-entry-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      const tabName = tab.dataset.tab;
+      entryEl.querySelector(`.${tabName}-tab`).classList.add('active');
+    });
+  });
+}
+
+function checkTailEntryShouldShow(entry) {
+  const activeFilters = getActiveErrorFilterPayload();
+  const level = entry.level || entry.logType || 'INFO';
+  const loggerName = entry.logger || entry.sourceName || '';
+  const packageName = entry.sourceFile || loggerName.split('.').slice(0, -1).join('.');
+  const messageText = entry.message || entry.rawLine || '';
+
+  if (activeFilters.level && activeFilters.level !== 'ALL' && level !== activeFilters.level) {
+    return false;
+  }
+
+  const packages = Array.isArray(activeFilters.package) ? activeFilters.package : [];
+  if (packages.length > 0) {
+    const matches = packages.some(pkg => packageName && (packageName === pkg || packageName.startsWith(`${pkg}.`)));
+    if (!matches) return false;
+  }
+
+  const loggers = Array.isArray(activeFilters.logger) ? activeFilters.logger : [];
+  if (loggers.length > 0) {
+    const matches = loggers.some(logger => loggerName === logger);
+    if (!matches) return false;
+  }
+
+  if (activeFilters.thread && entry.threadName !== activeFilters.thread && entry.thread !== activeFilters.thread) {
+    return false;
+  }
+
+  if (activeFilters.exception && !(entry.message || '').includes(activeFilters.exception)) {
+    return false;
+  }
+
+  if (activeFilters.search) {
+    try {
+      if (filters.regex) {
+        const regex = new RegExp(activeFilters.search, 'i');
+        if (!regex.test(messageText) && !regex.test(loggerName)) return false;
+      } else {
+        const searchLower = String(activeFilters.search).toLowerCase();
+        if (!messageText.toLowerCase().includes(searchLower) && !loggerName.toLowerCase().includes(searchLower)) return false;
+      }
+    } catch (e) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function filterTailEntries() {
+  if (!tailFeed) return;
+  const entries = tailFeed.querySelectorAll('.tail-entry');
+  let visibleCount = 0;
+  entries.forEach(entryEl => {
+    const index = parseInt(entryEl.dataset.index, 10);
+    const entry = tailEntries.find(e => e._index === index);
+    if (entry && checkTailEntryShouldShow(entry)) {
+      entryEl.classList.remove('filtered-out');
+      visibleCount++;
+    } else {
+      entryEl.classList.add('filtered-out');
+    }
+  });
+}
+
+function updateTailCounts() {
+  const counts = { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
+  tailEntries.forEach(entry => {
+    const level = entry.level || entry.logType || 'INFO';
+    counts[level] = (counts[level] || 0) + 1;
+    counts.ALL++;
+  });
+  if (document.getElementById('tailCountALL')) document.getElementById('tailCountALL').textContent = counts.ALL;
+  if (document.getElementById('tailCountERROR')) document.getElementById('tailCountERROR').textContent = counts.ERROR;
+  if (document.getElementById('tailCountWARN')) document.getElementById('tailCountWARN').textContent = counts.WARN;
+  if (document.getElementById('tailCountINFO')) document.getElementById('tailCountINFO').textContent = counts.INFO;
+  if (document.getElementById('tailCountDEBUG')) document.getElementById('tailCountDEBUG').textContent = counts.DEBUG;
+}
+
+function updateTailDropdownOptions() {
+  if (tailPackageFilter && tailPackageFilter.value) {
+    renderTailPackageOptions(tailPackageFilter.value);
+  }
+  if (tailLoggerFilter && tailLoggerFilter.value) {
+    renderTailLoggerOptions(tailLoggerFilter.value);
+  }
+}
+
+function renderTailFeed() {
+  if (!tailFeed) return;
+  tailFeed.innerHTML = '';
+  tailEntries.forEach(entry => {
+    if (checkTailEntryShouldShow(entry)) {
+      addTailEntryToFeed(entry);
+    }
+  });
+}
+
+function scrollTailToTop() {
+  if (tailFeed) {
+    tailFeed.scrollTop = 0;
+  }
+  tailHasNewEntries = false;
+  if (tailNewIndicator) tailNewIndicator.classList.add('hidden');
+}
+
+function exportTailBuffer(format) {
+  const entriesToExport = Array.from(tailFeed.querySelectorAll('.tail-entry:not(.filtered-out)')).map(el => {
+    const index = parseInt(el.dataset.index, 10);
+    return tailEntries.find(e => e._index === index);
+  }).filter(Boolean);
+
+  if (!entriesToExport.length) {
+    showToast('No entries to export', 'warning');
+    return;
+  }
+
+  if (format === 'json') {
+    downloadJson(entriesToExport, 'tail-export.json');
+    showToast(`Exported ${entriesToExport.length} entries to JSON`, 'success');
+  } else if (format === 'csv') {
+    const csv = convertToCSV(entriesToExport);
+    downloadText(csv, 'tail-export.csv', 'text/csv');
+    showToast(`Exported ${entriesToExport.length} entries to CSV`, 'success');
+  }
+}
+
+function copyTailEntry(index) {
+  const entry = tailEntries.find(e => e._index === index);
+  if (entry) {
+    navigator.clipboard.writeText(JSON.stringify(entry, null, 2)).then(() => {
+      showToast('Copied to clipboard', 'success');
+    });
+  }
+}
+
+function cssEscape(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function filterDropdown(input, resultsContainer, dataMap, renderFn) {
+  const filter = input.value;
+  renderFn(filter);
+  if (resultsContainer) {
+    resultsContainer.style.display = 'block';
+  }
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(text, filename, mimeType) {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function convertToCSV(entries) {
+  if (!entries.length) return '';
+  const headers = ['timestamp', 'level', 'logger', 'message', 'thread', 'sourceFile'];
+  const rows = entries.map(entry => {
+    return headers.map(h => {
+      const val = entry[h] || '';
+      const escaped = String(val).replace(/"/g, '""');
+      return `"${escaped}"`;
+    }).join(',');
+  });
+  return [headers.join(','), ...rows].join('\n');
+}
+
+// Initialize tail panel
+initTailPanel();

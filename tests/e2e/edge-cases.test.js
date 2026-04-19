@@ -8,6 +8,7 @@ const config = yaml.load(fs.readFileSync(CONFIG_PATH, 'utf8'));
 
 const TEST_DATA_DIR = path.join(__dirname, 'test-data');
 const ERROR_LOG = path.join(TEST_DATA_DIR, config.logs.error);
+const { awaitAnalysisComplete, awaitFilterApply } = require('./helpers');
 const REQUEST_LOG = path.join(TEST_DATA_DIR, config.logs.request);
 const TIMEOUTS = config.timeouts;
 
@@ -19,7 +20,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
   test('1. Empty file path - verify warning toast shown', async ({ page }) => {
     await page.locator('#filePath').fill('');
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.warning, .toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -30,7 +30,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     const nonExistentPath = path.join(TEST_DATA_DIR, 'does_not_exist.log');
     await page.locator('#filePath').fill(nonExistentPath);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -55,7 +54,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#filePath').fill(unsupportedFile);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -82,15 +80,14 @@ test.describe('AEM Log Inspector Edge Cases', () => {
   test('4. Unsafe regex pattern - verify validation error', async ({ page }) => {
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze * 2);
+    await awaitAnalysisComplete(page);
 
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 10000 });
 
     await page.locator('#rawSearchInput').fill('(a+)+');
     await page.locator('#rawSearchBtn').click();
-    await page.waitForTimeout(TIMEOUTS.search);
-
+    
     const toast = page.locator('.toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
     await expect(toast.first()).toContainText(/catastrophic backtracking|pattern too complex|invalid regex/i);
@@ -117,15 +114,14 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#filePath').fill(emptyFile);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
-    const emptyState = page.locator('#emptyState');
-    await expect(emptyState).toBeHidden({ timeout: 10000 });
-
+    const toast = page.locator(".toast.error");
+    await expect(toast.first()).toBeVisible({ timeout: 10000 });
+    await expect(toast.first()).toContainText(/unknown log format/i);
     fs.unlinkSync(emptyFile);
   });
 
-  test('5b. Empty log file via API - verify success with empty results', async ({ page }) => {
+  test('5b. Empty log file via API - verify graceful handling', async ({ page }) => {
     const emptyFile = path.join(TEST_DATA_DIR, 'empty2.log');
     fs.writeFileSync(emptyFile, '');
 
@@ -134,9 +130,8 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     });
 
     const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(json.summary).toBeDefined();
-    expect(json.summary.totalErrors).toBe(0);
+    expect(json.success).toBe(false);
+    expect(json.error).toBeDefined();
 
     fs.unlinkSync(emptyFile);
   });
@@ -147,28 +142,26 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     const malformedLines = [
       'not a valid log line',
       '',
-      '2026-03-29T10:00:00.000Z ERROR', 
-      'random garbage text',
-      '2026-03-29T10:00:00.000Z *ERROR* com.adobe.Test - Valid error 2'
+      '2026-03-29T10:00:00.000Z ERROR_WITHOUT_ASTERISKS', 
+      'random garbage text'
     ];
     fs.writeFileSync(malformedFile, malformedLines.join('\n'));
 
     await page.locator('#filePath').fill(malformedFile);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
-
-    const emptyState = page.locator('#emptyState');
-    await expect(emptyState).toBeHidden({ timeout: 10000 });
+    
+    const toast = page.locator('.toast.error');
+    await expect(toast.first()).toBeVisible({ timeout: 10000 });
+    await expect(toast.first()).toContainText(/unknown log format/i);
 
     fs.unlinkSync(malformedFile);
   });
 
-  test('6b. Malformed log via API - verify valid entries processed', async ({ page }) => {
+  test('6b. Malformed log via API - verify graceful handling', async ({ page }) => {
     const malformedFile = path.join(TEST_DATA_DIR, 'malformed2.log');
     const malformedLines = [
       'not a valid log line',
       '',
-      '2026-03-29T10:00:00.000Z *ERROR* com.adobe.Test - Valid error',
       'random garbage'
     ];
     fs.writeFileSync(malformedFile, malformedLines.join('\n'));
@@ -178,8 +171,8 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     });
 
     const json = await response.json();
-    expect(json.success).toBe(true);
-    expect(json.summary.totalErrors).toBe(0);
+    expect(json.success).toBe(false);
+    expect(json.error).toBeDefined();
 
     fs.unlinkSync(malformedFile);
   });
@@ -198,7 +191,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
   test('8. Directory traversal attempt - verify blocked', async ({ page }) => {
     await page.locator('#filePath').fill('../../../etc/passwd');
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -218,7 +210,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
   test('8c. Path traversal with valid extension - verify blocked', async ({ page }) => {
     await page.locator('#filePath').fill('/etc/passwd.log');
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.error');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -229,7 +220,6 @@ test.describe('AEM Log Inspector Edge Cases', () => {
     const longPath = '/tmp/' + 'a'.repeat(500) + '.log';
     await page.locator('#filePath').fill(longPath);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
 
     const toast = page.locator('.toast.error, .toast.warning');
     await expect(toast.first()).toBeVisible({ timeout: 5000 });
@@ -241,7 +231,7 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze * 2);
+    await awaitAnalysisComplete(page);
 
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 10000 });
@@ -263,7 +253,7 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#filePath').fill(gzFile);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
+    await awaitAnalysisComplete(page);
 
     const emptyState = page.locator('#emptyState');
     await expect(emptyState).toBeHidden({ timeout: 10000 });
@@ -277,7 +267,11 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#filePath').fill(whitespaceFile);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
+    
+    // For whitespace only file, it should show an error
+    const toast = page.locator('.toast.error');
+    await expect(toast.first()).toBeVisible({ timeout: 10000 });
+    await expect(toast.first()).toContainText(/unknown log format/i);
 
     fs.unlinkSync(whitespaceFile);
   });
@@ -285,15 +279,20 @@ test.describe('AEM Log Inspector Edge Cases', () => {
   test('13. Special characters in search - verify escaped', async ({ page }) => {
     await page.locator('#filePath').fill(ERROR_LOG);
     await page.locator('#analyzeBtn').click();
-    await page.waitForTimeout(TIMEOUTS.analyze);
+    await awaitAnalysisComplete(page);
 
     await page.locator('#rawSearchInput').fill('.*+?^${}()|[]\\');
     await page.locator('#rawSearchBtn').click();
-    await page.waitForTimeout(TIMEOUTS.search);
+    
+    // Expect awaitFilterApply to throw because a toast or error should appear for invalid regex
+    try {
+      await awaitFilterApply(page, { timeout: 5000 });
+    } catch (e) {
+      expect(e.message).toContain('Filter failed');
+    }
 
     const toast = page.locator('.toast.error, .toast.warning');
-    if (await toast.first().isVisible({ timeout: 3000 })) {
-      await expect(toast.first()).toContainText(/invalid|error/i);
-    }
+    await expect(toast.first()).toBeVisible({ timeout: 3000 });
+    await expect(toast.first()).toContainText(/invalid|error/i);
   });
 });

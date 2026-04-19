@@ -1,13 +1,12 @@
 /* === Imports === */
 const express = require('express');
-const fs = require('fs');
 const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
-const { watchLogFile } = require('./tailer');
 const { detectLogType } = require('./parser');
 const { validateFilePath, sanitizeErrorMessage } = require('./utils/files');
 const { PORT } = require('./utils/constants');
 const { analyzeResolvedLogFile } = require('./services/logAnalysisService');
+const { createCloudManagerTailGroupSession } = require('./services/cloudManagerService');
 
 /* === Route Imports === */
 const createAnalyzeRouter = require('./routes/analyze');
@@ -15,20 +14,22 @@ const createMultiErrorRouter = require('./routes/multiError');
 const createFilterRouter = require('./routes/filter');
 const createEventsRouter = require('./routes/events');
 const createExportRouter = require('./routes/export');
-const createCloudManagerRouter = require('./routes/cloudManager');
-const { performCloudManagerDownload } = require('./routes/cloudManager');
+const { createCloudManagerRouter, performCloudManagerDownload } = require('./routes/cloudManager');
 
 /* === Express App Setup === */
 const app = express();
 const DASHBOARD_URL = `http://localhost:${PORT}`;
 
-/* Large limit needed for uploading log files up to 500MB */
-app.use(express.json({ limit: '500mb' }));
+/* === Request ID Middleware === */
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || require('crypto').randomUUID();
+  res.setHeader('x-request-id', req.id);
+  next();
+});
 
-/* Serve static frontend assets */
+app.use(express.json({ limit: '500mb' }));
 app.use(express.static('public'));
 
-/* Mount API routes */
 app.use('/api', createAnalyzeRouter());
 app.use('/api', createMultiErrorRouter());
 app.use('/api', createFilterRouter());
@@ -36,17 +37,28 @@ app.use('/api', createEventsRouter());
 app.use('/api', createExportRouter());
 app.use('/api', createCloudManagerRouter());
 
+app.use((err, req, res, next) => {
+  console.error(`[${req.id}] Unhandled error:`, err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    error: sanitizeErrorMessage(err.message),
+    requestId: req.id
+  });
+});
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Not found',
+    requestId: req.id
+  });
+});
+
 let httpServer = null;
 let wss = null;
 
-/**
- * Handles WebSocket log analysis request
- * @param {WebSocket} ws - WebSocket connection to send results to
- * @param {string} filePath - Path to the log file to analyze
- */
 async function handleAnalyzeAction(ws, filePath) {
   try {
-    /* Validate and resolve the file path to prevent directory traversal */
     const targetPath = validateFilePath(filePath);
     const logType = await detectLogType(targetPath);
 
@@ -55,89 +67,117 @@ async function handleAnalyzeAction(ws, filePath) {
     };
 
     const { payload } = await analyzeResolvedLogFile(targetPath, onProgress);
-    
-    /* Notify client of detected log type so UI can adapt */
     ws.send(JSON.stringify({ type: 'logType', logType }));
-
-    /* Send complete results with all computed metrics */
     ws.send(JSON.stringify({ type: 'complete', ...payload }));
   } catch (err) {
-    /* Sanitize error message to prevent XSS in client */
     ws.send(JSON.stringify({ type: 'error', error: sanitizeErrorMessage(err.message) }));
   }
 }
 
-/**
- * Handles Cloud Manager download with progress updates
- * @param {WebSocket} ws - WebSocket connection to send results to
- * @param {Object} options - Download options
- */
 async function handleCloudManagerDownloadAction(ws, options) {
   try {
-    console.log('[CM] Starting download with options:', JSON.stringify(options, null, 2));
     ws.send(JSON.stringify({ type: 'status', message: 'Starting download from Cloud Manager...', status: 'starting' }));
 
     const onProgress = (progress) => {
-      console.log('[CM] Progress:', JSON.stringify(progress));
       ws.send(JSON.stringify({ type: 'progress', ...progress }));
     };
 
-    console.log('[CM] Calling performCloudManagerDownload...');
     const result = await performCloudManagerDownload(options, onProgress);
-    console.log('[CM] Download complete, result keys:', Object.keys(result));
-
     ws.send(JSON.stringify({ type: 'complete', ...result, status: 'complete' }));
   } catch (err) {
-    console.error('[CM] Download error:', err.message);
     ws.send(JSON.stringify({ type: 'error', error: sanitizeErrorMessage(err.message), status: 'error' }));
   }
+}
+
+function stopActiveTail(ws, source = '') {
+  const activeSession = ws.activeTailSession;
+  if (!activeSession) return null;
+  activeSession.stop();
+  ws.activeTailSession = null;
+  if (source) {
+    console.log(`[Tail] Stopped ${source} tail session`);
+  }
+  return activeSession.source || null;
+}
+
+function startCloudManagerTailSession(ws, options = {}) {
+  const session = createCloudManagerTailGroupSession(options, {
+    onStatus: (status) => {
+      ws.send(JSON.stringify({ type: 'tail-status', ...status }));
+    },
+    onEntry: (entry) => {
+      ws.send(JSON.stringify({ type: 'tail-entry', source: 'cloudmanager', entry }));
+    },
+    onError: (error, meta = {}) => {
+      ws.send(JSON.stringify({
+        type: 'tail-error',
+        source: 'cloudmanager',
+        error: sanitizeErrorMessage(error.message),
+        ...meta
+      }));
+    },
+    onStopped: ({ source }) => {
+      if (ws.activeTailSession === session) {
+        ws.activeTailSession = null;
+      }
+      ws.send(JSON.stringify({ type: 'tail-stopped', source }));
+    }
+  });
+
+  ws.activeTailSession = session;
+  session.start();
+}
+
+function handleTailStartAction(ws, payload = {}) {
+  stopActiveTail(ws, 'replaced');
+
+  if (payload.source !== 'cloudmanager') {
+    throw new Error('Local file tailing has been removed. Use Cloud Manager tailing instead.');
+  }
+
+  const { environmentId, selections } = payload;
+  if (!environmentId || !Array.isArray(selections) || !selections.length) {
+    throw new Error('Environment and at least one Cloud Manager log selection are required for tailing.');
+  }
+
+  startCloudManagerTailSession(ws, payload);
 }
 
 function attachWebSocketHandlers(server) {
   const socketServer = new WebSocketServer({ server });
 
   socketServer.on('connection', (ws) => {
-    console.log('WebSocket client connected');
-    
+    ws.activeTailSession = null;
+
     ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message);
-        
-        /* Handle analyze action - full file analysis */
+
         if (data.action === 'analyze' && data.filePath) {
           await handleAnalyzeAction(ws, data.filePath);
-        }
-        /* Handle Cloud Manager download action */
-        else if (data.action === 'cloudmanager-download') {
+        } else if (data.action === 'cloudmanager-download') {
           await handleCloudManagerDownloadAction(ws, data.options);
-        }
-        /* Handle tail action - real-time file watching */
-        else if (data.type === 'tail') {
-          const { filePath } = data;
-          
-          /* Verify file exists before attempting to watch */
-          if (!fs.existsSync(filePath)) {
-            ws.send(JSON.stringify({ type: 'error', message: 'File not found' }));
-            return;
-          }
-          
-          /* Start watching file for new entries */
-          const watcher = watchLogFile(filePath, (newEntries) => {
-            ws.send(JSON.stringify({ type: 'entries', entries: newEntries }));
-          });
-          
-          /* Cleanup watcher when client disconnects to prevent resource leaks */
-          ws.on('close', () => {
-            watcher.close();
-          });
+        } else if (data.action === 'tail-start') {
+          handleTailStartAction(ws, data);
+        } else if (data.action === 'tail-stop') {
+          stopActiveTail(ws, 'client-request');
         }
       } catch (err) {
-        ws.send(JSON.stringify({ type: 'error', message: err.message }));
+        ws.send(JSON.stringify({
+          type: 'tail-error',
+          source: 'unknown',
+          error: sanitizeErrorMessage(err.message)
+        }));
       }
     });
-    
+
+    ws.on('close', () => {
+      stopActiveTail(ws, 'disconnect');
+    });
+
     ws.on('error', (err) => {
       console.error('WebSocket error:', err);
+      stopActiveTail(ws, 'socket-error');
     });
   });
 
@@ -175,7 +215,6 @@ if (require.main === module) {
   startServer();
 }
 
-/* === Module Exports === */
 module.exports = {
   app,
   startServer

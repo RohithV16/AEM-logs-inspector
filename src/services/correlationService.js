@@ -66,17 +66,31 @@ function normalizeCorrelationEvent(entry, meta = {}) {
     sourceName,
     title,
     logger: entry.logger || '',
-    thread: entry.thread || entry.pod || entry.threadName || '',
+    thread: entry.thread || entry.threadName || '',
+    pod: entry.instanceId || entry.pod || '',
     method: entry.method || '',
+    url: entry.url || '',
     status: entry.status || null,
     responseTime: entry.responseTime || null,
     cache: entry.cache || '',
+    clientIp: entry.clientIp || '',
     clientCountry: entry.clientCountry || '',
+    clientRegion: entry.clientRegion || '',
     pop: entry.pop || '',
     host: entry.host || '',
     ttfb: entry.ttfb || null,
     ttlb: entry.ttlb || null,
     requestId: entry.requestId || '',
+    userAgent: entry.userAgent || '',
+    aemEnvKind: entry.aemEnvKind || '',
+    aemTenant: entry.aemTenant || '',
+    contentType: entry.contentType || '',
+    debug: entry.debug || '',
+    resAge: entry.resAge || null,
+    rules: entry.rules || '',
+    alerts: entry.alerts || '',
+    sample: entry.sample || '',
+    ddos: entry.ddos || false,
     message: entry.message || '',
     stackTrace: entry.stackTrace || ''
   };
@@ -222,10 +236,62 @@ function buildCorrelationData(events) {
   };
 }
 
+function buildFilterOptionsFromStats(stats, batchLogType) {
+  if (batchLogType === 'request') {
+    return {
+      methods: Object.keys(stats.methods || {}).sort(),
+      statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+      pods: Object.keys(stats.pods || {}).sort()
+    };
+  }
+
+  if (batchLogType === 'cdn') {
+    return {
+      methods: Object.keys(stats.methods || {}).sort(),
+      statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+      cacheStatuses: Object.keys(stats.cacheStatuses || {}).sort(),
+      countries: Object.keys(stats.countries || {}).sort(),
+      pops: Object.keys(stats.pops || {}).sort(),
+      hosts: Object.keys(stats.hosts || {}).sort()
+    };
+  }
+
+  if (batchLogType === 'mixed') {
+    return {
+      request: {
+        methods: Object.keys(stats.methods || {}).sort(),
+        statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+        pods: Object.keys(stats.pods || {}).sort()
+      },
+      cdn: {
+        methods: Object.keys(stats.methods || {}).sort(),
+        statuses: Object.keys(stats.statuses || {}).map(Number).sort((a, b) => a - b),
+        cacheStatuses: Object.keys(stats.cacheStatuses || {}).sort(),
+        countries: Object.keys(stats.countries || {}).sort(),
+        pops: Object.keys(stats.pops || {}).sort(),
+        hosts: Object.keys(stats.hosts || {}).sort()
+      }
+    };
+  }
+
+  if (batchLogType === 'error') {
+    return {
+      loggers: Object.keys(stats.loggers || {}).sort(),
+      threads: Object.keys(stats.threads || {}).sort(),
+      pods: Object.keys(stats.pods || {}).sort(),
+      packages: Object.keys(stats.packages || {}).sort(),
+      exceptions: Object.keys(stats.exceptions || {}).sort()
+    };
+  }
+
+  return null;
+}
+
 module.exports = {
   buildCorrelationData,
   normalizeCorrelationEvent,
   getSeverityForEntry,
   getHourBucket,
-  getTimestampValue
+  getTimestampValue,
+  buildFilterOptionsFromStats
 };

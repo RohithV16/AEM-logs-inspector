@@ -1,0 +1,4 @@
+29/Mar/2026:00:00:00 +0000 [123] -> GET /content/page.html HTTP/1.1 [pod-1]
+29/Mar/2026:00:00:01 +0000 [123] <- 200 text/html 150ms [pod-1]
+29/Mar/2026:00:00:02 +0000 [124] -> POST /api/data HTTP/1.1 [pod-2]
+29/Mar/2026:00:00:03 +0000 [124] <- 500 application/json 50ms [pod-2]

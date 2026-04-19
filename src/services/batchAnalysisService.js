@@ -2,7 +2,7 @@ const path = require('path');
 const { detectLogType, createLogStream, createRequestLogStream, createCDNLogStream } = require('../parser');
 const { resolveAnalysisTargets } = require('../utils/files');
 const { buildAdvancedMatcher } = require('./searchBuilder');
-const { buildCorrelationData, normalizeCorrelationEvent, getTimestampValue } = require('./correlationService');
+const { buildCorrelationData, normalizeCorrelationEvent, getTimestampValue, buildFilterOptionsFromStats } = require('./correlationService');
 const { normalizeMessage } = require('../grouper');
 const { extractExceptionNames } = require('./errorLogService');
 const { categorizeError } = require('../categorizer');
@@ -18,7 +18,10 @@ function normalizeBatchTargets(input) {
   return resolveAnalysisTargets(input).map(filePath => ({ filePath, logType: null }));
 }
 
-const packageRegex = /^([a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*)\./;
+function cleanLoggerName(logger) {
+  if (!logger) return '';
+  return String(logger).replace(/^(?:sling-default-\d+-|qtp\d+-\d+-|oak-repository-executor-\d+-|\[[^\]]+\]\s+)/, '');
+}
 
 function createEntryStream(filePath, logType) {
   if (logType === 'request') return createRequestLogStream(filePath);
@@ -46,14 +49,25 @@ function createSourceTracker(filePath, logType) {
     cacheStatuses: {},
     countries: {},
     pops: {},
-    hosts: {}
+    hosts: {},
+    loggers: {},
+    threads: {},
+    packages: {},
+    exceptions: {}
   };
 }
 
 function derivePackageGroup(logger) {
   if (!logger) return null;
-  const match = String(logger).match(packageRegex);
-  return match ? match[1] : null;
+  const clean = cleanLoggerName(logger);
+  const parts = clean.split('.');
+  if (parts.length >= 3) {
+    return parts.slice(0, 3).join('.');
+  }
+  if (parts.length >= 2) {
+    return parts.slice(0, 2).join('.');
+  }
+  return parts[0];
 }
 
 function incrementTimelineBucket(timeline, hour, fields) {
@@ -65,12 +79,33 @@ function incrementTimelineBucket(timeline, hour, fields) {
 }
 
 function trackErrorEntry(tracker, entry) {
+  if (entry.logger) {
+    tracker.loggers[entry.logger] = (tracker.loggers[entry.logger] || 0) + 1;
+    const pkg = derivePackageGroup(entry.logger);
+    if (pkg) {
+      tracker.packages[pkg] = (tracker.packages[pkg] || 0) + 1;
+    }
+  }
+
+  if (entry.instanceId) {
+    tracker.pods[entry.instanceId] = (tracker.pods[entry.instanceId] || 0) + 1;
+  }
+
   if (entry.level === 'ERROR') {
     tracker.totalErrors++;
     tracker.uniqueErrorMessages.add(normalizeMessage(entry.message || ''));
   } else if (entry.level === 'WARN') {
     tracker.totalWarnings++;
     tracker.uniqueWarningMessages.add(normalizeMessage(entry.message || ''));
+  }
+  if (entry.thread) {
+    tracker.threads[entry.thread] = (tracker.threads[entry.thread] || 0) + 1;
+  }
+  if (entry.message) {
+    const exceptions = extractExceptionNames(entry.message);
+    exceptions.forEach(exc => {
+      tracker.exceptions[exc] = (tracker.exceptions[exc] || 0) + 1;
+    });
   }
 
   if (entry.level === 'ERROR' || entry.level === 'WARN') {
@@ -197,6 +232,7 @@ function createEmptyMergedErrorStats() {
     levelCounts: { ALL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 },
     loggers: {},
     threads: {},
+    pods: {},
     packages: {},
     exceptions: {},
     packageThreads: {},
@@ -248,12 +284,17 @@ function collectMergedErrorStats(stats, event) {
     if (pkg) addMergedCount(stats.packages, pkg);
   }
 
-  if (thread) {
-    addMergedCount(stats.threads, thread);
+  const packageToken = event.instanceId || thread;
+  if (packageToken) {
+    if (thread) addMergedCount(stats.threads, thread);
     if (pkg) {
       if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
-      addMergedCount(stats.packageThreads[pkg], thread);
+      addMergedCount(stats.packageThreads[pkg], packageToken);
     }
+  }
+
+  if (event.instanceId) {
+    addMergedCount(stats.pods, event.instanceId);
   }
 
   const exceptionNames = [
@@ -294,11 +335,13 @@ function finalizeMergedErrorStats(stats) {
     levelCounts: { ...stats.levelCounts },
     loggers: stats.loggers,
     threads: stats.threads,
+    pods: stats.pods,
     packages: stats.packages,
     exceptions: stats.exceptions,
     packageThreads: stats.packageThreads,
     packageExceptions: stats.packageExceptions,
-    categories: Object.keys(stats.categories).sort(),
+    categories: Object.keys(stats.categories || {}).sort(),
+
     timeline: stats.timeline,
     hourlyHeatmap: {
       heatmap: stats.hourlyHeatmap.heatmap,
@@ -326,14 +369,23 @@ function buildSearchText(event) {
     event.logger,
     event.thread,
     event.method,
+    event.url,
     event.status,
     event.responseTime,
     event.cache,
+    event.clientIp,
     event.clientCountry,
+    event.clientRegion,
     event.pop,
     event.host,
     event.requestId,
-    event.url
+    event.userAgent,
+    event.aemEnvKind,
+    event.aemTenant,
+    event.contentType,
+    event.rules,
+    event.alerts,
+    event.stackTrace
   ]
     .filter(value => value !== null && value !== undefined && value !== '')
     .join(' ')
@@ -371,6 +423,21 @@ function buildBatchEventMatcher(filters = {}) {
   const hourOfDay = String(filters.hourOfDay || '').trim();
   const logType = String(filters.logType || '').trim();
   const sourceFile = String(filters.sourceFile || '').trim();
+  const method = String(filters.method || '').trim();
+  const status = filters.status !== undefined && filters.status !== null && filters.status !== ''
+    ? Number(filters.status)
+    : null;
+  const pod = String(filters.pod || '').trim();
+  const cache = String(filters.cache || '').trim();
+  const country = String(filters.country || '').trim();
+  const pop = String(filters.pop || '').trim();
+  const host = String(filters.host || '').trim();
+  const minResponseTime = filters.minResponseTime ?? filters.minTime ?? null;
+  const maxResponseTime = filters.maxResponseTime ?? filters.maxTime ?? null;
+  const minTtfb = filters.minTtfb ?? null;
+  const maxTtfb = filters.maxTtfb ?? null;
+  const minTtlb = filters.minTtlb ?? null;
+  const maxTtlb = filters.maxTtlb ?? null;
 
   return (event) => {
     if (!advancedMatcher(event)) return false;
@@ -403,12 +470,29 @@ function buildBatchEventMatcher(filters = {}) {
       if (entryCategory !== category) return false;
     }
     if (pkg.length > 0) {
-      const entryPkg = derivePackageGroup(event.logger);
-      if (!entryPkg || !pkg.some(p => entryPkg === p || entryPkg.startsWith(`${p}.`))) return false;
+      if (!event.logger) return false;
+      const matches = pkg.some(p => {
+        if (event.logger === p || event.logger.startsWith(p + '.')) return true;
+        return false;
+      });
+      if (!matches) return false;
     }
     if (hourOfDay && String(Number(event.hour?.slice(-2))) !== String(hourOfDay)) return false;
     if (logType && event.logType !== logType) return false;
     if (sourceFile && event.sourceFile !== sourceFile && event.sourceName !== sourceFile) return false;
+    if (method && event.method !== method) return false;
+    if (status !== null && Number(event.status) !== status) return false;
+    if (pod && event.instanceId !== pod && event.thread !== pod) return false;
+    if (cache && event.cache !== cache) return false;
+    if (country && event.clientCountry !== country) return false;
+    if (pop && event.pop !== pop) return false;
+    if (host && event.host !== host) return false;
+    if (minResponseTime !== null && minResponseTime !== '' && Number(event.responseTime || 0) < Number(minResponseTime)) return false;
+    if (maxResponseTime !== null && maxResponseTime !== '' && Number(event.responseTime || 0) > Number(maxResponseTime)) return false;
+    if (minTtfb !== null && minTtfb !== '' && Number(event.ttfb || 0) < Number(minTtfb)) return false;
+    if (maxTtfb !== null && maxTtfb !== '' && Number(event.ttfb || 0) > Number(maxTtfb)) return false;
+    if (minTtlb !== null && minTtlb !== '' && Number(event.ttlb || 0) < Number(minTtlb)) return false;
+    if (maxTtlb !== null && maxTtlb !== '' && Number(event.ttlb || 0) > Number(maxTtlb)) return false;
     if (search && !buildSearchText(event).includes(search)) return false;
     return true;
   };
@@ -481,7 +565,8 @@ async function* mergeNormalizedEvents(filePaths, options = {}) {
       let selected = active[0];
       for (let i = 1; i < active.length; i++) {
         const candidate = active[i];
-        if (getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
+        if (candidate.current.value && selected.current.value &&
+            getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
           selected = candidate;
         }
       }
@@ -612,7 +697,8 @@ async function analyzeBatch(input, filters = {}, onProgress) {
     let selected = active[0];
     for (let i = 1; i < active.length; i++) {
       const candidate = active[i];
-      if (getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
+      if (candidate.current.value && selected.current.value &&
+          getTimestampValue(candidate.current.value.timestamp) < getTimestampValue(selected.current.value.timestamp)) {
         selected = candidate;
       }
     }
@@ -673,6 +759,39 @@ async function analyzeBatch(input, filters = {}, onProgress) {
   );
   const { summary: mergedSummary, ...mergedFields } = mergedErrorStats;
 
+  const batchLogType = contexts.length === 1
+    ? contexts[0].tracker.logType
+    : [...new Set(contexts.map(c => c.tracker.logType).filter(Boolean))].length === 1
+      ? contexts[0].tracker.logType
+      : 'mixed';
+
+  const aggregatedStats = contexts.reduce((acc, context) => {
+    const tracker = context.tracker;
+    if (tracker.logType === 'request' || tracker.logType === 'cdn') {
+      Object.keys(tracker.methods || {}).forEach(m => acc.methods[m] = (acc.methods[m] || 0) + tracker.methods[m]);
+      Object.keys(tracker.statuses || {}).forEach(s => acc.statuses[s] = (acc.statuses[s] || 0) + tracker.statuses[s]);
+    }
+    if (tracker.logType === 'request') {
+      Object.keys(tracker.pods || {}).forEach(p => acc.pods[p] = (acc.pods[p] || 0) + tracker.pods[p]);
+    }
+    if (tracker.logType === 'cdn') {
+      Object.keys(tracker.cacheStatuses || {}).forEach(c => acc.cacheStatuses[c] = (acc.cacheStatuses[c] || 0) + tracker.cacheStatuses[c]);
+      Object.keys(tracker.countries || {}).forEach(c => acc.countries[c] = (acc.countries[c] || 0) + tracker.countries[c]);
+      Object.keys(tracker.pops || {}).forEach(p => acc.pops[p] = (acc.pops[p] || 0) + tracker.pops[p]);
+      Object.keys(tracker.hosts || {}).forEach(h => acc.hosts[h] = (acc.hosts[h] || 0) + tracker.hosts[h]);
+    }
+    if (tracker.logType === 'error') {
+      Object.keys(tracker.loggers || {}).forEach(l => acc.loggers[l] = (acc.loggers[l] || 0) + tracker.loggers[l]);
+      Object.keys(tracker.threads || {}).forEach(t => acc.threads[t] = (acc.threads[t] || 0) + tracker.threads[t]);
+      Object.keys(tracker.pods || {}).forEach(p => acc.pods[p] = (acc.pods[p] || 0) + tracker.pods[p]);
+      Object.keys(tracker.packages || {}).forEach(p => acc.packages[p] = (acc.packages[p] || 0) + tracker.packages[p]);
+      Object.keys(tracker.exceptions || {}).forEach(e => acc.exceptions[e] = (acc.exceptions[e] || 0) + tracker.exceptions[e]);
+    }
+    return acc;
+  }, { methods: {}, statuses: {}, pods: {}, cacheStatuses: {}, countries: {}, pops: {}, hosts: {}, loggers: {}, threads: {}, packages: {}, exceptions: {} });
+
+  const filterOptions = buildFilterOptionsFromStats(aggregatedStats, batchLogType);
+
   return {
     logType: 'batch',
     summary: {
@@ -680,6 +799,11 @@ async function analyzeBatch(input, filters = {}, onProgress) {
       byType
     },
     sources,
+    filterOptions,
+    loggers: aggregatedStats.loggers,
+    threads: aggregatedStats.threads,
+    packages: aggregatedStats.packages,
+    exceptions: aggregatedStats.exceptions,
     correlation: {
       summary: correlationData.summary,
       hourOfDaySeverity: correlationData.hourOfDaySeverity,
