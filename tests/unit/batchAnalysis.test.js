@@ -202,9 +202,9 @@ describe('multi-error analysis helpers', () => {
 
     const analysis = await analyzeAllInOnePass(errorFile);
 
-    expect(analysis.packageThreads['com.example']).toMatchObject({ 'qtp-1': 1 });
-    expect(analysis.packageThreads['com.other']).toMatchObject({ 'qtp-2': 1 });
-    expect(analysis.packageExceptions['com.example']['java.lang.IllegalStateException']).toBeGreaterThanOrEqual(1);
-    expect(analysis.packageExceptions['com.other']['java.lang.RuntimeException']).toBeGreaterThanOrEqual(1);
+    expect(analysis.packageThreads['com.example.one']).toMatchObject({ 'qtp-1': 1 });
+    expect(analysis.packageThreads['com.other.two']).toMatchObject({ 'qtp-2': 1 });
+    expect(analysis.packageExceptions['com.example.one']['java.lang.IllegalStateException']).toBeGreaterThanOrEqual(1);
+    expect(analysis.packageExceptions['com.other.two']['java.lang.RuntimeException']).toBeGreaterThanOrEqual(1);
   });
 });
