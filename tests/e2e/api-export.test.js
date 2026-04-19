@@ -59,6 +59,7 @@ test.describe('API - Export Endpoints', () => {
 test.describe('API - Filter Endpoints', () => {
   test('POST /api/filter - Filter request log by method', async ({ page }) => {
     const requestLog = path.join(TEST_DATA_DIR, config.logs.request);
+    console.log(`[DEBUG] Request Log Path: ${requestLog}`);
 
     const response = await page.request.post(`${BASE_URL}/api/filter`, {
       data: {

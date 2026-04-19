@@ -36,7 +36,7 @@ function validateFilePath(filePath) {
   }
 
   if (!fs.existsSync(resolved)) {
-    throw new Error('File not found.');
+    throw new Error(`File not found: ${resolved}`);
   }
 
   const stats = fs.statSync(resolved);
