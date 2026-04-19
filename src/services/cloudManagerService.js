@@ -12,6 +12,10 @@ const CLOUD_MANAGER_CACHE_ROOT = path.join(os.homedir(), '.aem-logs');
 const CLOUD_MANAGER_CACHE_INDEX = 'index.json';
 
 function execAioRawCommand(args) {
+  if (process.env.MOCK_AIO === 'true') {
+    return mockAioExecution(args);
+  }
+
   return new Promise((resolve, reject) => {
     execFile(AIO_BINARY, args, { maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
@@ -30,6 +34,86 @@ function execAioRawCommand(args) {
     });
   });
 }
+
+function mockAioExecution(args) {
+  const command = args.join(' ');
+  console.log(`[MOCK_AIO] Executing: aio ${command}`);
+
+  if (command.includes('cloudmanager:list-programs')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { id: '12345', name: 'Mock Program A', enabled: true },
+        { id: '67890', name: 'Mock Program B', enabled: true }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('cloudmanager:program:list-environments')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { id: '456', name: 'author', type: 'author', status: 'ready' },
+        { id: '789', name: 'publish', type: 'publish', status: 'ready' }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('cloudmanager:environment:list-available-log-options')) {
+    return Promise.resolve({
+      stdout: JSON.stringify([
+        { service: 'author', name: 'aemerror' },
+        { service: 'author', name: 'aemrequest' },
+        { service: 'publish', name: 'aemerror' },
+        { service: 'publish', name: 'aemrequest' }
+      ]),
+      stderr: ''
+    });
+  }
+
+  if (command.includes('download-logs')) {
+    // Extract output directory
+    let outputDir = '.';
+    const dirIndex = args.indexOf('--outputDirectory');
+    if (dirIndex >= 0 && args[dirIndex + 1]) {
+      outputDir = args[dirIndex + 1];
+    }
+
+    // Create a dummy log file to satisfy the analyzer
+    const fs = require('fs');
+    const path = require('path');
+    const dummyLogPath = path.join(outputDir, 'author_aemerror_mock.log');
+    
+    try {
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      fs.writeFileSync(dummyLogPath, [
+        '16.03.2026 14:30:15.123 [qtp-1] *ERROR* [com.example.Mock] Mock error message for CI',
+        'java.lang.RuntimeException: Mock stack trace line 1',
+        '\tat com.example.Mock.doSomething(Mock.java:10)'
+      ].join('\n'), 'utf8');
+      
+      return Promise.resolve({
+        stdout: `Downloaded 1 file to ${outputDir}`,
+        stderr: ''
+      });
+    } catch (err) {
+      return Promise.reject({
+        error: err,
+        stdout: '',
+        stderr: `Failed to create mock log file: ${err.message}`
+      });
+    }
+  }
+
+  return Promise.reject({
+    error: { code: 'MOCK_UNSUPPORTED' },
+    stdout: '',
+    stderr: `Mocking for command "aio ${command}" is not implemented.`
+  });
+}
+
 
 async function execAioCommand(args) {
   try {
@@ -681,6 +765,25 @@ function createCloudManagerTailSession(options = {}, handlers = {}) {
     sourceLabel,
     start() {
       if (child) return;
+
+      if (process.env.MOCK_AIO === 'true') {
+        emitStatus('starting', 'Starting Mock Cloud Manager live tail...');
+        setTimeout(() => {
+          if (stopped) return;
+          emitStatus('running', 'Mock Cloud Manager live tail connected.');
+          
+          let mockInterval = setInterval(() => {
+            if (stopped) {
+              clearInterval(mockInterval);
+              return;
+            }
+            const ts = new Date().toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
+            const mockLine = `${ts} [mock-thread] *INFO* [com.example.Mock] Periodic mock entry from CI session`;
+            parseAndEmit(mockLine);
+          }, 2000);
+        }, 500);
+        return;
+      }
 
       emitStatus('starting', 'Starting Cloud Manager live tail...');
       child = spawn(AIO_BINARY, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'] });

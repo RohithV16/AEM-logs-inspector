@@ -14,6 +14,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  MOCK_AIO: true
+
 jobs:
   # ── 1. Lint ────────────────────────────────────────────────────────────────
   lint:
@@ -88,13 +91,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline
 
-      - name: Install Adobe aio CLI
-        run: |
-          npm install -g @adobe/aio-cli
-          aio --version
-          aio plugins:install @adobe/aio-cli-plugin-cloudmanager
-
-
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         id: pw-cache
@@ -115,6 +111,7 @@ jobs:
         env:
           DEBUG_FILTERS: "true"
           CI: "true"
+          MOCK_AIO: "true"
 
       - name: Upload blob report
         uses: actions/upload-artifact@v4
