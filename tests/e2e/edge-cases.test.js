@@ -283,11 +283,16 @@ test.describe('AEM Log Inspector Edge Cases', () => {
 
     await page.locator('#rawSearchInput').fill('.*+?^${}()|[]\\');
     await page.locator('#rawSearchBtn').click();
-    await awaitFilterApply(page);
+    
+    // Expect awaitFilterApply to throw because a toast or error should appear for invalid regex
+    try {
+      await awaitFilterApply(page, { timeout: 5000 });
+    } catch (e) {
+      expect(e.message).toContain('Filter failed');
+    }
 
     const toast = page.locator('.toast.error, .toast.warning');
-    if (await toast.first().isVisible({ timeout: 3000 })) {
-      await expect(toast.first()).toContainText(/invalid|error/i);
-    }
+    await expect(toast.first()).toBeVisible({ timeout: 3000 });
+    await expect(toast.first()).toContainText(/invalid|error/i);
   });
 });
