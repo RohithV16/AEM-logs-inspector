@@ -1,5 +1,6 @@
 /* === Imports === */
 const express = require('express');
+const path = require('path');
 const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { detectLogType } = require('./parser');
@@ -29,6 +30,10 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '500mb' }));
 app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'dist')));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist/index.html'));
+});
 
 app.use('/api', createAnalyzeRouter());
 app.use('/api', createMultiErrorRouter());
