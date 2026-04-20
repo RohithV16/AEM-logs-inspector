@@ -120,3 +120,94 @@ export function ExceptionTokenPicker() {
     />
   );
 }
+
+export function MethodTokenPicker() {
+  const { methods, availableMethods, addMethod, removeMethod } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Methods"
+      tokens={availableMethods}
+      selected={methods}
+      onAdd={addMethod}
+      onRemove={removeMethod}
+    />
+  );
+}
+
+export function StatusTokenPicker() {
+  const { statuses, availableStatuses, addStatus, removeStatus } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Statuses"
+      tokens={availableStatuses}
+      selected={statuses}
+      onAdd={addStatus}
+      onRemove={removeStatus}
+    />
+  );
+}
+
+export function PodTokenPicker() {
+  const { pods, availablePods, addPod, removePod } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Pods"
+      tokens={availablePods}
+      selected={pods}
+      onAdd={addPod}
+      onRemove={removePod}
+    />
+  );
+}
+
+export function CacheStatusTokenPicker() {
+  const { cacheStatuses, availableCacheStatuses, addCacheStatus, removeCacheStatus } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Cache Status"
+      tokens={availableCacheStatuses}
+      selected={cacheStatuses}
+      onAdd={addCacheStatus}
+      onRemove={removeCacheStatus}
+    />
+  );
+}
+
+export function CountryTokenPicker() {
+  const { countries, availableCountries, addCountry, removeCountry } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Countries"
+      tokens={availableCountries}
+      selected={countries}
+      onAdd={addCountry}
+      onRemove={removeCountry}
+    />
+  );
+}
+
+export function PopTokenPicker() {
+  const { pops, availablePops, addPop, removePop } = useFilterStore();
+  return (
+    <TokenPicker
+      label="PoPs"
+      tokens={availablePops}
+      selected={pops}
+      onAdd={addPop}
+      onRemove={removePop}
+    />
+  );
+}
+
+export function HostTokenPicker() {
+  const { hosts, availableHosts, addHost, removeHost } = useFilterStore();
+  return (
+    <TokenPicker
+      label="Hosts"
+      tokens={availableHosts}
+      selected={hosts}
+      onAdd={addHost}
+      onRemove={removeHost}
+    />
+  );
+}

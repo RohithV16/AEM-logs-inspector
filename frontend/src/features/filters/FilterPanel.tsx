@@ -1,39 +1,71 @@
 import { useFilterStore } from './useFilters';
+import { 
+  PackageTokenPicker, 
+  LoggerTokenPicker, 
+  ThreadTokenPicker, 
+  ExceptionTokenPicker 
+} from './TokenPicker';
 
 export function FilterPanel() {
   const { dateRange, setDateRange, logType, setLogType, clear } = useFilterStore();
 
   return (
-    <div className="filter-panel">
-      <fieldset>
-        <legend>Date Range</legend>
-        <label>
-          From
-          <input
-            type="datetime-local"
-            value={dateRange.start}
-            onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-          />
-        </label>
-        <label>
-          To
-          <input
-            type="datetime-local"
-            value={dateRange.end}
-            onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-          />
-        </label>
-      </fieldset>
+    <div className="filter-sidebar">
+      <div className="filter-group">
+        <div className="filter-section-header">
+          <p className="filter-section-label">Time Window</p>
+        </div>
+        <div className="filter-control-row stack">
+          <label className="filter-label">
+            From
+            <input
+              type="datetime-local"
+              className="filter-input compact"
+              value={dateRange.start}
+              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+            />
+          </label>
+          <label className="filter-label">
+            To
+            <input
+              type="datetime-local"
+              className="filter-input compact"
+              value={dateRange.end}
+              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+            />
+          </label>
+        </div>
+      </div>
 
-      <fieldset>
-        <legend>Log Type</legend>
-        <label><input type="radio" name="logType" value="error" checked={logType === 'error'} onChange={() => setLogType('error')} /> Error</label>
-        <label><input type="radio" name="logType" value="request" checked={logType === 'request'} onChange={() => setLogType('request')} /> Request</label>
-        <label><input type="radio" name="logType" value="cdn" checked={logType === 'cdn'} onChange={() => setLogType('cdn')} /> CDN</label>
-        <label><input type="radio" name="logType" value="all" checked={logType === 'all'} onChange={() => setLogType('all')} /> All</label>
-      </fieldset>
+      <div className="filter-group">
+        <div className="filter-section-header">
+          <p className="filter-section-label">Log Type</p>
+        </div>
+        <div className="log-type-selector">
+          {['error', 'request', 'cdn', 'all'].map((type) => (
+            <button
+              key={type}
+              className={`type-btn ${logType === type ? 'active' : ''}`}
+              onClick={() => setLogType(type as any)}
+            >
+              {type.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <button onClick={clear}>Clear Filters</button>
+      <div className="sidebar-scroll-area">
+        <PackageTokenPicker />
+        <LoggerTokenPicker />
+        <ThreadTokenPicker />
+        <ExceptionTokenPicker />
+      </div>
+
+      <div className="filter-footer">
+        <button className="upload-btn secondary full-width" onClick={clear}>
+          Clear All Filters
+        </button>
+      </div>
     </div>
   );
 }

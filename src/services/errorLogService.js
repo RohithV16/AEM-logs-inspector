@@ -314,8 +314,33 @@ async function analyzeAllInOnePass(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildEntryFilter(filters = {}) {
-  const { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath } = filters;
+  const { 
+    level, 
+    search, 
+    from, 
+    to, 
+    logger, 
+    thread, 
+    pod, 
+    package: pkg, 
+    exception, 
+    category, 
+    httpMethod, 
+    method,
+    requestPath, 
+    url, 
+    host 
+  } = filters;
+
+  // Normalize all filter types to arrays for consistent checking
   const packages = Array.isArray(pkg) ? pkg : (pkg ? [pkg] : []);
+  const urls = Array.isArray(url) ? url : (url ? [url] : []);
+  const hosts = Array.isArray(host) ? host : (host ? [host] : []);
+  const pods = Array.isArray(pod) ? pod : (pod ? [pod] : []);
+  // Support both 'method' and 'httpMethod' names from various components
+  const methodInput = method || httpMethod;
+  const methods = Array.isArray(methodInput) ? methodInput.map(m => String(m).toUpperCase()) : (methodInput ? [String(methodInput).toUpperCase()] : []);
+  
   let searchRegex = null;
 
   /* Safely compile user-provided regex - invalid patterns should not crash the service */
@@ -377,10 +402,12 @@ function buildEntryFilter(filters = {}) {
      Uses early returns for efficiency - fails fast on first non-match. */
   return (entry) => {
     if (process.env.DEBUG_FILTERS) console.log('Filtering Error Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
+    
     if (level && level !== 'ALL' && entry.level !== level) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: level', entry.level, '!==', level);
       return false;
     }
+
     if (searchRegex) {
       const searchText = [entry.message, entry.logger, entry.threadName, entry.stackTrace]
         .filter(Boolean).join(' ');
@@ -389,6 +416,7 @@ function buildEntryFilter(filters = {}) {
         return false;
       }
     }
+
     if (fromDate || toDate) {
       const entryDate = parseLogTimestamp(entry.timestamp);
       if (entryDate) {
@@ -405,26 +433,30 @@ function buildEntryFilter(filters = {}) {
         if (process.env.DEBUG_FILTERS) console.log('Mismatch: entryDate unparseable', entry.timestamp);
       }
     }
+
     if (!matchesFilterText(entry.logger, logger)) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: logger');
       return false;
     }
+
     if (!matchesFilterText(entry.thread, thread)) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: thread');
       return false;
     }
-    if (pod && entry.instanceId !== pod && entry.thread !== pod) {
+
+    // Pod/Instance filtering
+    if (pods.length > 0 && !pods.includes(entry.instanceId) && !pods.includes(entry.thread)) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: pod');
       return false;
     }
-    if (httpMethod && String(entry.httpMethod || '').toUpperCase() !== String(httpMethod).toUpperCase()) {
+
+    // HTTP Method filtering
+    if (methods.length > 0 && !methods.includes(String(entry.httpMethod || '').toUpperCase())) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: httpMethod');
       return false;
     }
-    if (requestPath && !String(entry.requestPath || '').toLowerCase().includes(String(requestPath).toLowerCase())) {
-      if (process.env.DEBUG_FILTERS) console.log('Mismatch: requestPath');
-      return false;
-    }
+
+    // Package filtering
     if (packages.length > 0) {
       if (!entry.logger) return false;
       const matches = packages.some(p => {
@@ -435,10 +467,14 @@ function buildEntryFilter(filters = {}) {
         return false;
       }
     }
+
+    // Exception filtering
     if (!matchesExceptionFilter(entry, exception)) {
       if (process.env.DEBUG_FILTERS) console.log('Mismatch: exception');
       return false;
     }
+
+    // Category filtering
     if (category) {
       const entryCategory = categorizeError(entry.message, entry.logger);
       if (entryCategory !== category) {
@@ -446,6 +482,19 @@ function buildEntryFilter(filters = {}) {
         return false;
       }
     }
+
+    // URL/Path filtering
+    if (urls.length > 0 && !urls.some(u => String(entry.url || entry.requestPath || '').toLowerCase().includes(String(u).toLowerCase()))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: url');
+      return false;
+    }
+
+    // Host filtering
+    if (hosts.length > 0 && !hosts.some(h => String(entry.host || entry.pod || entry.instanceId || '').toLowerCase().includes(String(h).toLowerCase()))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: host');
+      return false;
+    }
+
     return true;
   };
 }
@@ -536,6 +585,14 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
   const uniquePackages = new Set();
   const uniqueThreads = new Set();
   const uniqueExceptions = new Set();
+  const uniqueMethods = new Set();
+  const uniqueStatuses = new Set();
+  const uniquePods = new Set();
+  const uniqueCache = new Set();
+  const uniqueCountries = new Set();
+  const uniquePops = new Set();
+  const uniqueHosts = new Set();
+
   let skipped = (page - 1) * pageSize;
   let total = 0;
 
@@ -546,8 +603,16 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
     }
 
     if (entry.logger) uniqueLoggers.add(entry.logger);
-    if (entry.threadName) uniqueThreads.add(entry.threadName);
+    if (entry.threadName || entry.thread) uniqueThreads.add(entry.threadName || entry.thread);
     if (entry.exception) uniqueExceptions.add(entry.exception);
+    if (entry.method) uniqueMethods.add(entry.method);
+    if (entry.status) uniqueStatuses.add(String(entry.status));
+    if (entry.pod || entry.instanceId) uniquePods.add(entry.pod || entry.instanceId);
+    if (entry.cache) uniqueCache.add(entry.cache);
+    if (entry.clientCountry) uniqueCountries.add(entry.clientCountry);
+    if (entry.pop) uniquePops.add(entry.pop);
+    if (entry.host) uniqueHosts.add(entry.host);
+
     if (entry.logger) {
       const pkg = derivePackageGroup(entry.logger);
       if (pkg) uniquePackages.add(pkg);
@@ -570,7 +635,14 @@ async function extractPageWithBaseCounts(filePath, activeFilters = {}, page = 1,
     loggers: Array.from(uniqueLoggers).sort(),
     packages: Array.from(uniquePackages).sort(),
     threads: Array.from(uniqueThreads).sort(),
-    exceptions: Array.from(uniqueExceptions).sort()
+    exceptions: Array.from(uniqueExceptions).sort(),
+    methods: Array.from(uniqueMethods).sort(),
+    statuses: Array.from(uniqueStatuses).sort(),
+    pods: Array.from(uniquePods).sort(),
+    cacheStatuses: Array.from(uniqueCache).sort(),
+    countries: Array.from(uniqueCountries).sort(),
+    pops: Array.from(uniquePops).sort(),
+    hosts: Array.from(uniqueHosts).sort()
   };
 }
 

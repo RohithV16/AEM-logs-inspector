@@ -205,22 +205,7 @@ function startServer() {
   if (httpServer) return httpServer;
 
   httpServer = app.listen(PORT, () => {
-    console.log(`Open ${DASHBOARD_URL} in your browser`);
-    if (process.env.CI || process.env.NO_OPEN_BROWSER === '1') {
-      return;
-    }
-
-    const opener = process.platform === 'darwin'
-      ? 'open'
-      : process.platform === 'win32'
-        ? 'cmd'
-        : 'xdg-open';
-
-    const args = process.platform === 'win32'
-      ? ['/c', 'start', '', DASHBOARD_URL]
-      : [DASHBOARD_URL];
-
-    execFile(opener, args, { detached: true, stdio: 'ignore' }, () => {});
+    console.log(`Log Inspector backend running at http://localhost:${PORT}`);
   });
 
   wss = attachWebSocketHandlers(httpServer);

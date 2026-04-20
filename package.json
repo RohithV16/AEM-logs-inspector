@@ -18,14 +18,15 @@
   "license": "MIT",
   "scripts": {
     "start": "node src/index.js",
-    "dashboard": "node src/server.js",
+    "build": "cd frontend && npm run build",
+    "dashboard": "cd frontend && npm run build && node ../src/server.js",
     "test": "jest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:api": "node scripts/test-api.js",
     "test:api:start": "npm run dashboard & PID=$!; sleep 3; node scripts/test-api.js; kill $PID",
-    "dev:all": "concurrently \"npm run dashboard\" \"cd frontend && npm run dev\"",
+    "dev:all": "npm run build && concurrently \"npm run dashboard\" \"cd frontend && npm run dev\"",
     "lint": "eslint src/**/*.js"
   },
   "dependencies": {

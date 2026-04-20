@@ -1,52 +1,43 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { LevelFilter } from './LevelFilter';
 import { SearchInput } from './SearchInput';
 import { usePaginationStore } from './usePagination';
 import { useFilterStore } from '../filters/useFilters';
 import { useAnalysisStore } from '../analysis/useAnalysisStore';
-
-interface LogEvent {
-  id: string;
-  timestamp: string;
-  level?: string;
-  message?: string;
-  // CDN fields
-  host?: string;
-  url?: string;
-  status?: number;
-  method?: string;
-  cache?: string;
-}
-
-interface EventsResponse {
-  success?: boolean;
-  events: LogEvent[];
-  total: number;
-  levelCounts?: { ALL: number; ERROR: number; WARN: number; INFO: number };
-  logType: string;
-  packages?: string[];
-  loggers?: string[];
-  threads?: string[];
-  exceptions?: string[];
-  methods?: string[];
-  statuses?: string[];
-  pods?: string[];
-  cacheStatuses?: string[];
-  countries?: string[];
-  pops?: string[];
-  hosts?: string[];
-  error?: string;
-}
+import { EventExpansion } from './EventExpansion';
+import { LogEvent, EventsResponse } from './types';
 
 export function ResultsTable() {
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const { page, perPage, setPage, setPerPage } = usePaginationStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [level, setLevel] = useState<string>('ALL');
   
   const filters = useFilterStore();
-  const { currentFilePath } = useAnalysisStore();
+  const { currentFilePath, logType: storeLogType, mergedResults } = useAnalysisStore();
   const setAvailableTokens = useFilterStore((state) => state.setAvailableTokens);
+
+  const toggleEventExpansion = useCallback((eventId: string) => {
+    setExpandedEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(eventId)) {
+        next.delete(eventId);
+      } else {
+        next.add(eventId);
+      }
+      return next;
+    });
+  }, []);
+
+  const isMerged = storeLogType === 'merged' && mergedResults;
+
+  // Reset page to 1 when file changes
+  useEffect(() => {
+    if (currentFilePath) {
+      setPage(1);
+    }
+  }, [currentFilePath, setPage]);
 
   const { data, isLoading, isError, error } = useQuery<EventsResponse>({
     queryKey: ['rawEvents', currentFilePath, page, perPage, searchQuery, level, filters],
@@ -71,10 +62,14 @@ export function ResultsTable() {
           package: filters.packages,
           exception: filters.exceptions,
           category: filters.category,
-          // Forward CDN/Request specific filters if needed
-          host: filters.advancedRules.find(r => r.field === 'host')?.value,
-          clientCountry: filters.advancedRules.find(r => r.field === 'country')?.value,
-          cache: filters.advancedRules.find(r => r.field === 'cache')?.value,
+          method: filters.methods,
+          httpStatus: filters.statuses,
+          pod: filters.pods,
+          cache: filters.cacheStatuses,
+          clientCountry: filters.countries,
+          pop: filters.pops,
+          host: filters.hosts,
+          url: filters.urls,
         })
       });
       const payload = await response.json() as EventsResponse;
@@ -86,37 +81,69 @@ export function ResultsTable() {
         throw new Error(payload.error || 'Failed to load events.');
       }
 
-      if (payload.packages || payload.loggers || payload.threads || payload.exceptions) {
-        setAvailableTokens({
-          packages: payload.packages,
-          loggers: payload.loggers,
-          threads: payload.threads,
-          exceptions: payload.exceptions,
-        });
-      } else if (payload.methods || payload.statuses || payload.pods) {
-        setAvailableTokens({
-          methods: payload.methods,
-          statuses: payload.statuses,
-          pods: payload.pods,
-        });
-      } else if (payload.methods || payload.statuses || payload.cacheStatuses || payload.countries || payload.pops || payload.hosts) {
-        setAvailableTokens({
-          methods: payload.methods,
-          statuses: payload.statuses,
-          cacheStatuses: payload.cacheStatuses,
-          countries: payload.countries,
-          pops: payload.pops,
-          hosts: payload.hosts,
-        });
-      }
+      setAvailableTokens({
+        packages: payload.packages,
+        loggers: payload.loggers,
+        threads: payload.threads,
+        exceptions: payload.exceptions,
+        methods: payload.methods,
+        statuses: payload.statuses,
+        pods: payload.pods,
+        cacheStatuses: payload.cacheStatuses,
+        countries: payload.countries,
+        pops: payload.pops,
+        hosts: payload.hosts,
+      });
 
       return payload;
     },
+    enabled: !isMerged,
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
-  const totalPages = Math.ceil((data?.total || 0) / perPage);
-  const isCdn = data?.logType === 'cdn';
-  const isRequest = data?.logType === 'request';
+  const totalPages = isMerged 
+    ? Math.ceil((mergedResults?.totalEntries || 0) / perPage)
+    : Math.ceil((data?.total || 0) / perPage);
+  const isCdn = isMerged ? mergedResults?.logTypesPresent.includes('cdn') : data?.logType === 'cdn';
+  const isRequest = isMerged ? mergedResults?.logTypesPresent.includes('request') : data?.logType === 'request';
+
+  const getEventsForPage = (): LogEvent[] => {
+    if (isMerged && mergedResults) {
+      const start = (page - 1) * perPage;
+      return mergedResults.entries.slice(start, start + perPage).map((entry: Record<string, unknown>) => ({
+        ...entry,
+        id: entry.timestamp as string,
+      })) as LogEvent[];
+    }
+    return data?.events || [];
+  };
+
+  const events = isMerged ? getEventsForPage() : data?.events || [];
+
+  // Extract filter tokens from merged results
+  useEffect(() => {
+    if (isMerged && mergedResults?.entries?.length > 0) {
+      const entries = mergedResults.entries;
+      const methods = [...new Set(entries.map((e: Record<string, unknown>) => e.method).filter(Boolean))] as string[];
+      const statuses = [...new Set(entries.map((e: Record<string, unknown>) => e.status).filter(Boolean))] as number[];
+      const pods = [...new Set(entries.map((e: Record<string, unknown>) => e.pod).filter(Boolean))] as string[];
+      const hosts = [...new Set(entries.map((e: Record<string, unknown>) => e.host).filter(Boolean))] as string[];
+      const cacheStatuses = [...new Set(entries.map((e: Record<string, unknown>) => e.cache).filter(Boolean))] as string[];
+      const loggers = [...new Set(entries.map((e: Record<string, unknown>) => e.logger).filter(Boolean))] as string[];
+      const urls = [...new Set(entries.map((e: Record<string, unknown>) => e.url || e.path).filter(Boolean))] as string[];
+      
+      setAvailableTokens({
+        methods: methods.slice(0, 50),
+        statuses: statuses.slice(0, 50).map(String),
+        pods: pods.slice(0, 50),
+        hosts: hosts.slice(0, 50),
+        cacheStatuses: cacheStatuses.slice(0, 50),
+        loggers: loggers.slice(0, 50),
+        urls: urls.slice(0, 50),
+      });
+    }
+  }, [isMerged, mergedResults]);
 
   return (
     <section id="eventsView" className="result-view-panel active">
@@ -125,8 +152,8 @@ export function ResultsTable() {
           <button className="upload-btn secondary compact" onClick={() => setPage(1)} disabled={page === 1}>« First</button>
           <button className="upload-btn secondary compact" onClick={() => setPage(page - 1)} disabled={page === 1}>‹ Prev</button>
           <span className="pagination-status">Page {page} of {totalPages || 1}</span>
-          <button className="upload-btn secondary compact" onClick={() => setPage(page + 1)} disabled={page >= totalPages}>Next ›</button>
-          <button className="upload-btn secondary compact" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>Last »</button>
+          <button className="upload-btn secondary compact" onClick={() => setPage(page + 1)} disabled={page >= (totalPages || 1)}>Next ›</button>
+          <button className="upload-btn secondary compact" onClick={() => setPage(totalPages || 1)} disabled={page >= (totalPages || 1)}>Last »</button>
         </div>
         <div className="per-page-selector">
           <span>Show:</span>
@@ -146,7 +173,10 @@ export function ResultsTable() {
         <LevelFilter 
           activeLevel={level} 
           onLevelChange={setLevel} 
-          counts={data?.levelCounts || { ALL: 0, ERROR: 0, WARN: 0, INFO: 0 }} 
+          counts={isMerged 
+            ? { ALL: (mergedResults?.combinedSummary.totalErrors || 0) + (mergedResults?.combinedSummary.totalWarnings || 0), ERROR: mergedResults?.combinedSummary.totalErrors || 0, WARN: mergedResults?.combinedSummary.totalWarnings || 0, INFO: 0 }
+            : data?.levelCounts || { ALL: 0, ERROR: 0, WARN: 0, INFO: 0 }
+          } 
         />
       )}
 
@@ -159,27 +189,61 @@ export function ResultsTable() {
           <div className="error-message">{error instanceof Error ? error.message : 'Failed to load events.'}</div>
         ) : (
           <div id="rawEvents">
-            {(data?.events || []).map((event: LogEvent, idx: number) => (
-              <div key={event.id || idx} className={`raw-event ${event.level?.toLowerCase() || 'info'}`}>
-                <div className="raw-event-header">
-                  <span className="event-time">{event.timestamp}</span>
-                  {!isCdn && !isRequest && (
-                    <span className={`level-badge ${event.level?.toUpperCase() || 'INFO'}`}>{event.level || 'INFO'}</span>
-                  )}
-                  {isCdn && (
-                    <>
-                      <span className={`level-badge ${event.cache === 'HIT' ? 'INFO' : event.cache === 'ERROR' ? 'ERROR' : 'WARN'}`}>{event.cache}</span>
-                      <span className="level-badge INFO">{event.method}</span>
-                      <span className={`level-badge ${Number(event.status) >= 400 ? 'ERROR' : 'INFO'}`}>{event.status}</span>
-                    </>
-                  )}
-                  <div className="event-message">
-                    {isCdn && <strong style={{color: 'var(--color-primary)', marginRight: '8px'}}>{event.host}</strong>}
-                    {event.message || event.url}
+            {events.map((event: LogEvent, idx: number) => {
+              const eventId = event.id || `${event.timestamp}-${idx}`;
+              const isExpanded = expandedEvents.has(eventId);
+              return (
+                <div key={eventId} className={`raw-event-wrapper ${isExpanded ? 'expanded' : ''}`}>
+                  <div 
+                    className={`raw-event clickable ${event.level?.toLowerCase() || 'info'}`}
+                    onClick={() => toggleEventExpansion(eventId)}
+                  >
+                    <div className="raw-event-header">
+                      <span className="event-time">{event.timestamp}</span>
+                      {/* Log Type Badge for Merged View */}
+                      {isMerged && (
+                        <span className="level-badge TYPE">{event.logType?.toUpperCase()}</span>
+                      )}
+                      
+                      {/* Error / Generic Log Badges */}
+                      {(!isCdn && !isRequest && (!isMerged || event.logType === 'error')) && (
+                        <span className={`level-badge ${event.level?.toUpperCase() || 'INFO'}`}>{event.level || 'INFO'}</span>
+                      )}
+
+                      {/* CDN Log Badges */}
+                      {(isCdn || (isMerged && event.logType === 'cdn')) && (
+                        <>
+                          {event.cache && <span className={`level-badge ${event.cache === 'HIT' ? 'INFO' : 'WARN'}`}>{event.cache}</span>}
+                          {event.method && <span className="level-badge INFO">{event.method}</span>}
+                          {event.status && <span className={`level-badge ${Number(event.status) >= 400 ? 'ERROR' : 'INFO'}`}>{event.status}</span>}
+                        </>
+                      )}
+
+                      {/* Request Log Badges */}
+                      {(isRequest || (isMerged && event.logType === 'request')) && (
+                        <>
+                          {event.method && <span className="level-badge INFO">{event.method}</span>}
+                          {event.status && <span className={`level-badge ${Number(event.status) >= 400 ? 'ERROR' : 'SUCCESS'}`}>{event.status}</span>}
+                        </>
+                      )}
+                      <div className="event-message">
+                        {(isCdn || (isMerged && event.logType === 'cdn')) && <strong style={{color: 'var(--color-primary)', marginRight: '8px'}}>{event.host}</strong>}
+                        {event.message || event.url || event.path}
+                        {isMerged && event.sourceFile && <span className="source-file-tag"> [{event.sourceFile}]</span>}
+                        {isExpanded && <span className="expand-indicator">▼</span>}
+                        {!isExpanded && <span className="expand-indicator">▶</span>}
+                      </div>
+                    </div>
                   </div>
+                  {isExpanded && (
+                    <EventExpansion 
+                      event={event} 
+                      onClose={() => toggleEventExpansion(eventId)} 
+                    />
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

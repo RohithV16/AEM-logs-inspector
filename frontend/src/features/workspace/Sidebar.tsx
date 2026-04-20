@@ -4,7 +4,14 @@ import {
   PackageTokenPicker, 
   LoggerTokenPicker, 
   ThreadTokenPicker, 
-  ExceptionTokenPicker 
+  ExceptionTokenPicker,
+  MethodTokenPicker,
+  StatusTokenPicker,
+  PodTokenPicker,
+  CacheStatusTokenPicker,
+  CountryTokenPicker,
+  PopTokenPicker,
+  HostTokenPicker
 } from '../filters/TokenPicker';
 
 export function Sidebar() {
@@ -55,27 +62,16 @@ export function Sidebar() {
           <div id="sidebarBody" className="sidebar-body">
             {/* Filter Mode Selector (Sub-tabs) */}
             <div className="mixed-filter-tabs">
-              <button 
-                type="button" 
-                className={`mixed-filter-tab ${logType === 'error' ? 'active' : ''}`}
-                onClick={() => setLogType('error')}
-              >
-                Error
-              </button>
-              <button 
-                type="button" 
-                className={`mixed-filter-tab ${logType === 'request' ? 'active' : ''}`}
-                onClick={() => setLogType('request')}
-              >
-                Request
-              </button>
-              <button 
-                type="button" 
-                className={`mixed-filter-tab ${logType === 'cdn' ? 'active' : ''}`}
-                onClick={() => setLogType('cdn')}
-              >
-                CDN
-              </button>
+              {['error', 'request', 'cdn', 'all'].map((type) => (
+                <button 
+                  key={type}
+                  type="button" 
+                  className={`mixed-filter-tab ${logType === type ? 'active' : ''}`}
+                  onClick={() => setLogType(type as any)}
+                >
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </button>
+              ))}
             </div>
 
             <section className="filter-group">
@@ -106,13 +102,15 @@ export function Sidebar() {
               </div>
             </section>
 
+            {/* General Log Filters */}
+            <PackageTokenPicker />
+            <LoggerTokenPicker />
+            <ThreadTokenPicker />
+
+            {/* Context-Specific Filters */}
             {logType === 'error' && (
               <>
-                <PackageTokenPicker />
-                <LoggerTokenPicker />
-                <ThreadTokenPicker />
                 <ExceptionTokenPicker />
-                
                 <section className="filter-group">
                   <div className="filter-section-header">
                     <p className="filter-section-label">Category</p>
@@ -133,12 +131,20 @@ export function Sidebar() {
             )}
 
             {logType === 'request' && (
-              <section className="filter-group">
-                <div className="filter-section-header">
-                  <p className="filter-section-label">Request Filters</p>
-                </div>
-                <p className="filter-selection-hint">Request-specific filters (Method, Status, etc.) are coming soon.</p>
-              </section>
+              <>
+                <MethodTokenPicker />
+                <StatusTokenPicker />
+                <PodTokenPicker />
+              </>
+            )}
+
+            {logType === 'cdn' && (
+              <>
+                <CacheStatusTokenPicker />
+                <CountryTokenPicker />
+                <PopTokenPicker />
+                <HostTokenPicker />
+              </>
             )}
 
             <div className="filter-actions">

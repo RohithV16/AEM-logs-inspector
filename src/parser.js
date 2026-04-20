@@ -103,7 +103,8 @@ function parseLine(line) {
       message: normalizedMessage,
       requestContext: thread,
       httpMethod: requestMeta.httpMethod,
-      requestPath: requestMeta.requestPath
+      requestPath: requestMeta.requestPath,
+      raw: line
     };
   }
 
@@ -121,7 +122,8 @@ function parseLine(line) {
       message: message,
       requestContext: pod,
       httpMethod: '',
-      requestPath: ''
+      requestPath: '',
+      raw: line
     };
   }
   
@@ -139,7 +141,8 @@ function parseLine(line) {
       message,
       requestContext: 'local',
       httpMethod: '',
-      requestPath: ''
+      requestPath: '',
+      raw: line
     };
   }
 
@@ -157,7 +160,8 @@ function parseLine(line) {
     message,
     requestContext: instanceId,
     httpMethod: '',
-    requestPath: ''
+    requestPath: '',
+    raw: line
   };
 }
 
@@ -444,28 +448,38 @@ function parseRequestLine(line) {
       url: match[4],
       httpVersion: match[5],
       pod: match[6],
-      direction: 'outbound'
+      direction: 'outbound',
+      logger: match[6],
+      level: 'INFO',
+      message: `${match[3]} ${match[4]}`,
+      raw: line
     };
   }
 
   // Try response line (<-) - inbound to AEM (includes timing)
   match = line.match(RESPONSE_PATTERN);
   if (match) {
+    const status = parseInt(match[3]);
     return {
       type: 'response',
       timestamp: match[1],
       threadId: match[2],
-      status: parseInt(match[3]),
+      status: status,
       contentType: match[4],
       responseTime: parseInt(match[5]),  // Critical for performance analysis
       pod: match[6],
-      direction: 'inbound'
+      direction: 'inbound',
+      logger: match[6],
+      level: status >= 400 ? 'ERROR' : 'INFO',
+      message: `HTTP ${status} - ${match[5]}ms`,
+      raw: line
     };
   }
 
   match = line.match(APACHE_ACCESS_PATTERN);
   if (match) {
-    const [, clientIp, timestamp, method, url, httpVersion, status, , referrer, userAgent, responseTimeToken] = match;
+    const [, clientIp, timestamp, method, url, httpVersion, statusToken, , referrer, userAgent, responseTimeToken] = match;
+    const status = parseInt(statusToken, 10);
     const parsedTimestamp = parseRequestTimestamp(timestamp);
     return {
       type: 'access',
@@ -474,13 +488,17 @@ function parseRequestLine(line) {
       method,
       url,
       httpVersion: httpVersion ? `HTTP/${httpVersion}` : '',
-      status: parseInt(status, 10),
+      status: status,
       responseTime: responseTimeToken ? parseInt(responseTimeToken, 10) : 0,
       pod: '',
       direction: 'access',
       clientIp,
       referrer: referrer || '',
-      userAgent: userAgent || ''
+      userAgent: userAgent || '',
+      logger: clientIp,
+      level: status >= 400 ? 'ERROR' : 'INFO',
+      message: `${method} ${url} - ${status}`,
+      raw: line
     };
   }
 
@@ -564,9 +582,12 @@ async function* createRequestLogStreamFromLines(lines) {
  */
 function parseCDNLine(line) {
   try {
-    const obj = JSON.parse(line.trim());
+    const rawTrimmed = line.trim();
+    if (!rawTrimmed) return null;
+    const obj = JSON.parse(rawTrimmed);
     // Require timestamp and status - these are essential for analysis
     if (obj.timestamp && obj.status) {
+      const status = parseInt(obj.status);
       return {
         timestamp: obj.timestamp,
         ttfb: obj.ttfb,      // Time To First Byte - server processing time
@@ -585,12 +606,16 @@ function parseCDNLine(line) {
         cache: obj.cache,    // HIT/MISS/MODIFIED - cache efficiency indicator
         debug: obj.debug,
         resAge: obj.res_age, // Cache age in seconds
-        status: obj.status,
+        status: status,
         pop: obj.pop,        // Point of Presence - geographic location
         rules: obj.rules,   // CDN rules fired for this request
         alerts: obj.alerts,
         sample: obj.sample,
-        ddos: obj.ddos
+        ddos: obj.ddos,
+        logger: obj.host,
+        level: status >= 400 ? 'ERROR' : 'INFO',
+        message: `${obj.method} ${obj.url} [${obj.cache}]`,
+        raw: rawTrimmed
       };
     }
   } catch (e) {

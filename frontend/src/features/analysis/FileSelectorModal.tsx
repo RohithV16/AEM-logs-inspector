@@ -26,7 +26,7 @@ interface FileSelectorModalProps {
   title?: string;
 }
 
-const MAX_SELECTION = 10; // Increased for premium feel
+const MAX_SELECTION = 30; // Increased for batch analysis
 
 export function FileSelectorModal({ isOpen, onClose, onAnalyze, title = 'Select Files from Library' }: FileSelectorModalProps) {
   const [tree, setTree] = useState<FileTreeNode[]>([]);

@@ -1,4 +1,3 @@
-import React from 'react';
 import { isLogFile } from '../../utils/logFiltering';
 
 interface FileTreeNode {
