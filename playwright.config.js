@@ -28,7 +28,7 @@ module.exports = defineConfig({
 
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: 'http://localhost:3000',
+    baseURL: `http://localhost:${process.env.PORT || 3000}`,
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
@@ -50,7 +50,7 @@ module.exports = defineConfig({
      Locally, reuse a running server to speed up the dev loop. */
   webServer: {
     command: 'DEBUG_FILTERS=true node src/server.js > /tmp/server.log 2>&1',
-    port: 3000,
+    port: parseInt(process.env.PORT || '3000', 10),
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },

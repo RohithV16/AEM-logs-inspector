@@ -116,14 +116,23 @@ function cleanLoggerName(logger) {
 function derivePackageGroup(logger) {
   if (!logger) return null;
   const clean = cleanLoggerName(logger);
-  const parts = clean.split('.');
-  if (parts.length >= 3) {
-    return parts.slice(0, 3).join('.');
-  }
-  if (parts.length >= 2) {
+  
+  /* Handle hostnames and pod names as packages */
+  if (clean.includes('.')) {
+    const parts = clean.split('.');
+    /* If it looks like a reverse DNS (com.example...) or hostname (example.com) */
+    if (parts.length >= 3) {
+      return parts.slice(0, 3).join('.');
+    }
     return parts.slice(0, 2).join('.');
   }
-  return parts[0];
+  
+  /* If it's a pod name or simple string, take it as is or first segment if hyphenated */
+  if (clean.includes('-')) {
+    return clean.split('-').slice(0, 2).join('-');
+  }
+  
+  return clean;
 }
 
 function createEmptyErrorFilterStats() {
@@ -153,28 +162,37 @@ function addCount(bucket, key, amount = 1) {
 function collectErrorFilterStats(stats, entry) {
   const pkg = derivePackageGroup(entry.logger);
   
-
   if (entry.logger) {
     addCount(stats.loggers, entry.logger);
     if (pkg) addCount(stats.packages, pkg);
-  }
-  if (entry.httpMethod) {
-    addCount(stats.httpMethods, entry.httpMethod);
+  } else if (entry.pod) {
+    addCount(stats.loggers, entry.pod);
+    const podPkg = derivePackageGroup(entry.pod);
+    if (podPkg) addCount(stats.packages, podPkg);
+  } else if (entry.host) {
+    addCount(stats.loggers, entry.host);
+    const hostPkg = derivePackageGroup(entry.host);
+    if (hostPkg) addCount(stats.packages, hostPkg);
   }
 
-  const packageToken = entry.instanceId || entry.thread;
-  if (packageToken) {
-    if (entry.thread) addCount(stats.threads, entry.thread);
-    if (entry.instanceId) addCount(stats.pods, entry.instanceId);
-    if (pkg) {
-      if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
-      addCount(stats.packageThreads[pkg], packageToken);
-    }
+  if (entry.httpMethod || entry.method) {
+    addCount(stats.httpMethods, entry.httpMethod || entry.method);
+  }
+
+  const threadToken = entry.thread || entry.threadId;
+  if (threadToken) addCount(stats.threads, threadToken);
+  
+  const podToken = entry.instanceId || entry.pod;
+  if (podToken) addCount(stats.pods, podToken);
+
+  if (pkg && threadToken) {
+    if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
+    addCount(stats.packageThreads[pkg], threadToken);
   }
 
   const exceptionNames = [
-    ...extractExceptionNames(entry.message),
-    ...extractExceptionNames(entry.stackTrace)
+    ...(entry.message ? extractExceptionNames(entry.message) : []),
+    ...(entry.stackTrace ? extractExceptionNames(entry.stackTrace) : [])
   ];
   const uniqueExceptions = [...new Set(exceptionNames)];
 
@@ -187,7 +205,7 @@ function collectErrorFilterStats(stats, entry) {
   });
 
   if (entry.level === 'ERROR' || entry.level === 'WARN') {
-    const category = categorizeError(entry.message, entry.logger);
+    const category = categorizeError(entry.message || '', entry.logger || '');
     addCount(stats.categories, category);
   }
 
@@ -197,14 +215,22 @@ function collectErrorFilterStats(stats, entry) {
     if (entry.timestamp.includes('/') && entry.timestamp.includes(':')) {
       // Request log (CLF): DD/Mon/YYYY:HH:mm:ss -> DD/Mon/YYYY:HH
       hour = entry.timestamp.substring(0, 14);
+    } else if (entry.timestamp.includes('T')) {
+      // ISO/CDN: YYYY-MM-DDTHH:mm:ss -> YYYY-MM-DDTHH
+      hour = entry.timestamp.substring(0, 13);
     }
-    if (!stats.timeline[hour]) stats.timeline[hour] = { ERROR: 0, WARN: 0, total: 0 };
+
+    if (!stats.timeline[hour]) stats.timeline[hour] = { ERROR: 0, WARN: 0, total: 0, INFO: 0 };
     stats.timeline[hour].total++;
-    if (entry.level === 'ERROR') stats.timeline[hour].ERROR++;
-    if (entry.level === 'WARN') stats.timeline[hour].WARN++;
+    const level = entry.level || 'INFO';
+    if (stats.timeline[hour][level] !== undefined) {
+      stats.timeline[hour][level]++;
+    } else {
+      stats.timeline[hour][level] = 1;
+    }
 
     const date = entry.timestamp.substring(0, 10);
-    const hourNumber = parseInt(entry.timestamp.substring(11, 13), 10);
+    const hourNumber = parseInt(entry.timestamp.includes(' ') ? entry.timestamp.substring(11, 13) : entry.timestamp.substring(11, 13), 10);
     stats.hourlyHeatmap.days.add(date);
     if (!stats.hourlyHeatmap.heatmap[hourNumber]) stats.hourlyHeatmap.heatmap[hourNumber] = {};
     if (!stats.hourlyHeatmap.heatmap[hourNumber][date]) stats.hourlyHeatmap.heatmap[hourNumber][date] = 0;

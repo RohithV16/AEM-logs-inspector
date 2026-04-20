@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains the application code. Use `src/index.js` for the CLI entry point, `src/server.js` for the Express dashboard, `src/routes/` for API endpoints, `src/services/` for higher-level analysis and Cloud Manager logic, and `src/utils/` for shared helpers and constants. Frontend assets live in `public/` with the main UI in `public/index.html`, `public/app.js`, and `public/style.css`. Unit tests are under `tests/unit/`; browser and API integration coverage lives in `tests/e2e/`. Utility scripts are in `scripts/`, and planning/design notes are in `docs/`.
+`src/` contains the application code. Use `src/index.js` for the CLI entry point, `src/server.js` for the Express dashboard, `src/routes/` for API endpoints, `src/services/` for higher-level analysis and Cloud Manager logic, and `src/utils/` for shared helpers and constants. The frontend is a React application located in `frontend/`, which builds to a root `dist/` directory served by the Express server. Unit tests are under `tests/unit/`; browser and API integration coverage lives in `tests/e2e/`. Utility scripts are in `scripts/`, and planning/design notes are in `docs/`.
 
 ## Build, Test, and Development Commands
 - `npm start /path/to/log.log`: run the CLI analyzer against a local log file.

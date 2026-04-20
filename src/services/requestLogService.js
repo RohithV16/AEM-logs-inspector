@@ -162,8 +162,16 @@ async function analyzeRequestLog(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildRequestFilter(filters = {}) {
-  const { method, status, pod, minTime, maxTime, search } = filters;
-  const targetStatus = status ? Number(status) : null;
+  const { method, status, pod, minTime, maxTime, search, clientIp, referrer, userAgent, url } = filters;
+  
+  const methods = Array.isArray(method) ? method.map(m => String(m).toUpperCase()) : (method ? [String(method).toUpperCase()] : []);
+  const statuses = Array.isArray(status) ? status.map(s => Number(s)) : (status ? [Number(status)] : []);
+  const pods = Array.isArray(pod) ? pod.map(p => String(p)) : (pod ? [String(pod)] : []);
+  const clientIps = Array.isArray(clientIp) ? clientIp.map(c => String(c)) : (clientIp ? [String(clientIp)] : []);
+  const referrers = Array.isArray(referrer) ? referrer.map(r => String(r)) : (referrer ? [String(referrer)] : []);
+  const userAgents = Array.isArray(userAgent) ? userAgent.map(u => String(u)) : (userAgent ? [String(userAgent)] : []);
+  const filterUrls = Array.isArray(url) ? url.map(u => String(u)) : (url ? [String(url)] : []);
+  
   const targetMinTime = minTime ? Number(minTime) : null;
   const targetMaxTime = maxTime ? Number(maxTime) : null;
 
@@ -192,16 +200,32 @@ function buildRequestFilter(filters = {}) {
   return (entry) => {
     if (process.env.DEBUG_FILTERS) console.log('Filtering Request Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
     
-    if (method && entry.method !== method) {
-      if (process.env.DEBUG_FILTERS) console.log('Mismatch: method', entry.method, '!==', method);
+    if (methods.length > 0 && !methods.includes(String(entry.method || '').toUpperCase())) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: method', entry.method);
       return false;
     }
-    if (targetStatus && entry.status !== targetStatus) {
-      if (process.env.DEBUG_FILTERS) console.log('Mismatch: status', entry.status, '!==', targetStatus);
+    if (statuses.length > 0 && !statuses.includes(Number(entry.status))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: status', entry.status);
       return false;
     }
-    if (pod && entry.pod !== pod) {
-      if (process.env.DEBUG_FILTERS) console.log('Mismatch: pod', entry.pod, '!==', pod);
+    if (pods.length > 0 && !pods.includes(String(entry.pod || ''))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: pod', entry.pod);
+      return false;
+    }
+    if (clientIps.length > 0 && !clientIps.some(ip => String(entry.clientIp || '').includes(ip))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: clientIp', entry.clientIp);
+      return false;
+    }
+    if (referrers.length > 0 && !referrers.some(r => String(entry.referrer || '').includes(r))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: referrer', entry.referrer);
+      return false;
+    }
+    if (userAgents.length > 0 && !userAgents.some(u => String(entry.userAgent || '').toLowerCase().includes(u.toLowerCase()))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: userAgent', entry.userAgent);
+      return false;
+    }
+    if (filterUrls.length > 0 && !filterUrls.some(u => String(entry.url || '').toLowerCase().includes(u.toLowerCase()))) {
+      if (process.env.DEBUG_FILTERS) console.log('Mismatch: url', entry.url);
       return false;
     }
     if (targetMinTime && Number(entry.responseTime || 0) < targetMinTime) {
@@ -302,10 +326,17 @@ async function countAndExtractRequestEntries(filePath, filters = {}, page = 1, p
 async function countAndExtractRequestEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildRequestFilter(filters);
   const entries = [];
+  const uniqueMethods = new Set();
+  const uniqueStatuses = new Set();
+  const uniquePods = new Set();
   let skipped = (page - 1) * pageSize;
   let totalCount = 0;
 
   for await (const entry of stream) {
+    if (entry.method) uniqueMethods.add(entry.method);
+    if (entry.status) uniqueStatuses.add(String(entry.status));
+    if (entry.pod) uniquePods.add(entry.pod);
+    
     if (filter(entry)) {
       totalCount++;
       if (skipped > 0) {
@@ -316,7 +347,13 @@ async function countAndExtractRequestEntriesFromStream(stream, filters = {}, pag
     }
   }
 
-  return { entries, total: totalCount };
+  return { 
+    entries, 
+    total: totalCount,
+    methods: Array.from(uniqueMethods).sort(),
+    statuses: Array.from(uniqueStatuses).sort((a, b) => Number(a) - Number(b)),
+    pods: Array.from(uniquePods).sort()
+  };
 }
 
 module.exports = {

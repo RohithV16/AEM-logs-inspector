@@ -27,9 +27,11 @@ function createEventsRouter() {
     /* Destructure with defaults for pagination parameters */
     const { filePath, page = 1, perPage = 50, level, search, from, to,
             logger, thread, package: pkg, exception, category,
-            httpMethod, requestPath,
+            httpMethod, requestPath, url,
             method, httpStatus, minResponseTime, maxResponseTime, pod,
-            cache, clientCountry, pop, host, minTtfb, maxTtfb } = req.body;
+            clientIp, referrer, userAgent,
+            cache, clientCountry, pop, host, minTtfb, maxTtfb,
+            requestId, aemEnvKind, aemTenant, rules } = req.body;
 
     try {
       let targetPath;
@@ -45,10 +47,14 @@ function createEventsRouter() {
         logOptions: { levels: 'all' }
       });
 
-      /* Request log: filter by method, status, response time, pod */
+      /* Request log: filter by method, status, response time, pod, clientIp, referrer, userAgent, url */
       if (logType === 'request') {
-        const requestFilters = { search, from, to, method, status: httpStatus, minTime: minResponseTime, maxTime: maxResponseTime, pod };
-        const { total, entries: events } = stream
+        const requestFilters = { 
+          search, from, to, method, status: httpStatus, 
+          minTime: minResponseTime, maxTime: maxResponseTime, pod,
+          clientIp, referrer, userAgent, url 
+        };
+        const { total, entries: events, methods, statuses, pods, clientIps, referrers, userAgents, urls } = stream
           ? await countAndExtractRequestEntriesFromStream(stream, requestFilters, Number(page), Number(perPage))
           : await countAndExtractRequestEntries(targetPath, requestFilters, Number(page), Number(perPage));
 
@@ -59,14 +65,26 @@ function createEventsRouter() {
           perPage: Number(perPage),
           totalPages: Math.ceil(total / perPage),
           events,
-          logType: 'request'
+          logType: 'request',
+          methods,
+          statuses,
+          pods,
+          clientIps,
+          referrers,
+          userAgents,
+          urls
         });
       }
 
-      /* CDN log: filter by cache status, country, PoP, host, TTFB */
+      /* CDN log: filter by cache status, country, PoP, host, TTFB, requestId, aemEnvKind, aemTenant, rules, url */
       if (logType === 'cdn') {
-        const cdnFilters = { search, from, to, method, status: httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb };
-        const { total, entries: events } = stream
+        const cdnFilters = { 
+          search, from, to, method, status: httpStatus, 
+          cache, country: clientCountry, pop, host, 
+          minTtfb, maxTtfb,
+          requestId, aemEnvKind, aemTenant, rules, url
+        };
+        const { total, entries: events, methods, statuses, cacheStatuses, countries, pops, hosts, requestIds, aemEnvKinds, aemTenants, ruleSets, urls } = stream
           ? await countAndExtractCDNEntriesFromStream(stream, cdnFilters, Number(page), Number(perPage))
           : await countAndExtractCDNEntries(targetPath, cdnFilters, Number(page), Number(perPage));
 
@@ -77,7 +95,18 @@ function createEventsRouter() {
           perPage: Number(perPage),
           totalPages: Math.ceil(total / perPage),
           events,
-          logType: 'cdn'
+          logType: 'cdn',
+          methods,
+          statuses,
+          cacheStatuses,
+          countries,
+          pops,
+          hosts,
+          requestIds,
+          aemEnvKinds,
+          aemTenants,
+          ruleSets,
+          urls
         });
       }
 
@@ -89,9 +118,12 @@ function createEventsRouter() {
         }
       }
 
-      /* Build filter with support for level, logger, thread, pod, package, exception, category */
-      const activeFilters = { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath };
-      const { entries: events, total, levelCounts } = await extractPageWithBaseCounts(
+      /* Build filter with support for level, logger, thread, pod, package, exception, category, url */
+      const activeFilters = { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath, url };
+      const { 
+        entries: events, total, levelCounts, loggers, packages, threads, exceptions,
+        methods, statuses, pods, cacheStatuses, countries, pops, hosts, urls 
+      } = await extractPageWithBaseCounts(
         targetPath,
         activeFilters,
         Number(page),
@@ -107,6 +139,18 @@ function createEventsRouter() {
         totalPages: Math.ceil(total / perPage),
         events,
         levelCounts,
+        packages,
+        loggers,
+        threads,
+        exceptions,
+        methods,
+        statuses: (statuses || []).map(String),
+        pods,
+        cacheStatuses,
+        countries,
+        pops,
+        hosts,
+        urls,
         logType: 'error'
       });
     } catch (error) {

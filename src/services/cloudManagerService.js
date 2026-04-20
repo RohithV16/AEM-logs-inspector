@@ -5,6 +5,7 @@ const { execFile, spawn } = require('child_process');
 const readline = require('readline');
 const { detectLogSignature, detectLogTypeFromLine, parseLine, parseRequestLine, parseCDNLine } = require('../parser');
 const { isAllowedLogFile } = require('../utils/files');
+const { storeLogFile, getStorageDir } = require('../utils/logStorage');
 
 const AIO_BINARY = 'aio';
 const DATE_TOKEN_PATTERN = /(\d{4}[-_]\d{2}[-_]\d{2}|\d{2}[-_]\d{2}[-_]\d{4})/;
@@ -633,6 +634,36 @@ async function downloadLogs(options) {
       throw new Error('Cloud Manager did not produce any downloadable log files.');
     }
 
+    const storedFiles = [];
+    for (const filePath of downloadedFiles) {
+      const signature = await detectLogSignature(filePath);
+      const logType = signature.logType || 'error';
+      
+      try {
+        const stored = storeLogFile(filePath, {
+          programId: options.programId,
+          environmentId: options.environmentId,
+          logType: logType,
+          source: 'cloudmanager'
+        });
+        storedFiles.push({
+          originalPath: filePath,
+          storedPath: stored.storedPath,
+          logType: logType,
+          stored: true
+        });
+      } catch (storeError) {
+        console.error('Failed to store file:', storeError.message);
+        storedFiles.push({
+          originalPath: filePath,
+          storedPath: filePath,
+          logType: logType,
+          stored: false,
+          error: storeError.message
+        });
+      }
+    }
+
     const cacheTier = normalizeCloudManagerTier(options.service);
     const cachedFiles = downloadedFiles.map((filePath) => {
       const dateSegment = getFileDateSegment(filePath);
@@ -670,6 +701,7 @@ async function downloadLogs(options) {
       outputDirectory: environmentDirectory,
       environmentDirectory,
       downloadedFiles: cachedFiles,
+      storedFiles: storedFiles,
       analyzedFile,
       fileDates: extractDatesFromDownloadedFiles(cachedFiles),
       commandPreview: getAioCommandPreview(downloadCommand)

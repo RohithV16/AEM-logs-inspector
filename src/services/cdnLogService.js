@@ -194,8 +194,20 @@ async function analyzeCDNLog(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildCDNFilter(filters = {}) {
-  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb, from, to } = filters;
-  const targetStatus = status ? Number(status) : null;
+  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb, from, to, requestId, aemEnvKind, aemTenant, rules, url } = filters;
+  
+  const methods = Array.isArray(method) ? method.map(m => String(m).toUpperCase()) : (method ? [String(method).toUpperCase()] : []);
+  const statuses = Array.isArray(status) ? status.map(s => Number(s)) : (status ? [Number(status)] : []);
+  const caches = Array.isArray(cache) ? cache.map(c => String(c).toUpperCase()) : (cache ? [String(cache).toUpperCase()] : []);
+  const countries = Array.isArray(country) ? country.map(c => String(c).toUpperCase()) : (country ? [String(country).toUpperCase()] : []);
+  const pops = Array.isArray(pop) ? pop.map(p => String(p).toUpperCase()) : (pop ? [String(pop).toUpperCase()] : []);
+  const hosts = Array.isArray(host) ? host.map(h => String(h).toLowerCase()) : (host ? [String(host).toLowerCase()] : []);
+  const requestIds = Array.isArray(requestId) ? requestId.map(r => String(r)) : (requestId ? [String(requestId)] : []);
+  const envKinds = Array.isArray(aemEnvKind) ? aemEnvKind.map(e => String(e).toUpperCase()) : (aemEnvKind ? [String(aemEnvKind).toUpperCase()] : []);
+  const tenants = Array.isArray(aemTenant) ? aemTenant.map(t => String(t).toLowerCase()) : (aemTenant ? [String(aemTenant).toLowerCase()] : []);
+  const ruleSets = Array.isArray(rules) ? rules.map(r => String(r).toLowerCase()) : (rules ? [String(rules).toLowerCase()] : []);
+  const filterUrls = Array.isArray(url) ? url.map(u => String(u)) : (url ? [String(url)] : []);
+  
   const targetMinTtfb = minTtfb ? Number(minTtfb) : null;
   const targetMaxTtfb = maxTtfb ? Number(maxTtfb) : null;
   const targetMinTtlb = minTtlb ? Number(minTtlb) : null;
@@ -216,12 +228,19 @@ function buildCDNFilter(filters = {}) {
 
   return (entry) => {
     if (process.env.DEBUG_FILTERS) console.log('Filtering CDN Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));
-    if (method && entry.method !== method) return false;
-    if (targetStatus && entry.status !== targetStatus) return false;
-    if (cache && entry.cache !== cache) return false;
-    if (country && entry.clientCountry !== country) return false;
-    if (pop && entry.pop !== pop) return false;
-    if (host && entry.host !== host) return false;
+    
+    if (methods.length > 0 && !methods.includes(String(entry.method || '').toUpperCase())) return false;
+    if (statuses.length > 0 && !statuses.includes(Number(entry.status))) return false;
+    if (caches.length > 0 && !caches.includes(String(entry.cache || '').toUpperCase())) return false;
+    if (countries.length > 0 && !countries.includes(String(entry.clientCountry || '').toUpperCase())) return false;
+    if (pops.length > 0 && !pops.includes(String(entry.pop || '').toUpperCase())) return false;
+    if (hosts.length > 0 && !hosts.includes(String(entry.host || '').toLowerCase())) return false;
+    if (requestIds.length > 0 && !requestIds.some(id => String(entry.requestId || '').includes(id))) return false;
+    if (envKinds.length > 0 && !envKinds.includes(String(entry.aemEnvKind || '').toUpperCase())) return false;
+    if (tenants.length > 0 && !tenants.some(t => String(entry.aemTenant || '').toLowerCase().includes(t))) return false;
+    if (ruleSets.length > 0 && !ruleSets.some(r => String(entry.rules || '').toLowerCase().includes(r))) return false;
+    if (filterUrls.length > 0 && !filterUrls.some(u => String(entry.url || '').toLowerCase().includes(u.toLowerCase()))) return false;
+    
     if (targetMinTtfb && (entry.ttfb || 0) < targetMinTtfb) return false;
     if (targetMaxTtfb && (entry.ttfb || 0) > targetMaxTtfb) return false;
     if (targetMinTtlb && (entry.ttlb || 0) < targetMinTtlb) return false;
@@ -302,10 +321,23 @@ async function countAndExtractCDNEntries(filePath, filters = {}, page = 1, pageS
 async function countAndExtractCDNEntriesFromStream(stream, filters = {}, page = 1, pageSize = 50) {
   const filter = buildCDNFilter(filters);
   const entries = [];
+  const uniqueMethods = new Set();
+  const uniqueStatuses = new Set();
+  const uniqueCache = new Set();
+  const uniqueCountries = new Set();
+  const uniquePops = new Set();
+  const uniqueHosts = new Set();
   let skipped = (page - 1) * pageSize;
   let totalCount = 0;
 
   for await (const entry of stream) {
+    if (entry.method) uniqueMethods.add(entry.method);
+    if (entry.status) uniqueStatuses.add(String(entry.status));
+    if (entry.cache) uniqueCache.add(entry.cache);
+    if (entry.clientCountry) uniqueCountries.add(entry.clientCountry);
+    if (entry.pop) uniquePops.add(entry.pop);
+    if (entry.host) uniqueHosts.add(entry.host);
+    
     if (filter(entry)) {
       totalCount++;
       if (skipped > 0) {
@@ -316,7 +348,16 @@ async function countAndExtractCDNEntriesFromStream(stream, filters = {}, page = 
     }
   }
 
-  return { entries, total: totalCount };
+  return { 
+    entries, 
+    total: totalCount,
+    methods: Array.from(uniqueMethods).sort(),
+    statuses: Array.from(uniqueStatuses).sort((a, b) => Number(a) - Number(b)),
+    cacheStatuses: Array.from(uniqueCache).sort(),
+    countries: Array.from(uniqueCountries).sort(),
+    pops: Array.from(uniquePops).sort(),
+    hosts: Array.from(uniqueHosts).sort()
+  };
 }
 
 module.exports = {
