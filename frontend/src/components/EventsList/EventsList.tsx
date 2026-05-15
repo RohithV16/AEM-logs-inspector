@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRawEventsQuery } from '../../api/hooks'
+import { useLogContext } from '../../context/LogContext'
 import type { RawEvent } from '../../types'
 
 export function EventsList() {
@@ -7,12 +8,19 @@ export function EventsList() {
   const [perPage, setPerPage] = useState(50)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [pinned, setPinned] = useState<Set<string>>(new Set())
+  const { filePath, setTotalEvents } = useLogContext()
 
   const { data, isLoading, error } = useRawEventsQuery({
-    filePath: '',
+    filePath,
     page,
     perPage,
   })
+
+  useEffect(() => {
+    if (data?.total !== undefined) {
+      setTotalEvents(data.total)
+    }
+  }, [data, setTotalEvents])
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {

@@ -1,6 +1,7 @@
 import { useCallback, useState, useRef } from 'react'
 import { ThemeProvider } from './context/ThemeContext'
 import { ToastProvider } from './context/ToastContext'
+import { LogProvider, useLogContext } from './context/LogContext'
 import { ToastContainer } from './components/common/ToastContainer'
 import { KeyboardShortcutLayer } from './components/common/KeyboardShortcutLayer'
 import { Sidebar } from './components/Sidebar/Sidebar'
@@ -12,10 +13,11 @@ import { ChartsPanel } from './components/ChartsPanel/ChartsPanel'
 import { PinnedList } from './components/PinnedList/PinnedList'
 import type { ViewTab } from './types'
 
-function App() {
+function AppInner() {
   const [viewTab, setViewTab] = useState<ViewTab>('events')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const { payload, totalEvents } = useLogContext()
 
   const handleSearchFocus = useCallback(() => {
     searchRef.current?.focus()
@@ -53,12 +55,20 @@ function App() {
               {viewTab === 'charts' && <ChartsPanel />}
               {viewTab === 'pinned' && <PinnedList />}
             </div>
-            <ExportBar />
+            <ExportBar payload={payload} totalEvents={totalEvents} />
           </div>
         </div>
         <ToastContainer />
       </ToastProvider>
     </ThemeProvider>
+  )
+}
+
+function App() {
+  return (
+    <LogProvider>
+      <AppInner />
+    </LogProvider>
   )
 }
 

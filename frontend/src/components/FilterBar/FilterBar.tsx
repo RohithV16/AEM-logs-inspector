@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { normalizeDateTimeForApi, validateDateString } from '../../utils/dates'
 import { isSafeRegexSync } from '../../utils/regex'
 import { getSearchLabel } from '../../utils/files'
+import { useLogContext } from '../../context/LogContext'
 
 interface FilterBarProps {
   searchRef: React.RefObject<HTMLInputElement | null>
@@ -14,6 +15,7 @@ export function FilterBar({ searchRef }: FilterBarProps) {
   const [regexMode, setRegexMode] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [dateError, setDateError] = useState<string | null>(null)
+  const { filePath, setPayload } = useLogContext()
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
@@ -26,7 +28,7 @@ export function FilterBar({ searchRef }: FilterBarProps) {
     }
   }
 
-  const handleApply = () => {
+  const handleApply = useCallback(() => {
     if (startDate) {
       const r = validateDateString(startDate)
       if (!r.valid) { setDateError(r.error || null); return }
@@ -36,12 +38,20 @@ export function FilterBar({ searchRef }: FilterBarProps) {
       if (!r.valid) { setDateError(r.error || null); return }
     }
     setDateError(null)
-    if (startDate && endDate) {
-      const from = normalizeDateTimeForApi(new Date(startDate))
-      const to = normalizeDateTimeForApi(new Date(endDate))
-      console.debug('Filter range:', from, 'to', to)
+    const filters: Record<string, unknown> = {}
+    if (startDate) {
+      filters.startDate = normalizeDateTimeForApi(new Date(startDate))
     }
-  }
+    if (endDate) {
+      filters.endDate = normalizeDateTimeForApi(new Date(endDate))
+    }
+    if (search) {
+      filters.search = search
+    }
+    if (filePath) {
+      setPayload({ filePath, filters })
+    }
+  }, [startDate, endDate, search, filePath, setPayload])
 
   return (
     <div className="filter-bar" data-testid="filter-bar">

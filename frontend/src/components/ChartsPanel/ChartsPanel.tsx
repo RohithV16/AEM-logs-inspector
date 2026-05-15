@@ -1,7 +1,9 @@
 import { useFilterQuery } from '../../api/hooks'
+import { useLogContext } from '../../context/LogContext'
 
 export function ChartsPanel() {
-  const { data, isLoading, error } = useFilterQuery({ filePath: '', filters: {} })
+  const { filePath } = useLogContext()
+  const { data, isLoading, error } = useFilterQuery({ filePath, filters: {} }, !!filePath)
 
   if (isLoading) {
     return (
