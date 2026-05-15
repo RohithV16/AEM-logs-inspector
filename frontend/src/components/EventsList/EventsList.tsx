@@ -100,11 +100,11 @@ export function EventsList() {
             className={`event-row ${expanded.has(event.id) ? 'expanded' : ''}`}
           >
             <div className="event-header" onClick={() => toggleExpand(event.id)}>
-              <span className={`event-level level-${event.level.toLowerCase()}`}>
-                {event.level}
+              <span className={`event-level level-${(event.level || 'INFO').toLowerCase()}`}>
+                {event.level || '-'}
               </span>
-              <span className="event-timestamp">{event.timestamp}</span>
-              <span className="event-message">{event.message}</span>
+              <span className="event-timestamp">{event.timestamp || ''}</span>
+              <span className="event-message">{event.message || event.url || ''}</span>
               <div className="event-actions">
                 <button
                   className="pin-btn"

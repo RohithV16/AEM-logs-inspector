@@ -1,18 +1,41 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useFilterQuery } from '../../api/hooks'
 import { useLogContext } from '../../context/LogContext'
+
+function toArray(obj: Record<string, number> | undefined | { name: string; count: number }[]): { name: string; count: number }[] {
+  if (!obj) return []
+  if (Array.isArray(obj)) return obj
+  return Object.entries(obj).map(([name, count]) => ({ name, count }))
+}
+
+interface TimelineEntry { date: string; count: number }
+
+function timelineToArray(timeline: unknown): TimelineEntry[] {
+  if (!timeline) return []
+  if (Array.isArray(timeline)) return timeline as TimelineEntry[]
+  if (typeof timeline === 'object') {
+    return Object.entries(timeline).map(([date, val]) => ({
+      date,
+      count: typeof val === 'number' ? val : (val as Record<string, number>)?.total ?? 0,
+    }))
+  }
+  return []
+}
 
 export function ChartsPanel() {
   const { filePath, setFilterMeta } = useLogContext()
   const { data, isLoading, error } = useFilterQuery({ filePath, filters: {} }, !!filePath)
 
+  const timeline = useMemo(() => timelineToArray(data?.timeline), [data?.timeline])
+  const loggers = useMemo(() => toArray(data?.loggers), [data?.loggers])
+
   useEffect(() => {
     if (data && data.success) {
       setFilterMeta({
-        packages: data.packages || [],
-        loggers: data.loggers || [],
-        threads: data.threads || [],
-        exceptions: data.exceptions || [],
+        packages: toArray(data.packages),
+        loggers: toArray(data.loggers),
+        threads: toArray(data.threads),
+        exceptions: toArray(data.exceptions),
       })
     }
   }, [data, setFilterMeta])
@@ -47,9 +70,9 @@ export function ChartsPanel() {
     <div className="charts-panel" data-testid="charts-panel">
       <div className="chart-container" data-testid="chart-timeline">
         <h3>Timeline</h3>
-        {data.timeline && data.timeline.length > 0 ? (
+        {timeline.length > 0 ? (
           <div className="timeline-chart-placeholder">
-            {data.timeline.map((t) => (
+            {timeline.map((t) => (
               <div key={t.date} className="timeline-bar" style={{ height: `${Math.min(100, t.count)}px` }}>
                 <span className="timeline-label">{t.date}</span>
               </div>
@@ -62,9 +85,9 @@ export function ChartsPanel() {
 
       <div className="chart-container" data-testid="chart-loggers">
         <h3>Loggers</h3>
-        {data.loggers && data.loggers.length > 0 ? (
+        {loggers.length > 0 ? (
           <ul className="logger-list">
-            {data.loggers.map((l) => (
+            {loggers.map((l) => (
               <li key={l.name}>{l.name}: {l.count}</li>
             ))}
           </ul>
