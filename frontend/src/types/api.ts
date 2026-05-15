@@ -53,6 +53,8 @@ export interface FilterResponse {
   timeline?: { date: string; count: number }[]
   loggers?: { name: string; count: number }[]
   threads?: { name: string; count: number }[]
+  packages?: { name: string; count: number }[]
+  exceptions?: { name: string; count: number }[]
   hourly?: { hour: number; count: number }[]
   levelCounts?: Record<string, number>
 }

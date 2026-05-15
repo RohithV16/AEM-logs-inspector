@@ -8,7 +8,7 @@ export function EventsList() {
   const [perPage, setPerPage] = useState(50)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [pinned, setPinned] = useState<Set<string>>(new Set())
-  const { filePath, setTotalEvents } = useLogContext()
+  const { filePath, setTotalEvents, setLevelCounts } = useLogContext()
 
   const { data, isLoading, error } = useRawEventsQuery({
     filePath,
@@ -17,10 +17,15 @@ export function EventsList() {
   })
 
   useEffect(() => {
-    if (data?.total !== undefined) {
-      setTotalEvents(data.total)
+    if (data) {
+      if (data.total !== undefined) {
+        setTotalEvents(data.total)
+      }
+      if (data.levelCounts) {
+        setLevelCounts(data.levelCounts)
+      }
     }
-  }, [data, setTotalEvents])
+  }, [data, setTotalEvents, setLevelCounts])
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {

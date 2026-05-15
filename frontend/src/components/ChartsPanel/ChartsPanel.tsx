@@ -1,9 +1,21 @@
+import { useEffect } from 'react'
 import { useFilterQuery } from '../../api/hooks'
 import { useLogContext } from '../../context/LogContext'
 
 export function ChartsPanel() {
-  const { filePath } = useLogContext()
+  const { filePath, setFilterMeta } = useLogContext()
   const { data, isLoading, error } = useFilterQuery({ filePath, filters: {} }, !!filePath)
+
+  useEffect(() => {
+    if (data && data.success) {
+      setFilterMeta({
+        packages: data.packages || [],
+        loggers: data.loggers || [],
+        threads: data.threads || [],
+        exceptions: data.exceptions || [],
+      })
+    }
+  }, [data, setFilterMeta])
 
   if (isLoading) {
     return (

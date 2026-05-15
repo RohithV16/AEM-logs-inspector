@@ -1,31 +1,46 @@
 import { LevelChips } from './LevelChips'
+import { useLogContext } from '../../context/LogContext'
 
 export function FilterSidebar() {
+  const { levelCounts, filterMeta } = useLogContext()
+
   return (
     <div className="filter-sidebar" data-testid="filter-sidebar">
-      <LevelChips />
+      <LevelChips levelCounts={levelCounts} />
       <div className="filter-group">
         <label>Package</label>
         <select multiple data-testid="package-select" className="filter-select">
-          <option value="">Select packages...</option>
+          {filterMeta.packages.length === 0 && <option value="">Select packages...</option>}
+          {filterMeta.packages.map((p) => (
+            <option key={p.name} value={p.name}>{p.name} ({p.count})</option>
+          ))}
         </select>
       </div>
       <div className="filter-group">
         <label>Logger</label>
         <select multiple data-testid="logger-select" className="filter-select">
-          <option value="">Select loggers...</option>
+          {filterMeta.loggers.length === 0 && <option value="">Select loggers...</option>}
+          {filterMeta.loggers.map((l) => (
+            <option key={l.name} value={l.name}>{l.name} ({l.count})</option>
+          ))}
         </select>
       </div>
       <div className="filter-group">
         <label>Thread / Pod</label>
         <select data-testid="thread-select" className="filter-select">
-          <option value="">Select thread...</option>
+          {filterMeta.threads.length === 0 && <option value="">Select thread...</option>}
+          {filterMeta.threads.map((t) => (
+            <option key={t.name} value={t.name}>{t.name} ({t.count})</option>
+          ))}
         </select>
       </div>
       <div className="filter-group">
         <label>Exception</label>
         <select data-testid="exception-select" className="filter-select">
-          <option value="">Select exception...</option>
+          {filterMeta.exceptions.length === 0 && <option value="">Select exception...</option>}
+          {filterMeta.exceptions.map((e) => (
+            <option key={e.name} value={e.name}>{e.name} ({e.count})</option>
+          ))}
         </select>
       </div>
       <div className="filter-group">
