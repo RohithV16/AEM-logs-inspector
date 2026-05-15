@@ -25,7 +25,8 @@
     "test:e2e:headed": "playwright test --headed",
     "test:api": "node scripts/test-api.js",
     "test:api:start": "npm run dashboard & PID=$!; sleep 3; node scripts/test-api.js; kill $PID",
-    "lint": "eslint src/**/*.js"
+    "lint": "eslint src/**/*.js",
+    "build:frontend": "cd frontend && npm run build"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

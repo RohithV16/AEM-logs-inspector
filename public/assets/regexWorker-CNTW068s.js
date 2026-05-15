@@ -1,0 +1,1 @@
+(function(){self.onmessage=function(e){let{pattern:t}=e.data;try{new RegExp(t).test(`quick-check-input`),self.postMessage({ok:!0})}catch(e){self.postMessage({ok:!1,error:e.message})}}})();
