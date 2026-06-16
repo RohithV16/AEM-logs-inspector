@@ -7,13 +7,14 @@ export function EventsList() {
   const [page, setPage] = useState(1)
   const [perPage, setPerPage] = useState(50)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const [pinned, setPinned] = useState<Set<string>>(new Set())
-  const { filePath, setTotalEvents, setLevelCounts } = useLogContext()
+  const { filePath, setTotalEvents, setLevelCounts, payload, pinnedEvents, addPinnedEvent, removePinnedEvent } = useLogContext()
+  const pinned = new Set(pinnedEvents.map((e) => e.id))
 
   const { data, isLoading, error } = useRawEventsQuery({
     filePath,
     page,
     perPage,
+    ...payload.filters,
   })
 
   useEffect(() => {
@@ -27,6 +28,13 @@ export function EventsList() {
     }
   }, [data, setTotalEvents, setLevelCounts])
 
+  const [activeTab, setActiveTab] = useState<Record<string, 'stack' | 'json'>>({})
+
+  useEffect(() => {
+    setExpanded(new Set())
+    setActiveTab({})
+  }, [filePath])
+
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -36,13 +44,12 @@ export function EventsList() {
     })
   }
 
-  const togglePin = (id: string) => {
-    setPinned((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
+  const togglePin = (event: RawEvent) => {
+    if (pinned.has(event.id)) {
+      removePinnedEvent(event.id)
+    } else {
+      addPinnedEvent(event)
+    }
   }
 
   const copyJson = (event: RawEvent) => {
@@ -51,7 +58,7 @@ export function EventsList() {
 
   if (isLoading) {
     return (
-      <div className="events-list" data-testid="events-list">
+      <div className="raw-events-section" data-testid="events-list">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="event-skeleton" />
         ))}
@@ -61,26 +68,26 @@ export function EventsList() {
 
   if (error) {
     return (
-      <div className="events-list-error" data-testid="events-list">
+      <div className="error-message" data-testid="events-list">
         <p>Failed to load events. {(error as Error).message}</p>
         <button onClick={() => setPage(1)}>Retry</button>
       </div>
     )
   }
 
-  if (!data || data.events.length === 0) {
+  if (!data || !Array.isArray(data.events) || data.events.length === 0) {
     return (
-      <div className="events-list-empty" data-testid="events-list">
+      <div className="empty-state" data-testid="events-list">
         <p>No events found. Try adjusting your filters.</p>
       </div>
     )
   }
 
-  const totalPages = data.totalPages || 1
+  const totalPages = Math.max(1, data.totalPages || 1)
 
   return (
-    <div className="events-list" data-testid="events-list">
-      <div className="events-list-header">
+    <div className="raw-events-section" data-testid="events-list">
+      <div className="pagination-header">
         <span>{data.total} events</span>
         <select
           data-testid="per-page"
@@ -97,23 +104,23 @@ export function EventsList() {
         {data.events.map((event) => (
           <div
             key={event.id}
-            className={`event-row ${expanded.has(event.id) ? 'expanded' : ''}`}
+            className={`raw-event ${expanded.has(event.id) ? 'expanded' : ''}`}
           >
-            <div className="event-header" onClick={() => toggleExpand(event.id)}>
-              <span className={`event-level level-${(event.level || 'INFO').toLowerCase()}`}>
+            <div className="raw-event-header" onClick={() => toggleExpand(event.id)}>
+              <span className={`level-badge ${(event.level || 'INFO').toUpperCase()}`}>
                 {event.level || '-'}
               </span>
-              <span className="event-timestamp">{event.timestamp || ''}</span>
+              <span className="event-time">{event.timestamp || ''}</span>
               <span className="event-message">{event.message || event.url || ''}</span>
               <div className="event-actions">
                 <button
-                  className="pin-btn"
-                  onClick={(e) => { e.stopPropagation(); togglePin(event.id) }}
+                  className="raw-event-pin"
+                  onClick={(e) => { e.stopPropagation(); togglePin(event) }}
                 >
                   {pinned.has(event.id) ? '\u2605' : '\u2606'}
                 </button>
                 <button
-                  className="copy-btn"
+                  className="copy-stack-btn"
                   onClick={(e) => { e.stopPropagation(); copyJson(event) }}
                 >
                   Copy JSON
@@ -122,13 +129,26 @@ export function EventsList() {
             </div>
 
             {expanded.has(event.id) && (
-              <div className="event-detail">
-                <div className="detail-tabs">
-                  <div className="detail-tab active">Stack Trace</div>
-                  <div className="detail-tab">JSON</div>
+              <div className="event-details">
+                <div className="event-details-tabs">
+                  <div
+                    className={'detail-tab' + (activeTab[event.id] === 'json' ? '' : ' active')}
+                    onClick={(e) => { e.stopPropagation(); setActiveTab((prev) => ({ ...prev, [event.id]: 'stack' })) }}
+                  >
+                    Stack Trace
+                  </div>
+                  <div
+                    className={'detail-tab' + (activeTab[event.id] === 'json' ? ' active' : '')}
+                    onClick={(e) => { e.stopPropagation(); setActiveTab((prev) => ({ ...prev, [event.id]: 'json' })) }}
+                  >
+                    JSON
+                  </div>
                 </div>
                 <pre className="detail-content">
-                  {event.stackTrace || 'No stack trace available'}
+                  {activeTab[event.id] === 'json'
+                    ? JSON.stringify(event, null, 2)
+                    : (event.stackTrace || 'No stack trace available')
+                  }
                 </pre>
               </div>
             )}

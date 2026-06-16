@@ -17,7 +17,7 @@ export function LevelChips({ levelCounts, onLevelChange }: LevelChipsProps) {
   }
 
   return (
-    <div className="level-chips" data-testid="level-chips">
+    <div className="level-filters" data-testid="level-chips">
       {LEVELS.map((level) => {
         const count = level === 'ALL'
           ? undefined
@@ -27,11 +27,11 @@ export function LevelChips({ levelCounts, onLevelChange }: LevelChipsProps) {
           <button
             key={level}
             data-testid={`level-chip-${level.toLowerCase()}`}
-            className={`level-chip ${isActive ? 'active' : ''} ${level === 'ALL' ? 'level-all' : `level-${level.toLowerCase()}`}`}
+            className={`level-chip ${isActive ? 'active' : ''} ${level === 'ALL' ? '' : level.toLowerCase()}`}
             onClick={() => handleClick(level)}
           >
             {level}
-            {count !== undefined && <span className="chip-count">{count}</span>}
+            {count !== undefined && <span>{count}</span>}
           </button>
         )
       })}

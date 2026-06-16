@@ -1,4 +1,5 @@
 /* === Imports === */
+const crypto = require('crypto');
 const express = require('express');
 const { detectLogTypeAndCreateStream } = require('../parser');
 const { buildEntryFilter, extractPageWithBaseCounts } = require('../services/errorLogService');
@@ -14,6 +15,14 @@ function withoutLevelFilter(filters = {}) {
   return normalized;
 }
 
+function validatePagination(page, perPage) {
+  let p = Number(page);
+  let pp = Number(perPage);
+  if (!Number.isFinite(p) || p < 1) p = 1;
+  if (!Number.isFinite(pp) || pp < 1) pp = 50;
+  return { page: p, perPage: pp };
+}
+
 /**
  * Creates the events router with endpoints for paginated log event retrieval
  * @returns {express.Router} Express router with events endpoints
@@ -25,11 +34,14 @@ function createEventsRouter() {
   /* Paginated endpoint for retrieving individual log entries with optional filtering */
   router.post('/raw-events', async (req, res) => {
     /* Destructure with defaults for pagination parameters */
-    const { filePath, page = 1, perPage = 50, level, search, from, to,
+    const { filePath, page = 1, perPage = 50, level, search,
+            from, to, startDate, endDate,
             logger, thread, package: pkg, exception, category,
             httpMethod, requestPath,
             method, httpStatus, minResponseTime, maxResponseTime, pod,
             cache, clientCountry, pop, host, minTtfb, maxTtfb } = req.body;
+
+    const { page: safePage, perPage: safePerPage } = validatePagination(page, perPage);
 
     try {
       let targetPath;
@@ -47,17 +59,22 @@ function createEventsRouter() {
 
       /* Request log: filter by method, status, response time, pod */
       if (logType === 'request') {
-        const requestFilters = { search, from, to, method, status: httpStatus, minTime: minResponseTime, maxTime: maxResponseTime, pod };
-        const { total, entries: events } = stream
-          ? await countAndExtractRequestEntriesFromStream(stream, requestFilters, Number(page), Number(perPage))
-          : await countAndExtractRequestEntries(targetPath, requestFilters, Number(page), Number(perPage));
+        const requestDateFrom = from || startDate;
+        const requestDateTo = to || endDate;
+        const requestFilters = { search, from: requestDateFrom, to: requestDateTo, method, status: httpStatus, minTime: minResponseTime, maxTime: maxResponseTime, pod };
+        const { total, entries: rawEvents } = stream
+          ? await countAndExtractRequestEntriesFromStream(stream, requestFilters, safePage, safePerPage)
+          : await countAndExtractRequestEntries(targetPath, requestFilters, safePage, safePerPage);
+
+        const events = rawEvents.map((ev, i) => ({ ...ev, id: crypto.randomUUID() }));
+        const totalPages = Math.ceil(total / safePerPage);
 
         return res.json({
           success: true,
           total,
-          page: Number(page),
-          perPage: Number(perPage),
-          totalPages: Math.ceil(total / perPage),
+          page: safePage,
+          perPage: safePerPage,
+          totalPages: Number.isFinite(totalPages) ? totalPages : 1,
           events,
           logType: 'request'
         });
@@ -65,17 +82,22 @@ function createEventsRouter() {
 
       /* CDN log: filter by cache status, country, PoP, host, TTFB */
       if (logType === 'cdn') {
-        const cdnFilters = { search, from, to, method, status: httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb };
-        const { total, entries: events } = stream
-          ? await countAndExtractCDNEntriesFromStream(stream, cdnFilters, Number(page), Number(perPage))
-          : await countAndExtractCDNEntries(targetPath, cdnFilters, Number(page), Number(perPage));
+        const cdnDateFrom = from || startDate;
+        const cdnDateTo = to || endDate;
+        const cdnFilters = { search, from: cdnDateFrom, to: cdnDateTo, method, status: httpStatus, cache, country: clientCountry, pop, host, minTtfb, maxTtfb };
+        const { total, entries: rawEvents } = stream
+          ? await countAndExtractCDNEntriesFromStream(stream, cdnFilters, safePage, safePerPage)
+          : await countAndExtractCDNEntries(targetPath, cdnFilters, safePage, safePerPage);
+
+        const events = rawEvents.map((ev) => ({ ...ev, id: crypto.randomUUID() }));
+        const totalPages = Math.ceil(total / safePerPage);
 
         return res.json({
           success: true,
           total,
-          page: Number(page),
-          perPage: Number(perPage),
-          totalPages: Math.ceil(total / perPage),
+          page: safePage,
+          perPage: safePerPage,
+          totalPages: Number.isFinite(totalPages) ? totalPages : 1,
           events,
           logType: 'cdn'
         });
@@ -90,21 +112,26 @@ function createEventsRouter() {
       }
 
       /* Build filter with support for level, logger, thread, pod, package, exception, category */
-      const activeFilters = { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath };
-      const { entries: events, total, levelCounts } = await extractPageWithBaseCounts(
+      const errDateFrom = from || startDate;
+      const errDateTo = to || endDate;
+      const activeFilters = { level, search, from: errDateFrom, to: errDateTo, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath };
+      const { entries: rawEvents, total, levelCounts } = await extractPageWithBaseCounts(
         targetPath,
         activeFilters,
-        Number(page),
-        Number(perPage)
+        safePage,
+        safePerPage
       );
+
+      const events = rawEvents.map((ev) => ({ ...ev, id: crypto.randomUUID() }));
+      const totalPages = Math.ceil(total / safePerPage);
 
       /* Return paginated results with total count and level counts for filter chips */
       res.json({
         success: true,
         total,
-        page: Number(page),
-        perPage: Number(perPage),
-        totalPages: Math.ceil(total / perPage),
+        page: safePage,
+        perPage: safePerPage,
+        totalPages: Number.isFinite(totalPages) ? totalPages : 1,
         events,
         levelCounts,
         logType: 'error'

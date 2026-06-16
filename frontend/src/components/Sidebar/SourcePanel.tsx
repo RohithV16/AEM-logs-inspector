@@ -8,7 +8,7 @@ interface SourcePanelProps {
 export function SourcePanel({ mode, onModeChange }: SourcePanelProps) {
   return (
     <div className="source-panel">
-      <div className="source-mode-toggle">
+      <div className="source-mode-switch">
         <button
           data-testid="source-mode-local"
           className={`source-mode-btn ${mode === 'local' ? 'active' : ''}`}

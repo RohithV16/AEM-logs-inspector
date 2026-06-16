@@ -8,7 +8,7 @@ const zlib = require('zlib');
  * Example: 05.04.2026 00:00:00.000 [cm-p167805-e1796674-aem-author-5795b955bb-6slp7] *INFO* [sling-default-5-...] com.example.Logger msg
  * Groups: 1=timestamp, 2=pod, 3=level, 4=thread, 5=loggerCandidate, 6=messageCandidate
  */
-const LOG_PATTERN_CLOUD = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[(cm-p[^\]]+)\] \*(\w+)\* \[([^\]]+)\] (?:([a-zA-Z][a-zA-Z0-9_.<>$]*) )?([\s\S]+)$/;
+const LOG_PATTERN_CLOUD = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([a-z]+-p[^\]]+)\] \*(\w+)\* \[([^\]]+)\] (?:([a-zA-Z][a-zA-Z0-9_.<>$]*) )?([\s\S]*)$/;
 
 /**
  * Simple logger format: timestamp [thread-id] *LEVEL* [logger-class] message
@@ -16,7 +16,7 @@ const LOG_PATTERN_CLOUD = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[(cm
  * Example: 29.03.2026 00:00:00.000 [thread-1] *ERROR* [com.example.Component] Something went wrong
  * Groups: 1=timestamp, 2=thread, 3=level, 4=logger, 5=message
  */
-const LOG_PATTERN_SIMPLE = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] (.+)$/;
+const LOG_PATTERN_SIMPLE = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[([^\]]+)\] (.*)$/;
 
 /**
  * HTTP context format: timestamp [thread-id] *LEVEL* [ip [requestId] METHOD path HTTP/version] logger message
@@ -25,29 +25,32 @@ const LOG_PATTERN_SIMPLE = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([
  * Example: 09.02.2026 23:59:07.330 [qtp-1] *ERROR* [208.127.46.120 [1770681547310] GET /content/site HTTP/1.1] com.example.Logger msg
  * Groups: 1=timestamp, 2=thread, 3=level, 4=threadName(=ip context), 5=loggerCandidate, 6=message
  */
-const LOG_PATTERN_HTTP = /^(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}\.\d{3}) \[([^\]]+)\] \*(\w+)\* \[(\d{1,3}(?:\.\d{1,3}){3} \[\d+\] (?:HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) \S+ HTTP\/[\d.]+)\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.+)$/;
-const LOG_PATTERN_ISO = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\s+\*(\w+)\*\s+([a-zA-Z][a-zA-Z0-9_.<>$]*)?\s*(.+)$/;
+const HTTP_METHODS_RAW = 'HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS|CONNECT|TRACE|PURGE|LOCK|UNLOCK|PROPFIND|PROPPATCH|MKCOL|COPY|MOVE|SEARCH|SUBSCRIBE|UNSUBSCRIBE|NOTIFY';
+const LOG_PATTERN_HTTP = new RegExp('^(\\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}) \\[([^\\]]+)\\] \\*(\\w+)\\* \\[(\\d{1,3}(?:\\.\\d{1,3}){3} \\[\\d+\\] (?:' + HTTP_METHODS_RAW + ') \\S+ HTTP\\/[\\d.]+)\\] ([a-zA-Z][a-zA-Z0-9_.<>]*) (.*)$');
+const LOG_PATTERN_ISO = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:Z|[+-]\d{2}:\d{2}))\s+\*(\w+)\*\s+([a-zA-Z][a-zA-Z0-9_.<>$]*)?\s*(.*)$/;
 
 /* === Request Log Patterns === */
 /**
  * Outbound request line: timestamp [thread-id] -> METHOD URL HTTP/version [pod]
  * Used by AEM request logs to track outgoing requests from dispatcher/publish
  */
-const REQUEST_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\d+)\] -> (HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) (\S+) (HTTP\/[\d.]+) \[([^\]]+)\]$/;
+const REQUEST_PATTERN = new RegExp('^(\\d{2}\\/\\w{3}\\/\\d{4}:\\d{2}:\\d{2}:\\d{2} [+-]\\d{4}) \\[(\\d+)\\] -> (' + HTTP_METHODS_RAW + ') (\\S+) (HTTP\\/[\\d.]+) \\[([^\\]]+)\\]$');
 /**
  * Inbound response line: timestamp [thread-id] <- STATUS content-type response-time-ms [pod]
  * Used to capture response status and timing from AEM instances
  */
 const RESPONSE_PATTERN = /^(\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) \[(\d+)\] <- (\d{3}) (.+?) (\d+)ms \[([^\]]+)\]$/;
-const APACHE_ACCESS_PATTERN = /^(\S+) \S+ \S+ \[([^\]]+)\] "(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS) (\S+)(?: HTTP\/([\d.]+))?" (\d{3}) (\S+)(?: "([^"]*)" "([^"]*)")?(?: (\d+))?$/;
-const ERROR_LOG_REQUEST_CONTEXT_PATTERN = /(?:^|]\s)(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS)\s+(\S+)\s+HTTP\/[\d.]+$/;
+const APACHE_ACCESS_PATTERN = new RegExp('^(\\S+) \\S+ \\S+ \\[([^\\]]+)\\] "(' + HTTP_METHODS_RAW + ') (\\S+)(?: HTTP\\/([\\d.]+))?" (\\d{3}) (\\S+)(?: "([^"]*)" "([^"]*)")?(?: (\\d+))?$');
+const ERROR_LOG_REQUEST_CONTEXT_PATTERN = new RegExp('(?:^|]\\s)(HEAD|GET|POST|PUT|DELETE|PATCH|OPTIONS|CONNECT|TRACE|PURGE|LOCK|UNLOCK|PROPFIND|PROPPATCH|MKCOL|COPY|MOVE|SEARCH|SUBSCRIBE|UNSUBSCRIBE|NOTIFY)\\s+(\\S+)\\s+HTTP\\/[\\d.]+$');
 const STREAM_HIGH_WATER_MARK = 512 * 1024;
 const MAX_SIGNATURE_SAMPLE_LINES = 3;
+const LOG_LEVELS = new Set(['ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'FATAL']);
 
 function isLikelyLoggerToken(token) {
   const value = String(token || '').trim();
   if (!value) return false;
   if (!/^[a-zA-Z][a-zA-Z0-9_.<>$]*$/.test(value)) return false;
+  if (LOG_LEVELS.has(value.toUpperCase())) return false;
   return value.includes('.') || value.includes('$') || value.includes('<') || value.includes('>') || /[A-Z]/.test(value);
 }
 
@@ -317,7 +320,8 @@ function parseLogFile(filePath) {
   const entries = [];
   let current = null;
   
-  for (const line of lines) {
+  for (let line of lines) {
+    line = line.replace(/\r$/, '');
     const parsed = parseLine(line);
     if (parsed) {
       // New log entry starts - flush previous entry with accumulated stack trace
@@ -348,7 +352,8 @@ function parseAllLevels(filePath) {
   const entries = [];
   let current = null;
   
-  for (const line of lines) {
+  for (let line of lines) {
+    line = line.replace(/\r$/, '');
     const parsed = parseLine(line);
     if (parsed) {
       if (current) entries.push(current);

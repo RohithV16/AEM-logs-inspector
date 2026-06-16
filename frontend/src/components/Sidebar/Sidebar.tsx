@@ -19,7 +19,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       data-testid="sidebar"
     >
       <button
-        className="sidebar-toggle"
+        className="sidebar-toggle-btn"
         data-testid="sidebar-toggle"
         onClick={onToggle}
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -28,11 +28,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </button>
 
       {!collapsed && (
-        <>
+        <div className="upload-card">
           <SourcePanel mode={sourceMode} onModeChange={setSourceMode} />
           {sourceMode === 'cloudmanager' ? <CloudManagerPanel /> : <FileInput />}
           <LocalDownloadsPopover />
-        </>
+        </div>
       )}
     </aside>
   )

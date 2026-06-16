@@ -151,6 +151,16 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
   const httpMethods = {};
   const packageThreads = {};
   const packageExceptions = {};
+  const packageLoggers = {};
+  const loggerThreads = {};
+  const loggerExceptions = {};
+  const loggerPackages = {};
+  const threadPackages = {};
+  const threadLoggers = {};
+  const threadExceptions = {};
+  const exceptionPackages = {};
+  const exceptionLoggers = {};
+  const exceptionThreads = {};
   const timeline = {};
   const levelCounts = { ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0 };
 
@@ -211,6 +221,10 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
       loggers[entry.logger] = (loggers[entry.logger] || 0) + 1;
       if (pkg) {
         packages[pkg] = (packages[pkg] || 0) + 1;
+        if (!packageLoggers[pkg]) packageLoggers[pkg] = {};
+        packageLoggers[pkg][entry.logger] = (packageLoggers[pkg][entry.logger] || 0) + 1;
+        if (!loggerPackages[entry.logger]) loggerPackages[entry.logger] = {};
+        loggerPackages[entry.logger][pkg] = (loggerPackages[entry.logger][pkg] || 0) + 1;
       }
     }
     if (entry.httpMethod) {
@@ -223,6 +237,16 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
         if (!packageThreads[pkg]) packageThreads[pkg] = {};
         packageThreads[pkg][packageToken] = (packageThreads[pkg][packageToken] || 0) + 1;
       }
+      if (entry.logger) {
+        if (!loggerThreads[entry.logger]) loggerThreads[entry.logger] = {};
+        loggerThreads[entry.logger][packageToken] = (loggerThreads[entry.logger][packageToken] || 0) + 1;
+        if (!threadLoggers[packageToken]) threadLoggers[packageToken] = {};
+        threadLoggers[packageToken][entry.logger] = (threadLoggers[packageToken][entry.logger] || 0) + 1;
+      }
+      if (pkg) {
+        if (!threadPackages[packageToken]) threadPackages[packageToken] = {};
+        threadPackages[packageToken][pkg] = (threadPackages[packageToken][pkg] || 0) + 1;
+      }
     }
     if (entry.instanceId) {
       pods[entry.instanceId] = (pods[entry.instanceId] || 0) + 1;
@@ -231,9 +255,23 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
     const exceptionNames = getEntryExceptionNames(entry);
     exceptionNames.forEach(name => {
       exceptions[name] = (exceptions[name] || 0) + 1;
+      if (entry.logger) {
+        if (!loggerExceptions[entry.logger]) loggerExceptions[entry.logger] = {};
+        loggerExceptions[entry.logger][name] = (loggerExceptions[entry.logger][name] || 0) + 1;
+        if (!exceptionLoggers[name]) exceptionLoggers[name] = {};
+        exceptionLoggers[name][entry.logger] = (exceptionLoggers[name][entry.logger] || 0) + 1;
+      }
+      if (packageToken) {
+        if (!threadExceptions[packageToken]) threadExceptions[packageToken] = {};
+        threadExceptions[packageToken][name] = (threadExceptions[packageToken][name] || 0) + 1;
+        if (!exceptionThreads[name]) exceptionThreads[name] = {};
+        exceptionThreads[name][packageToken] = (exceptionThreads[name][packageToken] || 0) + 1;
+      }
       if (pkg) {
         if (!packageExceptions[pkg]) packageExceptions[pkg] = {};
         packageExceptions[pkg][name] = (packageExceptions[pkg][name] || 0) + 1;
+        if (!exceptionPackages[name]) exceptionPackages[name] = {};
+        exceptionPackages[name][pkg] = (exceptionPackages[name][pkg] || 0) + 1;
       }
     });
 
@@ -274,6 +312,16 @@ async function analyzeAllInOnePassFromStream(stream, filePath, onProgress) {
     httpMethods,
     packageThreads,
     packageExceptions,
+    packageLoggers,
+    loggerThreads,
+    loggerExceptions,
+    loggerPackages,
+    threadPackages,
+    threadLoggers,
+    threadExceptions,
+    exceptionPackages,
+    exceptionLoggers,
+    exceptionThreads,
     timeline,
     levelCounts: { ...levelCounts, ALL: levelCounts.ERROR + levelCounts.WARN + levelCounts.INFO + levelCounts.DEBUG }
   };
@@ -313,7 +361,7 @@ async function analyzeAllInOnePass(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildEntryFilter(filters = {}) {
-  const { level, search, from, to, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath } = filters;
+  const { level, search, from, to, startDate, endDate, logger, thread, pod, package: pkg, exception, category, httpMethod, requestPath } = filters;
   const packages = Array.isArray(pkg) ? pkg : (pkg ? [pkg] : []);
   let searchRegex = null;
 
@@ -339,8 +387,8 @@ function buildEntryFilter(filters = {}) {
     return d;
   };
 
-  const fromDate = parseFilterDate(from);
-  const toDate = parseFilterDate(to);
+  const fromDate = parseFilterDate(from || startDate);
+  const toDate = parseFilterDate(to || endDate);
 
   /* AEM logs use DD.MM.YYYY HH:mm:ss format which JavaScript Date doesn't parse natively.
      This handles both the log format and returns a Date object. */

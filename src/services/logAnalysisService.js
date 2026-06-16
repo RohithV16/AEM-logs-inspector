@@ -95,6 +95,16 @@ function buildAnalysisResponse(logType, result, metadata = {}) {
     httpMethods: result.httpMethods,
     packageThreads: result.packageThreads,
     packageExceptions: result.packageExceptions,
+    packageLoggers: result.packageLoggers || {},
+    loggerThreads: result.loggerThreads || {},
+    loggerExceptions: result.loggerExceptions || {},
+    loggerPackages: result.loggerPackages || {},
+    threadPackages: result.threadPackages || {},
+    threadLoggers: result.threadLoggers || {},
+    threadExceptions: result.threadExceptions || {},
+    exceptionPackages: result.exceptionPackages || {},
+    exceptionLoggers: result.exceptionLoggers || {},
+    exceptionThreads: result.exceptionThreads || {},
     timeline: result.timeline,
     levelCounts: result.levelCounts
   };

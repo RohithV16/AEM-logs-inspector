@@ -215,6 +215,16 @@ function createFilterRouter() {
         const httpMethods = stats.httpMethods || {};
         const packageThreads = stats.packageThreads;
         const packageExceptions = stats.packageExceptions;
+        const packageLoggers = stats.packageLoggers;
+        const loggerThreads = stats.loggerThreads;
+        const loggerExceptions = stats.loggerExceptions;
+        const loggerPackages = stats.loggerPackages;
+        const threadPackages = stats.threadPackages;
+        const threadLoggers = stats.threadLoggers;
+        const threadExceptions = stats.threadExceptions;
+        const exceptionPackages = stats.exceptionPackages;
+        const exceptionLoggers = stats.exceptionLoggers;
+        const exceptionThreads = stats.exceptionThreads;
         const categories = Object.keys(stats.categories).sort();
         const hourlyHeatmap = stats.hourlyHeatmap;
         return res.json({
@@ -234,6 +244,16 @@ function createFilterRouter() {
           httpMethods,
           packageThreads,
           packageExceptions,
+          packageLoggers,
+          loggerThreads,
+          loggerExceptions,
+          loggerPackages,
+          threadPackages,
+          threadLoggers,
+          threadExceptions,
+          exceptionPackages,
+          exceptionLoggers,
+          exceptionThreads,
           categories
         });
       }

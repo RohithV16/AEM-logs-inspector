@@ -135,6 +135,16 @@ function createEmptyErrorFilterStats() {
     httpMethods: {},
     packageThreads: {},
     packageExceptions: {},
+    packageLoggers: {},
+    loggerThreads: {},
+    loggerExceptions: {},
+    loggerPackages: {},
+    threadPackages: {},
+    threadLoggers: {},
+    threadExceptions: {},
+    exceptionPackages: {},
+    exceptionLoggers: {},
+    exceptionThreads: {},
     categories: {},
     pods: {},
     timeline: {},
@@ -156,7 +166,13 @@ function collectErrorFilterStats(stats, entry) {
 
   if (entry.logger) {
     addCount(stats.loggers, entry.logger);
-    if (pkg) addCount(stats.packages, pkg);
+    if (pkg) {
+      addCount(stats.packages, pkg);
+      if (!stats.packageLoggers[pkg]) stats.packageLoggers[pkg] = {};
+      addCount(stats.packageLoggers[pkg], entry.logger);
+      if (!stats.loggerPackages[entry.logger]) stats.loggerPackages[entry.logger] = {};
+      addCount(stats.loggerPackages[entry.logger], pkg);
+    }
   }
   if (entry.httpMethod) {
     addCount(stats.httpMethods, entry.httpMethod);
@@ -170,6 +186,16 @@ function collectErrorFilterStats(stats, entry) {
       if (!stats.packageThreads[pkg]) stats.packageThreads[pkg] = {};
       addCount(stats.packageThreads[pkg], packageToken);
     }
+    if (entry.logger) {
+      if (!stats.loggerThreads[entry.logger]) stats.loggerThreads[entry.logger] = {};
+      addCount(stats.loggerThreads[entry.logger], packageToken);
+      if (!stats.threadLoggers[packageToken]) stats.threadLoggers[packageToken] = {};
+      addCount(stats.threadLoggers[packageToken], entry.logger);
+    }
+    if (pkg) {
+      if (!stats.threadPackages[packageToken]) stats.threadPackages[packageToken] = {};
+      addCount(stats.threadPackages[packageToken], pkg);
+    }
   }
 
   const exceptionNames = [
@@ -180,9 +206,23 @@ function collectErrorFilterStats(stats, entry) {
 
   uniqueExceptions.forEach((exceptionName) => {
     addCount(stats.exceptions, exceptionName);
+    if (entry.logger) {
+      if (!stats.loggerExceptions[entry.logger]) stats.loggerExceptions[entry.logger] = {};
+      addCount(stats.loggerExceptions[entry.logger], exceptionName);
+      if (!stats.exceptionLoggers[exceptionName]) stats.exceptionLoggers[exceptionName] = {};
+      addCount(stats.exceptionLoggers[exceptionName], entry.logger);
+    }
+    if (packageToken) {
+      if (!stats.threadExceptions[packageToken]) stats.threadExceptions[packageToken] = {};
+      addCount(stats.threadExceptions[packageToken], exceptionName);
+      if (!stats.exceptionThreads[exceptionName]) stats.exceptionThreads[exceptionName] = {};
+      addCount(stats.exceptionThreads[exceptionName], packageToken);
+    }
     if (pkg) {
       if (!stats.packageExceptions[pkg]) stats.packageExceptions[pkg] = {};
       addCount(stats.packageExceptions[pkg], exceptionName);
+      if (!stats.exceptionPackages[exceptionName]) stats.exceptionPackages[exceptionName] = {};
+      addCount(stats.exceptionPackages[exceptionName], pkg);
     }
   });
 

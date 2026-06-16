@@ -194,7 +194,7 @@ async function analyzeCDNLog(filePath, onProgress, options = {}) {
  * @returns {function} Filter function that returns true for matching entries
  */
 function buildCDNFilter(filters = {}) {
-  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb, from, to } = filters;
+  const { method, status, cache, country, pop, host, minTtfb, maxTtfb, minTtlb, maxTtlb, from, to, startDate, endDate } = filters;
   const targetStatus = status ? Number(status) : null;
   const targetMinTtfb = minTtfb ? Number(minTtfb) : null;
   const targetMaxTtfb = maxTtfb ? Number(maxTtfb) : null;
@@ -211,8 +211,8 @@ function buildCDNFilter(filters = {}) {
     return isNaN(d.getTime()) ? null : d;
   };
 
-  const fromDate = parseFilterDate(from);
-  const toDate = parseFilterDate(to);
+  const fromDate = parseFilterDate(from || startDate);
+  const toDate = parseFilterDate(to || endDate);
 
   return (entry) => {
     if (process.env.DEBUG_FILTERS) console.log('Filtering CDN Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));

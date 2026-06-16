@@ -13,7 +13,7 @@ export function CommandPreview({ program, environment, tier, mode = 'download' }
     : `aio aem:rde:tail -p ${program} -e ${environment} -t ${tier}`
 
   return (
-    <div className="command-preview" data-testid="command-preview">
+    <div className="cloudmanager-command-preview" data-testid="command-preview">
       <code>{cmd}</code>
     </div>
   )

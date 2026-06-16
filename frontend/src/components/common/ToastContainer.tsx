@@ -9,7 +9,7 @@ export function ToastContainer() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`toast toast-${t.type}`}
+          className={`toast ${t.type}`}
           onClick={() => removeToast(t.id)}
         >
           {t.message}

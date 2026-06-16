@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useFilterQuery } from '../../api/hooks'
 import { useLogContext } from '../../context/LogContext'
 
@@ -23,26 +23,15 @@ function timelineToArray(timeline: unknown): TimelineEntry[] {
 }
 
 export function ChartsPanel() {
-  const { filePath, setFilterMeta } = useLogContext()
+  const { filePath } = useLogContext()
   const { data, isLoading, error } = useFilterQuery({ filePath, filters: {} }, !!filePath)
 
   const timeline = useMemo(() => timelineToArray(data?.timeline), [data?.timeline])
   const loggers = useMemo(() => toArray(data?.loggers), [data?.loggers])
 
-  useEffect(() => {
-    if (data && data.success) {
-      setFilterMeta({
-        packages: toArray(data.packages),
-        loggers: toArray(data.loggers),
-        threads: toArray(data.threads),
-        exceptions: toArray(data.exceptions),
-      })
-    }
-  }, [data, setFilterMeta])
-
   if (isLoading) {
     return (
-      <div className="charts-panel" data-testid="charts-panel">
+      <div className="charts-section" data-testid="charts-panel">
         <div className="chart-skeleton" />
         <div className="chart-skeleton" />
       </div>
@@ -51,7 +40,7 @@ export function ChartsPanel() {
 
   if (error) {
     return (
-      <div className="charts-panel" data-testid="charts-panel">
+      <div className="charts-section" data-testid="charts-panel">
         <p className="chart-error">Failed to load chart data. {(error as Error).message}</p>
         <button onClick={() => window.location.reload()}>Retry</button>
       </div>
@@ -60,14 +49,14 @@ export function ChartsPanel() {
 
   if (!data) {
     return (
-      <div className="charts-panel" data-testid="charts-panel">
+      <div className="charts-section" data-testid="charts-panel">
         <p>No chart data available for the current filters.</p>
       </div>
     )
   }
 
   return (
-    <div className="charts-panel" data-testid="charts-panel">
+    <div className="charts-section" data-testid="charts-panel">
       <div className="chart-container" data-testid="chart-timeline">
         <h3>Timeline</h3>
         {timeline.length > 0 ? (

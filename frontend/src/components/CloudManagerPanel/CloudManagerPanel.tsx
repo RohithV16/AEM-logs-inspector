@@ -7,15 +7,15 @@ export function CloudManagerPanel() {
 
   return (
     <div className="cm-panel">
-      <div className="cm-tabs">
+      <div className="cloudmanager-tabs">
         <button
-          className={`cm-tab ${tab === 'download' ? 'active' : ''}`}
+          className={`cloudmanager-tab ${tab === 'download' ? 'active' : ''}`}
           onClick={() => setTab('download')}
         >
           Download
         </button>
         <button
-          className={`cm-tab ${tab === 'history' ? 'active' : ''}`}
+          className={`cloudmanager-tab ${tab === 'history' ? 'active' : ''}`}
           onClick={() => setTab('history')}
         >
           History

@@ -2,11 +2,17 @@ import { useState } from 'react'
 import { validateFilePath, parseBatchInput } from '../../utils/files'
 import { useLogContext } from '../../context/LogContext'
 
+function toArray(obj: Record<string, number> | undefined | { name: string; count: number }[]): { name: string; count: number }[] {
+  if (!obj) return []
+  if (Array.isArray(obj)) return obj
+  return Object.entries(obj).map(([name, count]) => ({ name, count }))
+}
+
 export function FileInput() {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const { setFilePath } = useLogContext()
+  const { setFilePath, setFilterMeta, setLevelCounts } = useLogContext()
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setValue(e.target.value)
@@ -36,6 +42,28 @@ export function FileInput() {
       const data = await res.json()
       if (data.success) {
         setFilePath(filePaths[0])
+        setFilterMeta({
+          packages: toArray(data.packages),
+          loggers: toArray(data.loggers),
+          threads: toArray(data.threads),
+          exceptions: toArray(data.exceptions),
+          categories: toArray(data.categories),
+          packageThreads: data.packageThreads || {},
+          packageExceptions: data.packageExceptions || {},
+          packageLoggers: data.packageLoggers || {},
+          loggerThreads: data.loggerThreads || {},
+          loggerExceptions: data.loggerExceptions || {},
+          loggerPackages: data.loggerPackages || {},
+          threadPackages: data.threadPackages || {},
+          threadLoggers: data.threadLoggers || {},
+          threadExceptions: data.threadExceptions || {},
+          exceptionPackages: data.exceptionPackages || {},
+          exceptionLoggers: data.exceptionLoggers || {},
+          exceptionThreads: data.exceptionThreads || {},
+        })
+        if (data.levelCounts) {
+          setLevelCounts(data.levelCounts)
+        }
       } else {
         setError(data.error || 'Analysis failed')
       }
@@ -51,26 +79,28 @@ export function FileInput() {
   }
 
   return (
-    <div className="file-input-panel">
-      <input
-        id="filePathInput"
-        data-testid="file-path-input"
-        type="text"
-        className="file-input"
-        placeholder="Enter file path(s), comma or newline separated"
-        value={value}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-      />
-      {error && <div className="file-input-error">{error}</div>}
-      <button
-        data-testid="analyze-btn"
-        className="analyze-btn"
-        onClick={handleAnalyze}
-        disabled={loading}
-      >
-        {loading ? 'Analyzing...' : 'Analyze'}
-      </button>
+    <div className="source-panel">
+      <div className="upload-row">
+        <input
+          id="filePathInput"
+          data-testid="file-path-input"
+          type="text"
+          className="upload-input compact"
+          placeholder="Enter file path(s), comma or newline separated"
+          value={value}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+        />
+        {error && <div className="file-input-error" style={{ color: 'var(--color-error)' }}>{error}</div>}
+        <button
+          data-testid="analyze-btn"
+          className="btn-apply"
+          onClick={handleAnalyze}
+          disabled={loading}
+        >
+          {loading ? 'Analyzing...' : 'Analyze'}
+        </button>
+      </div>
     </div>
   )
 }

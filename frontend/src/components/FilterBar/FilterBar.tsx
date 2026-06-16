@@ -1,5 +1,4 @@
-import { useState, useCallback } from 'react'
-import { normalizeDateTimeForApi, validateDateString } from '../../utils/dates'
+import { useCallback, useState } from 'react'
 import { isSafeRegexSync } from '../../utils/regex'
 import { getSearchLabel } from '../../utils/files'
 import { useLogContext } from '../../context/LogContext'
@@ -9,108 +8,115 @@ interface FilterBarProps {
 }
 
 export function FilterBar({ searchRef }: FilterBarProps) {
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
-  const [search, setSearch] = useState('')
-  const [regexMode, setRegexMode] = useState(false)
+  const { selectedFilters, setSelectedFilters, clearAllFilters } = useLogContext()
   const [searchError, setSearchError] = useState<string | null>(null)
-  const [dateError, setDateError] = useState<string | null>(null)
-  const { filePath, setPayload } = useLogContext()
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const updateFilter = useCallback((key: string, value: unknown) => {
+    if (!value || (typeof value === 'string' && value === '')) {
+      const { [key]: _, ...rest } = selectedFilters
+      setSelectedFilters(rest)
+    } else {
+      setSelectedFilters({ ...selectedFilters, [key]: value })
+    }
+  }, [selectedFilters, setSelectedFilters])
+
+  const handleDateChange = useCallback((key: string, rawValue: string) => {
+    if (!rawValue) {
+      updateFilter(key, undefined)
+      return
+    }
+    const utc = new Date(rawValue).toISOString()
+    updateFilter(key, utc)
+  }, [updateFilter])
+
+  const search = (selectedFilters.search as string) || ''
+  const startDate = (selectedFilters.startDate as string) || ''
+  const endDate = (selectedFilters.endDate as string) || ''
+  const regexMode = (selectedFilters.regex as boolean) || false
+
+  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
-    setSearch(val)
-    if (regexMode && val) {
+    if (val && regexMode) {
       const result = isSafeRegexSync(val)
       setSearchError(result.ok ? null : result.error || null)
     } else {
       setSearchError(null)
     }
-  }
+    updateFilter('search', val || undefined)
+  }, [regexMode, updateFilter])
 
-  const handleApply = useCallback(() => {
-    if (startDate) {
-      const r = validateDateString(startDate)
-      if (!r.valid) { setDateError(r.error || null); return }
-    }
-    if (endDate) {
-      const r = validateDateString(endDate)
-      if (!r.valid) { setDateError(r.error || null); return }
-    }
-    setDateError(null)
-    const filters: Record<string, unknown> = {}
-    if (startDate) {
-      filters.startDate = normalizeDateTimeForApi(new Date(startDate))
-    }
-    if (endDate) {
-      filters.endDate = normalizeDateTimeForApi(new Date(endDate))
-    }
-    if (search) {
-      filters.search = search
-    }
-    if (filePath) {
-      setPayload({ filePath, filters })
-    }
-  }, [startDate, endDate, search, filePath, setPayload])
+  const toggleRegex = useCallback(() => {
+    const next = !regexMode
+    updateFilter('regex', next || undefined)
+  }, [regexMode, updateFilter])
 
   return (
-    <div className="filter-bar" data-testid="filter-bar">
-      <div className="filter-bar-row">
-        <div className="date-pickers">
-          <input
-            data-testid="start-date-input"
-            type="datetime-local"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            placeholder="Start date"
-          />
-          <span className="date-separator">to</span>
-          <input
-            data-testid="end-date-input"
-            type="datetime-local"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            placeholder="End date"
-          />
+    <div className="filter-card" data-testid="filter-bar" style={{ marginTop: '1rem' }}>
+      <div className="filter-section-header">
+        <p className="filter-section-label">Date range & Search</p>
+      </div>
+      <div className="filter-bar-row" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="date-range-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <label className="date-field">
+            <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>From</span>
+            <input
+              data-testid="start-date-input"
+              type="datetime-local"
+              className="filter-input date-input"
+              style={{ width: '100%' }}
+              value={startDate}
+              onChange={(e) => handleDateChange('startDate', e.target.value)}
+              placeholder="Start date"
+            />
+          </label>
+          <label className="date-field">
+            <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>To</span>
+            <input
+              data-testid="end-date-input"
+              type="datetime-local"
+              className="filter-input date-input"
+              style={{ width: '100%' }}
+              value={endDate}
+              onChange={(e) => handleDateChange('endDate', e.target.value)}
+              placeholder="End date"
+            />
+          </label>
         </div>
 
-        <div className="search-group">
+        <div className="search-group" style={{ display: 'flex', gap: '0.5rem' }}>
           <input
             ref={searchRef}
             data-testid="raw-search-input"
             type="text"
-            className="search-input"
+            className="filter-input"
+            style={{ width: '100%' }}
             placeholder={getSearchLabel()}
             value={search}
             onChange={handleSearchChange}
           />
           <button
             data-testid="search-regex-toggle"
-            className={`regex-toggle ${regexMode ? 'active' : ''}`}
-            onClick={() => setRegexMode((p) => !p)}
+            className={`btn-clear ${regexMode ? 'active' : ''}`}
+            onClick={toggleRegex}
             title="Toggle regex mode"
           >
             .*
           </button>
         </div>
         {searchError && <div className="field-error">{searchError}</div>}
-        {dateError && <div className="field-error">{dateError}</div>}
 
-        <div className="filter-actions">
-          <button data-testid="apply-filters" className="apply-btn" onClick={handleApply}>
-            Apply Filters
-          </button>
+        <div className="filter-actions" style={{ display: 'flex', gap: '0.5rem' }}>
           <button
             data-testid="clear-filters"
-            className="clear-btn"
-            onClick={() => { setStartDate(''); setEndDate(''); setSearch(''); setSearchError(null); setDateError(null) }}
+            className="btn-clear"
+            style={{ flex: 1 }}
+            onClick={clearAllFilters}
           >
-            Clear Filters
+            Clear
           </button>
         </div>
       </div>
 
-      <div className="utc-hint">Server treats selected times as UTC (Z appended).</div>
     </div>
   )
 }

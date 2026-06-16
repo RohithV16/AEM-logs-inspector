@@ -51,10 +51,34 @@ export interface RawEventsResponse {
 export interface FilterResponse {
   success: boolean
   timeline?: { date: string; count: number }[]
-  loggers?: { name: string; count: number }[]
-  threads?: { name: string; count: number }[]
-  packages?: { name: string; count: number }[]
-  exceptions?: { name: string; count: number }[]
+  loggers?: { name: string; count: number }[] | Record<string, number>
+  threads?: { name: string; count: number }[] | Record<string, number>
+  packages?: { name: string; count: number }[] | Record<string, number>
+  exceptions?: { name: string; count: number }[] | Record<string, number>
   hourly?: { hour: number; count: number }[]
   levelCounts?: Record<string, number>
+}
+
+export interface CrossReferenceMap {
+  [key: string]: Record<string, number>
+}
+
+export interface FilterMeta {
+  packages: { name: string; count: number }[]
+  loggers: { name: string; count: number }[]
+  threads: { name: string; count: number }[]
+  exceptions: { name: string; count: number }[]
+  categories: { name: string; count: number }[]
+  packageThreads: CrossReferenceMap
+  packageExceptions: CrossReferenceMap
+  packageLoggers: CrossReferenceMap
+  loggerThreads: CrossReferenceMap
+  loggerExceptions: CrossReferenceMap
+  loggerPackages: CrossReferenceMap
+  threadPackages: CrossReferenceMap
+  threadLoggers: CrossReferenceMap
+  threadExceptions: CrossReferenceMap
+  exceptionPackages: CrossReferenceMap
+  exceptionLoggers: CrossReferenceMap
+  exceptionThreads: CrossReferenceMap
 }

@@ -186,8 +186,8 @@ function buildRequestFilter(filters = {}) {
     return new Date(`${match[3]}-${months[match[2]]}-${match[1]}T${match[4]}Z`);
   };
 
-  const fromDate = parseFilterDate(filters.from);
-  const toDate = parseFilterDate(filters.to);
+  const fromDate = parseFilterDate(filters.from || filters.startDate);
+  const toDate = parseFilterDate(filters.to || filters.endDate);
 
   return (entry) => {
     if (process.env.DEBUG_FILTERS) console.log('Filtering Request Entry:', entry.timestamp, 'Filters:', JSON.stringify(filters));

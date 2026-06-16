@@ -29,7 +29,7 @@ export function CloudManagerHistory() {
 
   return (
     <div className="cm-history" data-testid="cm-history-list">
-      <div className="history-toolbar">
+      <div className="cloudmanager-history-filters">
         <input
           data-testid="cm-history-search"
           type="text"
@@ -51,9 +51,9 @@ export function CloudManagerHistory() {
       {filtered.length === 0 ? (
         <p className="history-empty">No history entries found.</p>
       ) : (
-        <ul className="history-list">
+        <ul className="cloudmanager-history-list">
           {filtered.map((entry) => (
-            <li key={entry.id} className="history-entry">
+            <li key={entry.id} className="cloudmanager-history-item">
               <span>{entry.program} / {entry.environment}</span>
               <span className="history-date">{entry.timestamp}</span>
               <button>Reuse Setup</button>
